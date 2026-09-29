@@ -194,7 +194,7 @@ class TaskEngine:
                 with self.lock:
                     task = self._load(tid)
                     task['messages'].append({'role':role,'stage':stage,'round':task['round'],
-                                             'at':now(),'answer':answer['answer'], 'usage':answer.get('usage')})
+                                             'at':now(),'answer':answer['answer'], 'usage':answer.get('usage'),'model':answer.get('model')})
                     task['events'].append({'at':now(),'round':task['round'],'kind':'stage_completed','role':role,'stage':stage})
                     if stage=='driver' and answer.get('resourceDecision'):
                         task['events'].append({'at':now(),'round':task['round'],'kind':'resource_decision',

@@ -16,6 +16,35 @@ const recordPanel=document.createElement('details');recordPanel.className='execu
 const recordTitle=document.createElement('summary');recordTitle.textContent='展开对话与运行记录';recordPanel.append(recordTitle);
 $('messages').before(recordPanel);recordPanel.append($('messages'),$('events'));
 const pairFlow=new PairFlow($('pair-board'));
+const resourcePanel=el('section',null,'card resource-panel');
+$('pair-board').before(resourcePanel);
+let resourcesBusy=false;
+async function refreshResources(){
+ if(readonly||resourcesBusy)return;resourcesBusy=true;
+ try{
+  const d=await api('/api/resources');resourcePanel.replaceChildren(el('h2','实时资源消耗'),el('small','更新于 '+new Date(d.updatedAt).toLocaleTimeString('zh-CN')));
+  const grid=el('div',null,'resource-grid');resourcePanel.append(grid);
+  const metric=(name,value,note)=>{const c=el('div',null,'resource-metric');c.append(el('small',name),el('strong',value),el('small',note));grid.append(c);};
+  const fmt=n=>Number(n).toLocaleString('zh-CN'),gb=n=>n==null?'未知':(n/1073741824).toFixed(2)+' GB';
+  metric('累计模型 Token',fmt(d.tokens.input+d.tokens.output),'输入 '+fmt(d.tokens.input)+' / 输出 '+fmt(d.tokens.output));
+  metric('模型调用',fmt(d.tokens.calls),'缺少用量记录 '+d.tokens.missingUsageCalls+' 次');
+  metric('运行 / 排队任务',d.activeTasks,'当前记录中的活动任务');
+  metric('云端 Driver',d.activeDrivers,'租约记录 · Navigator 常驻 1 台');
+  metric('云机累计估算','¥'+d.serverEstimatedCNY.toFixed(2),'按整小时计费估算');
+  metric('生成调用历史估算','¥'+d.generationEstimate.estimatedReservedCNY.toFixed(4),'不含独立决策费 · 余额未接入');
+  metric('Navigator 内存',gb(d.navigator.memoryUsedBytes),'/ '+gb(d.navigator.memoryTotalBytes));
+  metric('系统负载 / CPU 核数',(d.navigator.load1m??0).toFixed(2)+' / '+d.navigator.cpuCores,'1 分钟负载，非 CPU 百分比');
+  metric('Navigator 磁盘',gb(d.navigator.diskUsedBytes),'/ '+gb(d.navigator.diskTotalBytes));
+  const detail=el('details'),title=el('summary','展开模型、服务器与任务明细');detail.append(title);resourcePanel.append(detail);
+  for(const m of d.models)detail.append(el('p',m.model+' · '+m.kind+' · '+m.calls+' 次 · 输入 '+fmt(m.input)+' / 输出 '+fmt(m.output)+' token'));
+  for(const [i,l] of d.leases.entries())detail.append(el('p','Driver '+(i+1)+' · '+({active:'租约有效',released:'已释放',creating:'创建中',reconcile_required:'待核对'}[l.state]||l.state)+' · 剩余 '+Math.floor(l.remainingSeconds/60)+' 分 '+l.remainingSeconds%60+' 秒 · 报价 ¥'+l.hourlyQuoteCNY+'/小时 · 累计估算 '+(l.estimatedBilledCNY==null?'未知':'¥'+l.estimatedBilledCNY.toFixed(2))));
+  for(const task of d.tasks)detail.append(el('p',task.title+' · '+(labels[task.status]||task.status)+' · '+fmt(task.tokens)+' token'));
+  if(d.leaseError)detail.append(el('p',d.leaseError));
+  for(const note of d.notes)detail.append(el('small',note,'resource-note'));
+ }catch(e){resourcePanel.replaceChildren(el('h2','实时资源消耗'),el('p','数据暂时不可用：'+e.message));}
+ finally{resourcesBusy=false;}
+}
+setTimeout(refreshResources,0);setInterval(refreshResources,5000);
 pairFlow.update({round:1,status:'idle',messages:[],events:[]});
 const labels={queued:'等待执行',running:'协作中',cancelling:'正在取消',cancelled:'已取消',completed:'本轮已完成',failed:'本轮失败',interrupted:'服务重启中断'};
 function el(tag,text,cls){const n=document.createElement(tag);if(text!=null)n.textContent=String(text);if(cls)n.className=cls;return n;}

@@ -15,6 +15,7 @@ from .transport import NodeBackend, CloudDriverBackend
 from .ucloud import UCloudClient
 from .resources import ResourceManager
 from .jev import JevClient, AdapterClient
+from .resource_usage import snapshot
 from .web import ASSETS
 
 
@@ -54,6 +55,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             try:
                 if self.path=='/api/session': self.respond(200,{'role':'admin' if self.authenticated() else 'viewer','csrf':csrf if self.authenticated() else None,'budget':engine.usage(),'maxRounds':engine.max_rounds})
                 elif self.path=='/api/tasks': self.respond(200,{'items':engine.list(),'budget':engine.usage()})
+                elif self.path=='/api/resources': self.respond(200,snapshot(engine))
                 elif self.path.startswith('/api/tasks/') and self.path.count('/')==3:
                     self.respond(200,engine.get(self.path.rsplit('/',1)[1]))
                 else: self.respond(404,{'error':'Not found'})
