@@ -24,15 +24,22 @@ window.PairFlow=class PairFlow{
   labels.forEach((label,i)=>{const n=document.createElement('span');n.textContent=label;const stage=['plan','driver','review'][i-1];n.className=(i===0&&this.data.id||i===4&&complete||done.some(e=>e.stage===stage))?'finished':'';if(stage===active)n.classList.add('active');track.append(n);});
   const failure=events.filter(e=>e.errorType).at(-1);
   const result=this.records.filter(m=>m.round===this.round&&m.stage==='review').at(-1);
+  if(result?.answer){
+   add('h3',complete?'任务结果':'当前答复');
+   const final=result.answer.finalAnswer;
+   add('p',final||(!complete?result.answer.summary:'这条历史任务没有独立的最终答案，请查看下方结论。'),'final-answer');
+   if(!final&&complete)for(const finding of result.answer.findings||[])add('p',finding.claim,'final-answer');
+  }
   if(result?.answer?.decision){
    const decision=result.answer.decision;
-   add('h3','Navigator 验收依据');
-   for(const check of decision.checks){add('p',({yes:'✓',no:'✕',unknown:'?'}[check.value]||'?')+' '+check.question+'：'+check.reason+'（'+(check.source==='deterministic'?'程序核验':'模型判断')+'）','progress-outcome');}
-   add('small',decision.confidenceNote);
+   const audit=document.createElement('details');const title=document.createElement('summary');title.textContent='查看 Navigator 验收依据';audit.append(title);box.append(audit);
+   const auditAdd=(tag,text)=>{const node=document.createElement(tag);node.textContent=text;audit.append(node);};
+   for(const check of decision.checks){auditAdd('p',({yes:'✓',no:'✕',unknown:'?'}[check.value]||'?')+' '+check.question+'：'+check.reason+'（'+(check.source==='deterministic'?'程序核验':'模型判断')+'）','progress-outcome');}
+   auditAdd('small',decision.confidenceNote);
   }
   if(this.status==='blocked')add('p',result?.answer?.summary||'缺少完成任务所需的证据或能力。','progress-outcome');
   add('p',this.status==='failed'?'停止原因：'+(failure?.errorType||'请展开运行记录查看'):
-    complete?(result?.answer?.summary||'结果已返回，可以继续补充要求。'):
+    complete?'':
     this.status==='queued'?'已进入队列，尚未开始模型调用。':active?'已完成 '+done.length+' / 3 个处理阶段；等待当前角色返回真实结果。':'','progress-outcome');
   this.q('.flow-replay').hidden=['queued','running','cancelling'].includes(this.status);
   this.q('.flow-top h2').textContent=this.data.title?'角色协作与交接':'发布任务，开始协作';
@@ -45,5 +52,5 @@ window.PairFlow=class PairFlow{
   const sourceStage=stage==='review'?'driver':stage==='driver'?'plan':'review';const m=this.records.filter(m=>m.round===this.round&&m.stage===sourceStage).at(-1);this.q('.flow-message p').textContent=m?.answer?.summary||this.events.filter(e=>e.round===this.round&&e.kind==='handoff_requested').at(-1)?.summary||'点击角色面板可查看真实消息；回放仅重现已记录的阶段，不代表现在正在执行。';
  }
  replay(){if(this.replaying){clearInterval(this.timer);this.replaying=false;this.q('.flow-replay').textContent='▶ 回放本轮交接';this.live();return;}const stages=['plan','driver','review'].filter(s=>this.events.some(e=>e.round===this.round&&e.stage===s&&e.kind==='stage_completed'));if(!stages.length)return;this.replaying=true;this.step=0;this.q('.flow-replay').textContent='■ 停止回放';this.draw(stages[0],true);this.timer=setInterval(()=>{this.step++;if(this.step>=stages.length){clearInterval(this.timer);this.replaying=false;this.q('.flow-replay').textContent='▶ 回放本轮交接';this.live();}else this.draw(stages[this.step],true);},2400);}
- inspect(role){const records=this.records.filter(m=>m.role===role&&m.round===this.round);const dialog=this.q('dialog');dialog.querySelector('h3').textContent=role==='navigator'?'Navigator · 本轮规划与复核':'Driver · 本轮执行与分析';dialog.querySelector('pre').textContent=records.length?JSON.stringify(records,null,2):'该角色本轮尚未返回消息。';dialog.showModal();}
+ inspect(role){const records=this.records.filter(m=>m.role===role&&m.round===this.round);const dialog=this.q('dialog');dialog.querySelector('h3').textContent=role==='navigator'?'Navigator · 本轮规划与复核':'Driver · 本轮执行与分析';dialog.querySelector('pre').textContent=records.length?records.map(m=>{const a=m.answer||{};return [m.stage==='plan'?'规划':m.stage==='review'?'复核与交付':'执行结果',a.finalAnswer||a.summary||m.text,...(a.steps||[]),...(a.findings||[]).map(f=>f.claim)].filter(Boolean).join('\n\n');}).join('\n\n────────\n\n'):'该角色本轮尚未返回消息。';dialog.showModal();}
 };

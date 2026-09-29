@@ -31,10 +31,11 @@ def main():
     for e in task['events']:
         if e.get('kind') in ('resource_decision','stopped'):
             print('EVENT',json.dumps(e,ensure_ascii=False),flush=True)
-    for m in task['messages']:
-        if m.get('stage')=='review':
-            print('REVIEW',json.dumps(m.get('answer',{}),ensure_ascii=False),flush=True)
+    reviews=[m['answer'] for m in task['messages'] if m.get('stage')=='review']
+    if reviews:
+        print('FINAL_ANSWER',reviews[-1].get('finalAnswer',''),flush=True)
     if task['status']!='completed':raise RuntimeError('Task not completed')
+    if not reviews or not reviews[-1].get('finalAnswer'):raise RuntimeError('No user-facing answer delivered')
     if any(e.get('executionNode')=='ucloud_driver' for e in task['events']):
         raise RuntimeError('Unnecessary cloud Driver was created')
 

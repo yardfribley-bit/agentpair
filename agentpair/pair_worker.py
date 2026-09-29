@@ -49,6 +49,10 @@ def run(envelope, token):
         '还必须包含executionMode，取值local或cloud_driver。默认选local；只有任务明确要求使用独立云端Driver，且本地工具或建议无法满足时才选cloud_driver。云实例按小时计费，不要为了普通查询或仅生成代码建议开机。')
     if stage=='review':
         system+='必须输出checks对象，包含goal_met、grounded、consistent三项，每项为{"value":"yes/no/unknown","reason":"具体证据或缺口"}。分别检查用户目标、依据充分性、结论与证据一致性。天气还须核对地点；缺少证据填unknown。不要输出猜测的置信度数值。'
+        system+=('必须另写finalAnswer字符串，直接面向用户交付结果，不能写成JSON、复核过程或“Driver查询成功/我将检查”。'
+                 '先给答案，再说明必要的来源、时间和不确定性；天气用简洁中文，包含具体地点、温度、天气状况（证据有则写）、时间及时区、来源和模型估算性质。'
+                 'summary只是内部交接摘要，不能代替finalAnswer。另在checks添加delivery项，判断finalAnswer是否实际回答了本轮用户要求。'
+                 '如需改正Driver格式或补充已有证据中的信息，应直接在finalAnswer修正；只有缺少事实证据才要求重新查询。')
     messages=[{'role':'system','content':system},{'role':'user','content':json.dumps(context,ensure_ascii=False,separators=(',',':'))}]
     size=len(json.dumps(messages,ensure_ascii=False).encode())
     estimate=(size+1024)*(0.000408/117)+1200*(0.000408/59)
