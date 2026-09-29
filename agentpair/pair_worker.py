@@ -47,6 +47,10 @@ def run(envelope, token):
              '天气答复必须给出地点、数据时间及时区、温度单位、来源URL，并说明模型估算而非实测。检查证据fresh、地点匹配和数值。没有证据或不新鲜不能pass。补查时根据前次review修正，禁止重复空泛拒绝。')
     if stage=='plan': system+=('最终JSON必须包含tool字段，天气查询为{"name":"weather","city":"Shanghai等英文地名"}；不可省略。'
         '还必须包含executionMode，取值local或cloud_driver。默认选local；只有任务明确要求使用独立云端Driver，且本地工具或建议无法满足时才选cloud_driver。云实例按小时计费，不要为了普通查询或仅生成代码建议开机。')
+    if task.get('engineeringMethod')=='parallel':
+        system+=('用户选择并行方案探索：Navigator 担任 C，Driver A/B 独立探索。规划必须输出 approaches 数组，包含两个不同且符合当前能力的具体方案。'
+                 'Driver 必须按 task.approach 执行，不可声称代码已运行。复核必须比较两条分支在需求覆盖、证据、代价、局限上的差异，'
+                 '输出 comparison 字符串和 selectedApproach（A/B/combined/none），在 finalAnswer 给出综合结果和选择理由。分支失败或没有证据时不能宣称两者都成功。')
     if stage=='review':
         system+='必须输出checks对象，包含goal_met、grounded、consistent三项，每项为{"value":"yes/no/unknown","reason":"具体证据或缺口"}。分别检查用户目标、依据充分性、结论与证据一致性。天气还须核对地点；缺少证据填unknown。不要输出猜测的置信度数值。'
         system+=('必须另写finalAnswer字符串，直接面向用户交付结果，不能写成JSON、复核过程或“Driver查询成功/我将检查”。'
@@ -79,6 +83,11 @@ def run(envelope, token):
         if invalid:
             answer['citationWarning']='模型生成了未提供的证据编号，已移除；请根据原始工具结果复核。'
     if stage=='review':
+        if task.get('engineeringMethod')=='parallel':
+            branches=outputs.get('driver',{}).get('answer',{}).get('branches',{})
+            answer['parallelValidated']=(len(branches)==2 and all(b.get('status')=='completed' for b in branches.values())
+                and isinstance(answer.get('comparison'),str) and bool(answer['comparison'].strip())
+                and answer.get('selectedApproach') in ('A','B','combined'))
         answer['decision']=decide(answer,evidence,tool.get('name'))
         answer['verdict']={'deliver':'pass','recheck':'retry','needs_information':'blocked'}[answer['decision']['action']]
     output={'answer':answer,'usage':result.get('usage',{}),'model':result.get('model'),

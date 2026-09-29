@@ -8,6 +8,10 @@ import secrets
 import subprocess
 import tarfile
 import time
+import copy
+import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from .methods import method
 from .pair_worker import run
 from .jev import apply_jev
 
@@ -61,9 +65,10 @@ class CloudDriverBackend(NodeBackend):
                 return ip
         return None
 
-    def _provision(self):
+    def _provision(self, excluded=()):
         self.manager.release_expired()
-        leases=[x for x in self.manager.records() if x['state']=='active' and x.get('hostId')]
+        leases=[x for x in self.manager.records() if x['state']=='active' and x.get('hostId') and x['id'] not in excluded
+                and (datetime.datetime.fromisoformat(x['expiresAt'])-self.manager.clock()).total_seconds()>600]
         if self.lease_id:leases.sort(key=lambda x:x['id']!=self.lease_id)
         for lease in leases:
             ip=self._driver_ip(lease)
@@ -105,12 +110,14 @@ class CloudDriverBackend(NodeBackend):
 
     def call(self,role,envelope,timeout):
         if role=='driver':
-            mode=envelope.get('outputs',{}).get('plan',{}).get('answer',{}).get('executionMode','local')
-            if mode!='cloud_driver':
+            selected=envelope['task'].get('engineeringMethod','local')
+            count=method(selected)['drivers']
+            if not count:
                 result=run(envelope,self.token)
                 result['executionNode']='navigator_local'
                 result['resourceDecision']='No paid Driver instance needed for this task'
                 return result
+            if count==2:return self._parallel(envelope,timeout)
             ip,fresh=self._provision()
             self.driver=ip
             if fresh:self._deploy_worker(ip)
@@ -120,3 +127,42 @@ class CloudDriverBackend(NodeBackend):
             result['leaseId']=self.lease_id
             return result
         return super().call(role,envelope,timeout)
+
+    def _parallel(self,envelope,timeout):
+        started=time.monotonic();nodes=[];excluded=[]
+        def event(branch,text,kind='branch_progress'):
+            callback=getattr(self,'event_callback',None)
+            if callback:callback(envelope['task']['id'],{'kind':kind,'role':branch,'stage':'driver','text':text})
+        routes=envelope.get('outputs',{}).get('plan',{}).get('answer',{}).get('approaches')
+        if not isinstance(routes,list) or len(routes)!=2 or not all(isinstance(x,str) and x.strip() for x in routes) or routes[0].strip()==routes[1].strip():
+            raise ValueError('并行探索需要 Navigator 给出两个不同的方案，再启动机器')
+        for index in range(2):
+            branch='Driver '+('A' if index==0 else 'B')
+            event(branch,'准备独立节点，优先复用本计费周期的租约')
+            ip,fresh=self._provision(excluded);excluded.append(self.lease_id)
+            if fresh:self._deploy_worker(ip)
+            nodes.append((branch,ip,self.lease_id,routes[index]))
+        def execute(node):
+            branch,ip,lease,route=node
+            task=copy.deepcopy(envelope);task['task']['approach']=route;task['task']['branch']=branch
+            event(branch,'开始执行：'+route)
+            try:
+                result=NodeBackend(self.token,ip,self.key,self.known_hosts).call('driver',task,max(1,timeout-(time.monotonic()-started)))
+                event(branch,result['answer'].get('summary','已返回结果'),'branch_completed')
+                return branch,{'status':'completed','result':result,'leaseId':lease,'approach':route}
+            except Exception as error:
+                event(branch,'分支失败：'+type(error).__name__,'branch_failed')
+                return branch,{'status':'failed','errorType':type(error).__name__,'leaseId':lease,'approach':route}
+        results={}
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            for future in as_completed([pool.submit(execute,n) for n in nodes]):
+                branch,result=future.result();results[branch]=result
+        usage={'prompt_tokens':0,'completion_tokens':0,'total_tokens':0};cost=0
+        for branch in results.values():
+            output=branch.get('result',{});cost+=output.get('estimatedUpperCostCNY',0)
+            for key in usage:usage[key]+=output.get('usage',{}).get(key,0)
+        evidence=next((results[b]['result'].get('evidence') for b in sorted(results) if results[b].get('result',{}).get('evidence')),None)
+        return {'answer':{'summary':'两条独立路线已返回，由 Navigator 比较、选择或综合。','branches':results},'evidence':evidence,
+                'usage':usage,'model':'deepseek-v3.2','estimatedUpperCostCNY':cost,
+                'budgetMode':'historical_estimate_not_hard_cap','executionNode':'ucloud_parallel',
+                'resourceDecision':'2 台独立 Driver；任务结束保留租约供复用，到期回收'}

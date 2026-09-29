@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from .methods import method
 
 
 class Conflict(ValueError): pass
@@ -23,6 +24,7 @@ class TaskEngine:
                  max_rounds=3, deadline=600, start=True):
         self.db = str(database)
         self.backend = backend
+        self.backend.event_callback=self.record_method_event
         self.adapters = tuple(adapters)
         self.budget = budget
         self.max_rounds = max_rounds
@@ -87,7 +89,14 @@ class TaskEngine:
             raise ValueError('Message must contain 1–6000 characters')
         return text.strip()
 
-    def create(self, title, message, adapter='discussion', target=''):
+    def record_method_event(self,tid,event):
+        with self.lock:
+            task=self._load(tid)
+            task['events'].append(dict(event,at=now(),round=task['round']))
+            self._save(task)
+
+    def create(self, title, message, adapter='discussion', target='', engineering_method='local'):
+        method(engineering_method)
         if adapter not in self.adapters: raise ValueError('Unknown task adapter')
         if not isinstance(title, str) or not 1<=len(title.strip())<=120: raise ValueError('Invalid title')
         message = self._message(message)
@@ -98,6 +107,7 @@ class TaskEngine:
         with self.lock:
             if len(self.list())>=20: raise Limit('Experiment task limit reached')
             task = {'id': uuid.uuid4().hex, 'title': title.strip(), 'adapter': adapter, 'target': target,
+                    'engineeringMethod':engineering_method,
                     'status': 'queued', 'round': 1, 'maxRounds': self.max_rounds,
                     'messages': [{'role':'user','text':message,'round':1,'at':now()}],
                     'events': [], 'results': [], 'createdAt': now(), 'updatedAt': now(),
@@ -172,6 +182,7 @@ class TaskEngine:
                     self._save(task)
                 envelope = {'mode':stage, 'task':{k:task[k] for k in ('title','adapter','target','round')},
                             'history':task['messages'], 'outputs':outputs}
+                envelope['task'].update(id=tid,engineeringMethod=task.get('engineeringMethod','local'))
                 estimate = self.backend.estimate(envelope)
                 self._reserve(estimate)
                 with self.lock:

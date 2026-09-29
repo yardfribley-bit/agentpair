@@ -51,6 +51,8 @@ def decide(answer, evidence=None, tool=None):
         matches=isinstance(temp,(int,float)) and any(abs(float(x)-temp)<=0.05 for x in temperatures)
         rule('delivered_temperature','最终答案是否包含证据中的温度',matches,'核对最终答案中的摄氏温度，不能仅在证据里提供')
         rule('delivered_context','最终答案是否说明时间和来源',bool(re.search(r'\d{1,2}:\d{2}',final)) and str(e.get('source','Open-Meteo')).lower() in final.lower(),'时间与来源必须直接出现在最终答案中')
+    if 'parallelValidated' in answer:
+        checks.append({'id':'parallel_comparison','question':'两个方案是否返回并完成比较与选择','value':'yes' if answer['parallelValidated'] else 'no','reason':'需要两个成功分支、比较结果和明确选择','source':'deterministic'})
     values=[c['value'] for c in checks]
     action='deliver' if all(v=='yes' for v in values) else 'recheck'
     if 'unknown' in values: action='needs_information'

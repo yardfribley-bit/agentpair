@@ -14,6 +14,13 @@ window.PairFlow=class PairFlow{
   const names={plan:'Navigator 正在拆解任务',driver:'Driver 正在生成实现或分析结果',review:'Navigator 正在检查结果'};
   const states={queued:'任务已提交，等待开始',completed:'本轮完成',failed:'任务中断',cancelled:'任务已停止',cancelling:'正在停止，等待当前调用返回',interrupted:'服务重启，本轮已中断',idle:'等待你发布任务'};
   add('small',this.data.title||'实时协作');
+  add('small',({'local':'默认协作 · 0 台云 Driver','pair':'云端结对 · 1 台 Driver','parallel':'并行探索 · A/B 两台 Driver，Navigator 综合评审'})[this.data.engineeringMethod||'local']);
+  if(this.data.engineeringMethod==='parallel'){
+   for(const role of ['Driver A','Driver B']){
+    const latest=this.events.filter(e=>e.round===this.round&&e.role===role&&e.kind.startsWith('branch_')).at(-1);
+    add('p',role+'：'+(latest?.text||'等待规划两条不同路线'),'progress-outcome');
+   }
+  }
   add('h2',states[this.status]||names[active]||'正在交接任务');
   if(this.status==='blocked')box.querySelector('h2').textContent='未完成 · Navigator 未通过验收';
   const user=this.records.filter(m=>m.role==='user'&&m.round===this.round).at(-1);
@@ -27,6 +34,7 @@ window.PairFlow=class PairFlow{
   if(result?.answer){
    add('h3',complete?'任务结果':'当前答复');
    const final=result.answer.finalAnswer;
+   if(result.answer.comparison)add('p','方案对比：'+result.answer.comparison,'progress-outcome');
    add('p',final||(!complete?result.answer.summary:'这条历史任务没有独立的最终答案，请查看下方结论。'),'final-answer');
    if(!final&&complete)for(const finding of result.answer.findings||[])add('p',finding.claim,'final-answer');
   }

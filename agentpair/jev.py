@@ -108,7 +108,7 @@ def apply_jev(client,envelope,result):
         state['finalAnswer']=answer.get('finalAnswer','')
         state['evidence']=result.get('evidence')
         driver=envelope.get('outputs',{}).get('driver',{}).get('answer',{})
-        state['driverResult']={k:driver.get(k) for k in ('summary','code','findings')}
+        state['driverResult']={k:driver.get(k) for k in ('summary','code','findings','branches')}
         instructions={
             'goal_met':'Does finalAnswer actually satisfy the user request? Code suggestions do not satisfy a request for executed tests or a completed deployment.',
             'grounded':'Are factual claims supported by the supplied evidence? Do not treat agent assertions of success as execution evidence. Conceptual advice need not have tool evidence.',

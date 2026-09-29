@@ -90,7 +90,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                 if self.path=='/api/logout':
                     self.send_response(200); self.send_header('Set-Cookie','agentpair=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/'); self.headers_common(2); self.end_headers(); self.wfile.write(b'{}'); return
                 if self.path=='/api/tasks':
-                    self.respond(201,engine.create(data.get('title'),data.get('message'),data.get('adapter','discussion'),data.get('target',''))); return
+                    self.respond(201,engine.create(data.get('title'),data.get('message'),data.get('adapter','discussion'),data.get('target',''),data.get('engineeringMethod','local'))); return
                 parts=self.path.split('/')
                 if len(parts)==5 and parts[1:3]==['api','tasks']:
                     if parts[4]=='messages': self.respond(202,engine.followup(parts[3],data.get('message'))); return

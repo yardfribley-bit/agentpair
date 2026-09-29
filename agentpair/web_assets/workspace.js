@@ -16,6 +16,14 @@ const recordPanel=document.createElement('details');recordPanel.className='execu
 const recordTitle=document.createElement('summary');recordTitle.textContent='展开对话与运行记录';recordPanel.append(recordTitle);
 $('messages').before(recordPanel);recordPanel.append($('messages'),$('events'));
 const pairFlow=new PairFlow($('pair-board'));
+const methodLabel=el('label','工程方法'),methodSelect=el('select');methodSelect.id='engineering-method';
+const methodInfo=el('p',null,'notice'),methodOptions={
+ local:['默认协作 · 不开云机器','适合查询、讨论和轻量建议。优势：启动快、无新增云机费。使用常驻 Navigator，0 台云 Driver；每轮通常 3 次生成调用、2 次决策调用，返工时增加。'],
+ pair:['云端结对 · 1 台 Driver','适合需要独立执行节点的任务。优势：Navigator 规划复核、Driver 独立处理。最多占用 1 台云 Driver，优先复用现有租约；约 ¥0.15/小时（参考报价），模型费用另计。当前支持查询与代码建议，尚不执行生成代码。'],
+ parallel:['并行方案探索与评审 · 2 台 Driver','适合技术路线不确定、希望比较两种方案的任务。优势：A/B 分别探索，Navigator（C）统一比较并综合。最多占用 2 台云 Driver，优先复用；合计约 ¥0.30/小时（参考报价）。通常 4 次生成调用、2 次决策调用，返工更多；不保证优于单路线。当前代码产物为建议，未执行测试。']};
+for(const [value,[label]] of Object.entries(methodOptions)){const option=el('option',label);option.value=value;methodSelect.append(option);}
+methodLabel.append(methodSelect);$('create-form').prepend(methodLabel,methodInfo);
+methodSelect.onchange=()=>{methodInfo.textContent=methodOptions[methodSelect.value][1]+' 云机按整小时估算，任务结束保留到租约结束供复用。最终以创建前报价为准。';};methodSelect.onchange();
 const resourcePanel=el('section',null,'card resource-panel');
 $('pair-board').before(resourcePanel);
 let resourcesBusy=false;
@@ -58,7 +66,7 @@ function render(t){current=t.id;$('create').classList.add('hidden');$('conversat
 async function refresh(){if(!logged)return;try{const list=await api('/api/tasks');$('budget').textContent='模型预留 ¥'+list.budget.estimatedReservedCNY.toFixed(2)+(list.budget.estimatedLimitCNY==null?' · 不设费用上限（估算）':' / ¥'+list.budget.estimatedLimitCNY.toFixed(2)+'（估算）');$('task-list').replaceChildren();for(const t of list.items){const b=el('button',t.title,'task-item '+(t.id===current?'selected':''));b.append(el('small',(labels[t.status]||t.status)+' · 第 '+t.round+' 轮'));b.onclick=async()=>{try{last='';render(await api('/api/tasks/'+t.id));}catch(e){error(e.message);}};$('task-list').append(b);}if(current){const t=await api('/api/tasks/'+current),s=JSON.stringify(t);if(s!==last){render(t);last=s;}}$('connection').textContent='● 已同步 · '+new Date().toLocaleTimeString('zh-CN',{hour12:false});}catch(e){$('connection').textContent='● 同步失败';error(e.message);}}
 $('login-form').onsubmit=async e=>{e.preventDefault();try{const d=await api('/api/login',{username:$('username').value,password:$('password').value});csrf=d.csrf;$('password').value='';logged=true;admin=true;applyAccess();$('login').classList.add('hidden');$('create').classList.remove('hidden');error('');await refresh();}catch(e){error(e.message);}};
 $('new-task').onclick=()=>{if(!admin)return;current=null;last='';$('conversation').classList.add('hidden');$('create').classList.remove('hidden');$('status').textContent='新任务';};$('adapter').onchange=()=>{$('target-label').classList.toggle('hidden',$('adapter').value!=='public_site');};
-$('create-form').onsubmit=async e=>{e.preventDefault();try{const t=await api('/api/tasks',{title:$('title').value,message:$('goal').value,adapter:$('adapter').value,target:$('adapter').value==='public_site'?$('target').value:''});error('');render(t);await refresh();}catch(e){error(e.message);}};
+$('create-form').onsubmit=async e=>{e.preventDefault();try{const t=await api('/api/tasks',{engineeringMethod:$('engineering-method').value,title:$('title').value,message:$('goal').value,adapter:$('adapter').value,target:$('adapter').value==='public_site'?$('target').value:''});error('');render(t);await refresh();}catch(e){error(e.message);}};
 $('reply-form').onsubmit=async e=>{e.preventDefault();if(!current)return;$('send').disabled=true;try{const t=await api('/api/tasks/'+current+'/messages',{message:$('reply').value});$('reply').value='';error('');render(t);await refresh();}catch(e){error(e.message);await refresh();}};
 $('cancel').onclick=async()=>{try{render(await api('/api/tasks/'+current+'/cancel',{}));}catch(e){error(e.message);}};
 $('export').onclick=async()=>{try{const t=await api('/api/tasks/'+current),url=URL.createObjectURL(new Blob([JSON.stringify(t,null,2)],{type:'application/json'})),a=el('a');a.href=url;a.download='agentpair-'+t.id+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){error(e.message);}};
