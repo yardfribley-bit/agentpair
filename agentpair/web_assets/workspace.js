@@ -1,5 +1,9 @@
 const $=id=>document.getElementById(id);let csrf='',current=null,last='',logged=false;
 const readonly=document.body.dataset.readonly==='true';
+// Keep the live task state prominent; detailed records remain available below.
+const recordPanel=document.createElement('details');recordPanel.className='execution-records';
+const recordTitle=document.createElement('summary');recordTitle.textContent='展开对话与运行记录';recordPanel.append(recordTitle);
+$('messages').before(recordPanel);recordPanel.append($('messages'),$('events'));
 const pairFlow=new PairFlow($('pair-board'));
 pairFlow.update({round:1,status:'idle',messages:[],events:[]});
 const labels={queued:'等待执行',running:'协作中',cancelling:'正在取消',cancelled:'已取消',completed:'本轮已完成',failed:'本轮失败',interrupted:'服务重启中断'};

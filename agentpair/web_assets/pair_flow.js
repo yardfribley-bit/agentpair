@@ -5,7 +5,30 @@ window.PairFlow=class PairFlow{
   this.q=s=>root.querySelector(s);this.q('.flow-replay').onclick=()=>this.replay();this.q('.flow-close').onclick=()=>this.q('dialog').close();this.q('.flow-nav').onclick=()=>this.inspect('navigator');this.q('.flow-driver').onclick=()=>this.inspect('driver');
  }
  update(data){this.data=data;this.round=data.round||1;this.records=data.messages||[];this.events=data.events||[];this.snapshot=!!data.snapshot;this.status=data.status;this.q('.flow-round').textContent='第 '+this.round+' 轮';this.q('.flow-mode').textContent=this.snapshot?'历史回放 · 不发起模型调用':'真实阶段事件 · 非逐 token 流';if(!this.replaying)this.live();}
- live(){const started=this.events.filter(e=>e.round===this.round&&e.kind==='stage_started').at(-1);const active=['running','cancelling'].includes(this.status)&&started?started.stage:null;this.draw(active,false);}
+ live(){const started=this.events.filter(e=>e.round===this.round&&e.kind==='stage_started').at(-1);const active=['running','cancelling'].includes(this.status)&&started?started.stage:null;this.draw(active,false);this.progress(active);}
+ progress(active){
+  if(!this.q('.task-progress')){const box=document.createElement('section');box.className='task-progress';box.setAttribute('aria-live','polite');this.root.prepend(box);}
+  const box=this.q('.task-progress');box.replaceChildren();
+  const add=(tag,text,cls)=>{const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;box.append(n);return n;};
+  const events=this.events.filter(e=>e.round===this.round),done=events.filter(e=>e.kind==='stage_completed');
+  const names={plan:'Navigator 正在拆解任务',driver:'Driver 正在生成实现或分析结果',review:'Navigator 正在检查结果'};
+  const states={queued:'任务已提交，等待开始',completed:'本轮完成',failed:'任务中断',cancelled:'任务已停止',cancelling:'正在停止，等待当前调用返回',interrupted:'服务重启，本轮已中断',idle:'等待你发布任务'};
+  add('small',this.data.title||'实时协作');
+  add('h2',states[this.status]||names[active]||'正在交接任务');
+  const user=this.records.filter(m=>m.role==='user'&&m.round===this.round).at(-1);
+  add('p',user?.text||'提交任务后，这里会显示当前步骤和角色交接。','task-goal');
+  const track=add('div','','progress-track');
+  const labels=['收到任务','规划','Driver 处理','复核','本轮完成'];
+  const complete=this.status==='completed';
+  labels.forEach((label,i)=>{const n=document.createElement('span');n.textContent=label;const stage=['plan','driver','review'][i-1];n.className=(i===0&&this.data.id||i===4&&complete||done.some(e=>e.stage===stage))?'finished':'';if(stage===active)n.classList.add('active');track.append(n);});
+  const failure=events.filter(e=>e.errorType).at(-1);
+  const result=this.records.filter(m=>m.round===this.round&&m.stage==='review').at(-1);
+  add('p',this.status==='failed'?'停止原因：'+(failure?.errorType||'请展开运行记录查看'):
+    complete?(result?.answer?.summary||'结果已返回，可以继续补充要求。'):
+    this.status==='queued'?'已进入队列，尚未开始模型调用。':active?'已完成 '+done.length+' / 3 个处理阶段；等待当前角色返回真实结果。':'','progress-outcome');
+  this.q('.flow-replay').hidden=['queued','running','cancelling'].includes(this.status);
+  this.q('.flow-top h2').textContent=this.data.title?'角色协作与交接':'发布任务，开始协作';
+ }
  draw(stage,replay){this.root.dataset.phase=stage||'idle';this.root.classList.toggle('flow-animating',!!stage);this.root.classList.toggle('flow-replaying',replay);
   const state={plan:['正在规划','等待计划'],driver:['等待 Driver 返回','正在实施'],review:['正在复核','结果已交接']}[stage]||[this.status==='completed'||this.status==='analysis_completed'?'本轮复核完成':'等待任务','等待下一轮'];this.q('.flow-nav .agent-state').textContent=state[0];this.q('.flow-driver .agent-state').textContent=state[1];this.q('.flow-phase').textContent=(replay?'记录回放 · ':'')+({plan:'用户要求 → Navigator 规划',driver:'Navigator 将计划与历史交给 Driver',review:'Driver 返回结果 → Navigator 复核'})[stage]||'本轮结束 / 等待下一条要求';
   if(!stage)this.q('.flow-phase').textContent=this.status==='failed'?'本轮失败 · 查看停止原因':this.status==='cancelled'?'已取消 · 无后续调用':this.status==='completed'||this.status==='analysis_completed'?'本轮结束 · 可继续对话':'等待发布任务';
