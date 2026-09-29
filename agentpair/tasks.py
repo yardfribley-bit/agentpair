@@ -219,7 +219,7 @@ class TaskEngine:
                 task = self._load(tid)
                 task['status']='cancelled' if isinstance(error,InterruptedError) else 'failed'
                 task['events'].append({'at':now(),'round':task['round'],'kind':'stopped',
-                                       'errorType':type(error).__name__})
+                                       'errorType':type(error).__name__,'text':str(error)[:160]})
                 self._save(task)
 
     def _loop(self):

@@ -59,7 +59,9 @@ def run(envelope, token):
     if adapter=='public_site' and stage in ('driver','review'): validate_findings(answer,evidence)
     if adapter=='discussion':
         if any(f.get('evidenceRefs') for f in answer.get('findings',[])):
-            raise ValueError('Discussion response invented evidence references')
+            for finding in answer.get('findings',[]): finding['evidenceRefs']=[]
+            answer['citationWarning']='模型生成了未提供的证据编号，已移除；请根据原始工具结果复核。'
+            if stage=='review': answer['verdict']='retry'
     if stage=='review':
         if answer.get('verdict') not in ('pass','retry','blocked'): answer['verdict']='blocked'
         if tool.get('name')=='weather' and (not evidence or not evidence.get('fresh')):

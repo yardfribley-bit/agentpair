@@ -23,5 +23,8 @@ class NodeBackend:
             'cd /home/pair/AgentPair && python3 -m agentpair.pair_worker'],
             input=json.dumps(private).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,
             timeout=min(timeout,150),check=False)
-        if response.returncode: raise RuntimeError('Driver worker failed')
+        if response.returncode:
+            try: reason=json.loads(response.stderr).get('errorType','WorkerError')
+            except (ValueError,TypeError): reason='SSH or worker error'
+            raise RuntimeError('Driver: '+str(reason)[:80])
         return json.loads(response.stdout)
