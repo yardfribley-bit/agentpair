@@ -32,9 +32,12 @@ def main():
         child=subprocess.Popen([sys.executable,'-m','agentpair.platform',
             '--database',str(root/'runtime'/'tasks.db'),'--driver','106.75.18.16',
             '--key',str(root/'runtime'/'driver_key'),
-            '--known-hosts',str(root/'runtime'/'known_hosts')],
+            '--known-hosts',str(root/'runtime'/'known_hosts')]+(['--public-demo','--port','8080','--origin','http://106.75.9.169:8080'] if private.get('publicDemo') else []),
             stdin=subprocess.PIPE,stdout=log,stderr=log,cwd=root,start_new_session=True)
         child.stdin.write((json.dumps(private)+'\n').encode()); child.stdin.close()
+    if private.get('publicDemo'):
+        print(json.dumps({'pid':child.pid,'status':'launched','publicDemo':True}))
+        return
     with (root/'web.log').open('ab') as log:
         subprocess.Popen([sys.executable,'-m','agentpair.web','--snapshot','web_snapshot.json',
                           '--bind','0.0.0.0','--port','8080'],

@@ -15,7 +15,7 @@ from .transport import NodeBackend
 from .web import ASSETS
 
 
-def handler_for(engine, password, origin):
+def handler_for(engine, password, origin, public_demo=False):
     session=secrets.token_urlsafe(32); csrf=secrets.token_urlsafe(32)
     attempts=[]
     class Handler(BaseHTTPRequestHandler):
@@ -33,6 +33,7 @@ def handler_for(engine, password, origin):
             self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 
         def authenticated(self):
+            if public_demo: return True
             try:
                 cookie=SimpleCookie(self.headers.get('Cookie',''))
                 return 'agentpair' in cookie and hmac.compare_digest(cookie['agentpair'].value,session)
@@ -104,6 +105,7 @@ def main():
     p.add_argument('--known-hosts',required=True)
     p.add_argument('--port',type=int,default=9090)
     p.add_argument('--origin',default='http://127.0.0.1:18080')
+    p.add_argument('--public-demo',action='store_true',help='Temporary shared workspace without login')
     args=p.parse_args()
     os.umask(0o077)
     # One-line private SSH stdin bootstrap; never log/store provider credentials.
@@ -111,7 +113,7 @@ def main():
     if len(private['password'])<20: raise ValueError('Workspace password too short')
     backend=NodeBackend(private['relayToken'],args.driver,args.key,args.known_hosts)
     engine=TaskEngine(args.database,backend)
-    server=ThreadingHTTPServer(('127.0.0.1',args.port),handler_for(engine,private['password'],args.origin))
+    server=ThreadingHTTPServer(('0.0.0.0' if args.public_demo else '127.0.0.1',args.port),handler_for(engine,private['password'],args.origin,args.public_demo))
     print('Authenticated Navigator workspace ready',flush=True)
     try: server.serve_forever()
     finally: server.server_close(); engine.close()
