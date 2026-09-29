@@ -15,6 +15,7 @@ window.PairFlow=class PairFlow{
   const states={queued:'任务已提交，等待开始',completed:'本轮完成',failed:'任务中断',cancelled:'任务已停止',cancelling:'正在停止，等待当前调用返回',interrupted:'服务重启，本轮已中断',idle:'等待你发布任务'};
   add('small',this.data.title||'实时协作');
   add('h2',states[this.status]||names[active]||'正在交接任务');
+  if(this.status==='blocked')box.querySelector('h2').textContent='未完成 · Navigator 未通过验收';
   const user=this.records.filter(m=>m.role==='user'&&m.round===this.round).at(-1);
   add('p',user?.text||'提交任务后，这里会显示当前步骤和角色交接。','task-goal');
   const track=add('div','','progress-track');
@@ -23,6 +24,7 @@ window.PairFlow=class PairFlow{
   labels.forEach((label,i)=>{const n=document.createElement('span');n.textContent=label;const stage=['plan','driver','review'][i-1];n.className=(i===0&&this.data.id||i===4&&complete||done.some(e=>e.stage===stage))?'finished':'';if(stage===active)n.classList.add('active');track.append(n);});
   const failure=events.filter(e=>e.errorType).at(-1);
   const result=this.records.filter(m=>m.round===this.round&&m.stage==='review').at(-1);
+  if(this.status==='blocked')add('p',result?.answer?.summary||'缺少完成任务所需的证据或能力。','progress-outcome');
   add('p',this.status==='failed'?'停止原因：'+(failure?.errorType||'请展开运行记录查看'):
     complete?(result?.answer?.summary||'结果已返回，可以继续补充要求。'):
     this.status==='queued'?'已进入队列，尚未开始模型调用。':active?'已完成 '+done.length+' / 3 个处理阶段；等待当前角色返回真实结果。':'','progress-outcome');

@@ -10,7 +10,7 @@ class FakeBackend:
     def call(self,role,envelope,timeout):
         self.calls.append((role,envelope))
         if self.on_call: self.on_call()
-        return {'answer':{'summary':envelope['mode']+' round '+str(envelope['task']['round'])},'usage':{'total_tokens':10}}
+        return {'answer':{'summary':envelope['mode']+' round '+str(envelope['task']['round']),'verdict':'pass'},'usage':{'total_tokens':10}}
 
 
 class TaskTests(unittest.TestCase):
@@ -29,6 +29,23 @@ class TaskTests(unittest.TestCase):
     def test_active_task_conflict(self):
         t=self.engine.create('task','goal')
         with self.assertRaises(Conflict): self.engine.followup(t['id'],'new goal')
+    def test_review_requires_explicit_pass(self):
+        original=self.backend.call
+        def call(*args):
+            result=original(*args);result['answer'].pop('verdict');return result
+        self.backend.call=call
+        t=self.engine.create('task','goal');self.engine.process(t['id'])
+        self.assertEqual(self.engine.get(t['id'])['status'],'blocked')
+    def test_review_requests_rework(self):
+        original=self.backend.call
+        def call(role,envelope,timeout):
+            result=original(role,envelope,timeout)
+            if envelope['mode']=='review' and len(self.backend.calls)==3: result['answer']['verdict']='retry'
+            return result
+        self.backend.call=call
+        t=self.engine.create('task','goal');self.engine.process(t['id'])
+        self.assertEqual(len(self.backend.calls),5)
+        self.assertEqual(self.engine.get(t['id'])['status'],'completed')
     def test_cancel_queued_no_calls(self):
         t=self.engine.create('task','goal'); self.engine.cancel(t['id']); self.engine.process(t['id'])
         self.assertEqual(self.backend.calls,[])

@@ -8,6 +8,8 @@ const pairFlow=new PairFlow($('pair-board'));
 pairFlow.update({round:1,status:'idle',messages:[],events:[]});
 const labels={queued:'等待执行',running:'协作中',cancelling:'正在取消',cancelled:'已取消',completed:'本轮已完成',failed:'本轮失败',interrupted:'服务重启中断'};
 function el(tag,text,cls){const n=document.createElement(tag);if(text!=null)n.textContent=String(text);if(cls)n.className=cls;return n;}
+labels.blocked='未完成 · 未通过验收';
+$('adapter').options[0].textContent='协作任务 / 天气查询 / 编程建议';
 function error(text){$('error').textContent=text;$('error').classList.toggle('hidden',!text);}
 async function api(path,data){const options={credentials:'same-origin',cache:'no-store'};if(data!==undefined){options.method='POST';options.headers={'Content-Type':'application/json','X-CSRF-Token':csrf};options.body=JSON.stringify(data);}const r=await fetch(path,options),d=await r.json();if(!r.ok){if(r.status===401){logged=false;$('login').classList.remove('hidden');}throw Error(d.error||'请求失败');}return d;}
 function details(parent,value){const n=el('details');n.append(el('summary','查看结构化输出与证据'),el('pre',JSON.stringify(value,null,2)));parent.append(n);}

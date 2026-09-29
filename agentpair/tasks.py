@@ -41,7 +41,7 @@ class TaskEngine:
                 for result in task.get('results',[]):
                     for stage, output in result.get('outputs',{}).items():
                         if output.get('budgetMode')=='historical_estimate_not_hard_cap':
-                            historical.append((f"{tid}:{result['round']}:{stage}",output.get('estimatedUpperCostCNY')))
+                            historical.append((output.get('settlementKey',f"{tid}:{result['round']}:{stage}"),output.get('estimatedUpperCostCNY')))
                 if task['status'] in ('queued', 'running', 'cancelling'):
                     task['status'] = 'interrupted'
                     task['events'].append({'at': now(), 'kind': 'interrupted', 'text': '服务重启，未自动重放付费调用。'})
@@ -162,7 +162,9 @@ class TaskEngine:
         deadline = time.monotonic()+self.deadline
         outputs = {}
         try:
-            for stage, role in [('plan','navigator'),('driver','driver'),('review','navigator')]:
+            stages=[('plan','navigator'),('driver','driver'),('review','navigator')]
+            attempts=0
+            for stage, role in stages:
                 self._guard(tid, deadline)
                 with self.lock:
                     task = self._load(tid)
@@ -185,7 +187,8 @@ class TaskEngine:
                 if not isinstance(answer,dict) or not isinstance(answer.get('answer'),dict):
                     raise ValueError('Invalid worker response')
                 if answer.get('budgetMode')=='historical_estimate_not_hard_cap':
-                    self._settle(f"{tid}:{task['round']}:{stage}",estimate,answer.get('estimatedUpperCostCNY'))
+                    answer['settlementKey']=f"{tid}:{task['round']}:{stage}"+(f':retry{attempts}' if attempts else '')
+                    self._settle(answer['settlementKey'],estimate,answer.get('estimatedUpperCostCNY'))
                 self._guard(tid, deadline)
                 outputs[stage] = answer
                 with self.lock:
@@ -193,12 +196,24 @@ class TaskEngine:
                     task['messages'].append({'role':role,'stage':stage,'round':task['round'],
                                              'at':now(),'answer':answer['answer'], 'usage':answer.get('usage')})
                     task['events'].append({'at':now(),'round':task['round'],'kind':'stage_completed','role':role,'stage':stage})
+                    if answer.get('evidence'):
+                        task['events'].append({'at':now(),'round':task['round'],'kind':'tool_result','stage':stage,
+                            'text':'已返回查询证据，可展开检查来源与时间','evidence':answer['evidence']})
                     self._save(task)
+                if stage=='review' and answer['answer'].get('verdict')=='retry' and attempts<1:
+                    attempts+=1
+                    stages.extend([('driver','driver'),('review','navigator')])
+                    with self.lock:
+                        task=self._load(tid)
+                        task['events'].append({'at':now(),'round':task['round'],'kind':'rework',
+                            'text':'Navigator 未通过验收，交回 Driver 补查：'+str(answer['answer'].get('corrections',[]))})
+                        self._save(task)
             with self.lock:
                 task = self._load(tid)
                 if task['status']=='cancelling': raise InterruptedError('Cancelled')
                 task['results'].append({'round':task['round'],'outputs':outputs})
-                task['status']='completed'; self._save(task)
+                task['status']='completed' if outputs['review']['answer'].get('verdict')=='pass' else 'blocked'
+                self._save(task)
         except Exception as error:
             with self.lock:
                 task = self._load(tid)
