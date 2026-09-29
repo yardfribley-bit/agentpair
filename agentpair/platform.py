@@ -17,7 +17,7 @@ from .resources import ResourceManager
 from .web import ASSETS
 
 
-def handler_for(engine, password, origin, public_demo=False, expires_at=None):
+def handler_for(engine, password, origin, public_demo=False, expires_at=None, username='admin'):
     session=secrets.token_urlsafe(32); csrf=secrets.token_urlsafe(32)
     attempts=[]
     class Handler(BaseHTTPRequestHandler):
@@ -35,7 +35,6 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None):
             self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 
         def authenticated(self):
-            if public_demo: return True
             try:
                 cookie=SimpleCookie(self.headers.get('Cookie',''))
                 return 'agentpair' in cookie and hmac.compare_digest(cookie['agentpair'].value,session)
@@ -51,9 +50,8 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None):
                 suffix=Path(paths[self.path]).suffix
                 self.send_header('Content-Type',{'.html':'text/html','.js':'application/javascript','.css':'text/css'}[suffix]+'; charset=utf-8')
                 self.headers_common(len(body)); self.end_headers(); self.wfile.write(body); return
-            if not self.authenticated(): self.respond(401,{'error':'Login required'}); return
             try:
-                if self.path=='/api/session': self.respond(200,{'csrf':csrf,'budget':engine.usage(),'maxRounds':engine.max_rounds})
+                if self.path=='/api/session': self.respond(200,{'role':'admin' if self.authenticated() else 'viewer','csrf':csrf if self.authenticated() else None,'budget':engine.usage(),'maxRounds':engine.max_rounds})
                 elif self.path=='/api/tasks': self.respond(200,{'items':engine.list(),'budget':engine.usage()})
                 elif self.path.startswith('/api/tasks/') and self.path.count('/')==3:
                     self.respond(200,engine.get(self.path.rsplit('/',1)[1]))
@@ -78,6 +76,8 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None):
                     if len(attempts)>=10: self.respond(429,{'error':'Too many login attempts'}); return
                     attempts.append(stamp)
                     supplied=data.get('password','')
+                    if data.get('username')!=username:
+                        self.respond(401,{'error':'账号或密码错误'}); return
                     if not isinstance(supplied,str) or not hmac.compare_digest(hashlib.sha256(supplied.encode()).digest(),hashlib.sha256(password.encode()).digest()):
                         self.respond(401,{'error':'Login failed'}); return
                     self.respond(200,{'csrf':csrf},cookie=True); return
@@ -114,7 +114,7 @@ def main():
     os.umask(0o077)
     # One-line private SSH stdin bootstrap; never log/store provider credentials.
     private=json.loads(sys.stdin.readline())
-    if len(private['password'])<20: raise ValueError('Workspace password too short')
+    if len(private['password'])<8: raise ValueError('Workspace password too short')
     if 'cloud' in private:
         cloud=private['cloud']
         client=UCloudClient(cloud['publicKey'],cloud['privateKey'],cloud['projectId'],cloud['region'])
@@ -127,7 +127,7 @@ def main():
     else:
         backend=NodeBackend(private['relayToken'],args.driver,args.key,args.known_hosts)
     engine=TaskEngine(args.database,backend,budget=None)
-    server=ThreadingHTTPServer(('0.0.0.0' if args.public_demo else '127.0.0.1',args.port),handler_for(engine,private['password'],args.origin,args.public_demo,private.get('expiresAt')))
+    server=ThreadingHTTPServer(('0.0.0.0' if args.public_demo else '127.0.0.1',args.port),handler_for(engine,private['password'],args.origin,args.public_demo,private.get('expiresAt'),private.get('username','admin')))
     print('Authenticated Navigator workspace ready',flush=True)
     try: server.serve_forever()
     finally: server.server_close(); engine.close()

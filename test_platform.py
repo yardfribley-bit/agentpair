@@ -26,14 +26,24 @@ class PlatformTests(unittest.TestCase):
         req=urllib.request.Request(self.url+path,data=json.dumps(data).encode() if data is not None else None,headers=headers)
         with self.client.open(req) as r:return json.load(r)
     def test_login_publish_followup_and_csrf(self):
-        with self.assertRaises(urllib.error.HTTPError) as e:self.call('/api/tasks')
-        self.assertEqual(e.exception.code,401); e.exception.close()
-        login=self.call('/api/login',{'password':'test-password-long-enough'}); csrf=login['csrf']
+        self.assertEqual(self.call('/api/tasks')['items'],[])
+        self.assertEqual(self.call('/api/session')['role'],'viewer')
+        self.assertIsNone(self.call('/api/session')['csrf'])
+        login=self.call('/api/login',{'username':'admin','password':'test-password-long-enough'}); csrf=login['csrf']
         with self.assertRaises(urllib.error.HTTPError) as e:self.call('/api/tasks',{'title':'x','message':'goal'})
         self.assertEqual(e.exception.code,403); e.exception.close()
         t=self.call('/api/tasks',{'title':'x','message':'goal'},csrf); self.engine.process(t['id'])
         follow=self.call('/api/tasks/'+t['id']+'/messages',{'message':'refine'},csrf)
         self.assertEqual(follow['round'],2); self.assertEqual(len(follow['messages']),5)
+        self.call('/api/logout',{},csrf)
+        self.assertEqual(self.call('/api/tasks/'+t['id'])['id'],t['id'])
+        for path,payload in [('/api/tasks',{'title':'x','message':'x'}),('/api/tasks/'+t['id']+'/messages',{'message':'x'}),('/api/tasks/'+t['id']+'/cancel',{})]:
+            with self.assertRaises(urllib.error.HTTPError) as e:self.call(path,payload,csrf)
+            self.assertEqual(e.exception.code,401);e.exception.close()
+    def test_username_required(self):
+        for username in ('','viewer'):
+            with self.assertRaises(urllib.error.HTTPError) as e:self.call('/api/login',{'username':username,'password':'test-password-long-enough'})
+            self.assertEqual(e.exception.code,401);e.exception.close()
     def test_cross_origin_and_missing_login_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as e:self.call('/api/login',{'password':'test-password-long-enough'},origin='http://evil.example')
         self.assertEqual(e.exception.code,403); e.exception.close()

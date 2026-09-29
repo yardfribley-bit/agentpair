@@ -18,7 +18,7 @@ def api(path,data=None,csrf=''):
 
 def main():
     password=(ROOT/'runtime'/'persistent-navigator-password.txt').read_text().strip()
-    csrf=api('/api/login',{'password':password})['csrf']
+    csrf=api('/api/login',{'username':'admin','password':password})['csrf']
     task=api('/api/tasks',{'title':'持久Navigator验证：上海天气',
         'message':'查询中国上海目前温度，说明时间和来源；检查数据是否足够新。普通查询不要租用云端Driver。',
         'adapter':'discussion'},csrf)
