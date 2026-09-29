@@ -11,6 +11,8 @@ def main():
             if path.is_file() and '__pycache__' not in path.parts:
                 archive.add(path,arcname=str(path.relative_to(ROOT)))
     ssh('tar -xf - -C /opt/agentpair',bundle.getvalue())
+    ssh('/opt/agentpair/venv/bin/pip install -r /dev/stdin',
+        (ROOT/'requirements-repository.txt').read_bytes())
     for name in ('agentpair-navigator.service','agentpair-reaper.service',
                  'agentpair-reaper.timer','agentpair-certbot.service','agentpair-certbot.timer'):
         ssh('install -m 0644 /dev/stdin /etc/systemd/system/'+name,(ROOT/'ops'/name).read_bytes())

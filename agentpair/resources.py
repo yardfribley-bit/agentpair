@@ -63,7 +63,7 @@ class ResourceManager:
         self._save(lease)
         # Narrow config is assembled by the caller; only authorized key is put in cloud-init.
         import base64
-        userdata='#cloud-config\nusers:\n  - default\n  - name: pair\n    lock_passwd: true\n    ssh_authorized_keys:\n      - '+ssh_public_key.strip()+'\nssh_pwauth: false\n'
+        userdata='#cloud-config\nusers:\n  - default\n  - name: pair\n    lock_passwd: true\n    groups: [docker]\n    ssh_authorized_keys:\n      - '+ssh_public_key.strip()+'\nssh_pwauth: false\ngroups: [docker]\npackages: [docker.io, git]\nwrite_files:\n  - path: /etc/agentpair-driver\n    permissions: "0444"\n    content: isolated-driver\nruncmd:\n  - [systemctl, enable, --now, docker]\n'
         request={**config,'Name':name,'MaxCount':1,'MinCount':1,
                  'SecurityGroupId':config['SecurityGroupId'],
                  'UserData':base64.b64encode(userdata.encode()).decode(),

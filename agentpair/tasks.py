@@ -95,8 +95,11 @@ class TaskEngine:
             task['events'].append(dict(event,at=now(),round=task['round']))
             self._save(task)
 
-    def create(self, title, message, adapter='discussion', target='', engineering_method='local'):
+    def create(self, title, message, adapter='discussion', target='', engineering_method='local', execution_profile='none'):
         method(engineering_method)
+        if execution_profile not in ('none','python','node'): raise ValueError('Unknown execution profile')
+        if execution_profile!='none' and engineering_method!='pair':
+            raise ValueError('Code execution requires an explicitly selected single cloud Driver')
         if adapter not in self.adapters: raise ValueError('Unknown task adapter')
         if not isinstance(title, str) or not 1<=len(title.strip())<=120: raise ValueError('Invalid title')
         message = self._message(message)
@@ -108,6 +111,7 @@ class TaskEngine:
             if len(self.list())>=20: raise Limit('Experiment task limit reached')
             task = {'id': uuid.uuid4().hex, 'title': title.strip(), 'adapter': adapter, 'target': target,
                     'engineeringMethod':engineering_method,
+                    'executionProfile':execution_profile,
                     'status': 'queued', 'round': 1, 'maxRounds': self.max_rounds,
                     'messages': [{'role':'user','text':message,'round':1,'at':now()}],
                     'events': [], 'results': [], 'createdAt': now(), 'updatedAt': now(),
@@ -182,7 +186,7 @@ class TaskEngine:
                     self._save(task)
                 envelope = {'mode':stage, 'task':{k:task[k] for k in ('title','adapter','target','round')},
                             'history':task['messages'], 'outputs':outputs}
-                envelope['task'].update(id=tid,engineeringMethod=task.get('engineeringMethod','local'))
+                envelope['task'].update(id=tid,engineeringMethod=task.get('engineeringMethod','local'),executionProfile=task.get('executionProfile','none'))
                 estimate = self.backend.estimate(envelope)
                 self._reserve(estimate)
                 with self.lock:
@@ -212,8 +216,13 @@ class TaskEngine:
                             'text':answer['resourceDecision'],'executionNode':answer.get('executionNode'),
                             'leaseId':answer.get('leaseId')})
                     if answer.get('evidence'):
+                        evidence=answer['evidence']
+                        evidence_text='已返回查询证据，可展开检查来源与时间'
+                        if evidence.get('tool')=='github_repository':
+                            evidence_text=('源码读取失败，不能视为已验证' if evidence.get('error') else
+                                f"GitHub 源码：提交 {evidence.get('commit','')[:12]}，已读取 {len(evidence.get('files',[]))} 个文件，未读 {len(evidence.get('omitted',[]))} 个指定文件；GitIngest 已整理带行号上下文")
                         task['events'].append({'at':now(),'round':task['round'],'kind':'tool_result','stage':stage,
-                            'text':'已返回查询证据，可展开检查来源与时间','evidence':answer['evidence']})
+                            'text':evidence_text,'evidence':evidence})
                     self._save(task)
                 if stage=='review' and answer['answer'].get('verdict')=='retry' and attempts<1:
                     attempts+=1

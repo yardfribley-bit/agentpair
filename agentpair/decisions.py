@@ -51,6 +51,15 @@ def decide(answer, evidence=None, tool=None):
         matches=isinstance(temp,(int,float)) and any(abs(float(x)-temp)<=0.05 for x in temperatures)
         rule('delivered_temperature','最终答案是否包含证据中的温度',matches,'核对最终答案中的摄氏温度，不能仅在证据里提供')
         rule('delivered_context','最终答案是否说明时间和来源',bool(re.search(r'\d{1,2}:\d{2}',final)) and str(e.get('source','Open-Meteo')).lower() in final.lower(),'时间与来源必须直接出现在最终答案中')
+    if tool=='github_repository':
+        e=evidence if isinstance(evidence,dict) else {}
+        checks.append({'id':'source_snapshot','question':'是否真正取得固定版本源码',
+                       'value':'yes' if e.get('commit') and e.get('files') and not e.get('error') else 'unknown',
+                       'reason':'需要 GitHub 提交和实际读取文件，不能用模型概述替代源码', 'source':'deterministic'})
+    if 'executionValidated' in answer:
+        checks.append({'id':'isolated_execution','question':'云端构建与测试是否真实通过',
+                       'value':'yes' if answer['executionValidated'] else 'no',
+                       'reason':'由执行器退出码判定，不能以模型自报覆盖', 'source':'deterministic'})
     if 'parallelValidated' in answer:
         checks.append({'id':'parallel_comparison','question':'两个方案是否返回并完成比较与选择','value':'yes' if answer['parallelValidated'] else 'no','reason':'需要两个成功分支、比较结果和明确选择','source':'deterministic'})
     values=[c['value'] for c in checks]

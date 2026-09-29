@@ -35,7 +35,7 @@ class NodeBackend:
             '-o','ConnectTimeout=8','pair@'+self.driver,
             'cd /home/pair/AgentPair && python3 -m agentpair.pair_worker'],
             input=json.dumps(private).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-            timeout=min(timeout,150),check=False)
+            timeout=min(timeout,600),check=False)
         if response.returncode:
             try: reason=json.loads(response.stderr).get('errorType','WorkerError')
             except (ValueError,TypeError): reason='SSH or worker error'
@@ -121,6 +121,14 @@ class CloudDriverBackend(NodeBackend):
             ip,fresh=self._provision()
             self.driver=ip
             if fresh:self._deploy_worker(ip)
+            if envelope['task'].get('executionProfile','none')!='none':
+                from .executor import PROFILES
+                image=PROFILES[envelope['task']['executionProfile']][0]
+                prepared=subprocess.run(['ssh','-i',self.key,'-o','BatchMode=yes','-o','IdentitiesOnly=yes',
+                    '-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+self.known_hosts,
+                    'pair@'+ip,'test -f /etc/agentpair-driver && docker pull '+image],
+                    capture_output=True,timeout=180)
+                if prepared.returncode: raise RuntimeError('Isolated Driver runtime not ready; no code executed')
             result=super().call(role,envelope,timeout)
             result['executionNode']='ucloud_driver'
             result['resourceDecision']='Cloud Driver provisioned under a one-hour lease'
