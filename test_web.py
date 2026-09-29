@@ -45,9 +45,11 @@ class WebTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as error:
                 urllib.request.urlopen(base+'/manifest.json')
             self.assertEqual(error.exception.code, 404)
+            error.exception.close()
             with self.assertRaises(urllib.error.HTTPError) as error:
                 urllib.request.urlopen(urllib.request.Request(base+'/api/run', data=b'{}'))
             self.assertEqual(error.exception.code, 501)
+            error.exception.close()
         finally:
             server.shutdown(); server.server_close(); thread.join()
 

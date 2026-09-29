@@ -1,0 +1,65 @@
+import tempfile
+import unittest
+from pathlib import Path
+from agentpair.tasks import TaskEngine, Conflict, Limit
+
+
+class FakeBackend:
+    def __init__(self): self.calls=[]; self.on_call=None
+    def estimate(self,envelope): return .10
+    def call(self,role,envelope,timeout):
+        self.calls.append((role,envelope))
+        if self.on_call: self.on_call()
+        return {'answer':{'summary':envelope['mode']+' round '+str(envelope['task']['round'])},'usage':{'total_tokens':10}}
+
+
+class TaskTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp=tempfile.TemporaryDirectory(); self.path=Path(self.tmp.name)/'tasks.db'
+        self.backend=FakeBackend(); self.engine=TaskEngine(self.path,self.backend,start=False)
+    def tearDown(self): self.engine.close(); self.tmp.cleanup()
+    def test_two_round_history_and_isolation(self):
+        t=self.engine.create('first','initial goal'); other=self.engine.create('other','PRIVATE_OTHER')
+        self.engine.process(t['id']); self.engine.followup(t['id'],'please refine'); self.engine.process(t['id'])
+        done=self.engine.get(t['id']); self.assertEqual(done['status'],'completed'); self.assertEqual(len(done['results']),2)
+        self.assertEqual(len(self.backend.calls),6)
+        history=self.backend.calls[3][1]['history']
+        self.assertEqual(history[0]['text'],'initial goal'); self.assertEqual(history[-1]['text'],'please refine')
+        self.assertNotIn('PRIVATE_OTHER',str(history)); self.assertEqual(self.engine.get(other['id'])['status'],'queued')
+    def test_active_task_conflict(self):
+        t=self.engine.create('task','goal')
+        with self.assertRaises(Conflict): self.engine.followup(t['id'],'new goal')
+    def test_cancel_queued_no_calls(self):
+        t=self.engine.create('task','goal'); self.engine.cancel(t['id']); self.engine.process(t['id'])
+        self.assertEqual(self.backend.calls,[])
+    def test_cancel_inflight_prevents_next_stage(self):
+        t=self.engine.create('task','goal'); self.backend.on_call=lambda:self.engine.cancel(t['id'])
+        self.engine.process(t['id']); self.assertEqual(len(self.backend.calls),1)
+        self.assertEqual(self.engine.get(t['id'])['status'],'cancelled')
+    def test_budget_persists_after_restart(self):
+        t=self.engine.create('task','goal'); self.engine.process(t['id'])
+        new=TaskEngine(self.path,self.backend,budget=.35,start=False)
+        t2=new.create('next','goal'); new.process(t2['id'])
+        self.assertEqual(new.get(t2['id'])['status'],'failed'); self.assertEqual(len(self.backend.calls),3); new.close()
+    def test_restart_does_not_replay_paid_jobs(self):
+        t=self.engine.create('task','goal'); new=TaskEngine(self.path,self.backend,start=False)
+        self.assertEqual(new.get(t['id'])['status'],'interrupted'); self.assertTrue(new.jobs.empty()); new.close()
+    def test_estimate_settlement_idempotent(self):
+        self.engine._reserve(.10)
+        self.engine._settle('test',.10,.02)
+        self.engine._settle('test',.10,.02)
+        self.assertAlmostEqual(self.engine.usage()['estimatedReservedCNY'],.02)
+        self.engine._reserve(.10)
+        self.assertAlmostEqual(self.engine.usage()['estimatedReservedCNY'],.12)
+    def test_round_limit(self):
+        t=self.engine.create('task','goal')
+        for i in range(3):
+            if i:self.engine.followup(t['id'],'more')
+            self.engine.process(t['id'])
+        with self.assertRaises(Limit): self.engine.followup(t['id'],'fourth')
+    def test_ssrf_rejected(self):
+        for target in ('http://127.0.0.1/','http://169.254.169.254/','http://10.0.0.1/','http://example.com/','http://102.68.79.149:22/'):
+            with self.assertRaises(ValueError): self.engine.create('task','goal','public_site',target)
+
+
+if __name__=='__main__': unittest.main()

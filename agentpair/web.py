@@ -53,7 +53,12 @@ def handler_for(directory, snapshot=None):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             try:
-                if self.path == '/api/run':
+                public_demo = snapshot.parent/'public_conversation.json' if snapshot else None
+                if self.path == '/api/demo' and public_demo and public_demo.is_file():
+                    if public_demo.stat().st_size > 2_000_000: raise ValueError('Demo too large')
+                    body = public_demo.read_bytes()
+                    mime = 'application/json; charset=utf-8'
+                elif self.path == '/api/run':
                     if snapshot:
                         data = json.loads(snapshot.read_text(encoding='utf-8'))
                         if data.get('target') != 'http://102.68.79.149/':
@@ -63,10 +68,14 @@ def handler_for(directory, snapshot=None):
                         data = project_run(directory)
                     body = json.dumps(data, ensure_ascii=False).encode()
                     mime = 'application/json; charset=utf-8'
-                elif self.path in ('/', '/app.js', '/style.css'):
-                    name = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css'}[self.path]
+                elif self.path in ('/', '/app.js', '/style.css', '/pair_flow.js', '/pair_flow.css', '/workspace.js', '/workspace.css'):
+                    name = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css',
+                            '/pair_flow.js':'pair_flow.js','/pair_flow.css':'pair_flow.css',
+                            '/workspace.js':'workspace.js','/workspace.css':'workspace.css'}[self.path]
+                    if self.path=='/' and public_demo and public_demo.is_file(): name='workspace.html'
                     body = (ASSETS / name).read_bytes()
-                    mime = {'index.html': 'text/html', 'app.js': 'application/javascript', 'style.css': 'text/css'}[name]+'; charset=utf-8'
+                    if name=='workspace.html': body=body.replace(b'<body>',b'<body data-readonly="true">')
+                    mime = {'.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css'}[Path(name).suffix]+'; charset=utf-8'
                 else:
                     self.send_error(404); return
                 self.send_response(200)
