@@ -1,0 +1,15 @@
+[Unit]
+Description=Release expired AgentPair UCloud Driver leases
+
+[Service]
+Type=oneshot
+User=agentpair
+Group=agentpair
+WorkingDirectory=/opt/agentpair
+ExecStart=/usr/bin/python3 -m agentpair.reaper /etc/agentpair/private.json
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/agentpair
+PrivateTmp=true

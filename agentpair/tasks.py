@@ -196,6 +196,10 @@ class TaskEngine:
                     task['messages'].append({'role':role,'stage':stage,'round':task['round'],
                                              'at':now(),'answer':answer['answer'], 'usage':answer.get('usage')})
                     task['events'].append({'at':now(),'round':task['round'],'kind':'stage_completed','role':role,'stage':stage})
+                    if stage=='driver' and answer.get('resourceDecision'):
+                        task['events'].append({'at':now(),'round':task['round'],'kind':'resource_decision',
+                            'text':answer['resourceDecision'],'executionNode':answer.get('executionNode'),
+                            'leaseId':answer.get('leaseId')})
                     if answer.get('evidence'):
                         task['events'].append({'at':now(),'round':task['round'],'kind':'tool_result','stage':stage,
                             'text':'已返回查询证据，可展开检查来源与时间','evidence':answer['evidence']})

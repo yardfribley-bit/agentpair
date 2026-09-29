@@ -1,6 +1,14 @@
 # 部署与运行
 
-当前脚本用于双 Linux 节点实验，并非通用安装器。不要直接复用历史机器地址或已过期的租期。
+持续运行的 Navigator 已部署在用户指定的 `50.118.187.180`；旧的双节点实验脚本仍保留，并非通用安装器。不要直接复用历史机器地址或已过期的租期。
+
+## 持久 Navigator 与按需 Driver
+
+工作台：<https://50.118.187.180/>，HTTPS 证书和密码登录。服务由 `agentpair-navigator.service` 运行，Nginx 反向代理到 `127.0.0.1:9090`。证书续期由 `agentpair-certbot.timer` 处理。UCloud 凭据仅在服务器 `/etc/agentpair/private.json`，文件仅服务账户可读，不能放进 Git 或模型提示词。
+
+Driver 默认在 Navigator 节点本地执行。只有规划选择 `executionMode=cloud_driver` 才由 `CloudDriverBackend` 在 `cn-bj2` 创建一台按量付费的 Ubuntu Driver，通过限源 IP 防火墙和专用 SSH 密钥连接。每台最多租一小时；独立的 `agentpair-reaper.timer` 每分钟检查到期租约。当前最多支持每个任务一台云端 Driver，不支持多 Driver 并行。详见 [资源控制](RESOURCE_CONTROL.md)。
+
+此部署的代码同步入口为 `sync_persistent_navigator.py`，它包含特定服务器地址和密钥路径，仅供该实例维护。若服务器重建，须重新核验 SSH 主机身份和密钥；不要跳过校验。
 
 ## 启动条件与配置
 

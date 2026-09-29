@@ -1,0 +1,6 @@
+[Unit]
+Description=Renew AgentPair IP TLS certificate
+
+[Service]
+Type=oneshot
+ExecStart=/opt/agentpair-certbot/bin/certbot renew --quiet --deploy-hook "systemctl reload nginx"

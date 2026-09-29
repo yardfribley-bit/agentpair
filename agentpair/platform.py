@@ -11,7 +11,9 @@ import secrets
 import sys
 import time
 from .tasks import TaskEngine, Conflict, Limit
-from .transport import NodeBackend
+from .transport import NodeBackend, CloudDriverBackend
+from .ucloud import UCloudClient
+from .resources import ResourceManager
 from .web import ASSETS
 
 
@@ -24,7 +26,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None):
             self.send_response(status)
             self.send_header('Content-Type','application/json; charset=utf-8')
             self.headers_common(len(body))
-            if cookie: self.send_header('Set-Cookie','agentpair='+session+'; HttpOnly; SameSite=Strict; Path=/')
+            if cookie: self.send_header('Set-Cookie','agentpair='+session+'; HttpOnly; SameSite=Strict; Path=/'+('; Secure' if origin.startswith('https://') else ''))
             self.end_headers(); self.wfile.write(body)
 
         def headers_common(self, size):
@@ -113,7 +115,17 @@ def main():
     # One-line private SSH stdin bootstrap; never log/store provider credentials.
     private=json.loads(sys.stdin.readline())
     if len(private['password'])<20: raise ValueError('Workspace password too short')
-    backend=NodeBackend(private['relayToken'],args.driver,args.key,args.known_hosts)
+    if 'cloud' in private:
+        cloud=private['cloud']
+        client=UCloudClient(cloud['publicKey'],cloud['privateKey'],cloud['projectId'],cloud['region'])
+        manager=ResourceManager(client,cloud['leaseDirectory'],max_hosts=cloud.get('maxHosts',4),
+                                max_seconds=cloud.get('maxSeconds',3600),
+                                max_hourly_cny=cloud.get('maxHourlyCNY',1.0))
+        backend=CloudDriverBackend(private['relayToken'],manager,args.key,args.known_hosts,
+                                   cloud['sshPublicKey'],cloud['firewallId'],cloud['workerRoot'],
+                                   cloud.get('zone','cn-bj2-04'))
+    else:
+        backend=NodeBackend(private['relayToken'],args.driver,args.key,args.known_hosts)
     engine=TaskEngine(args.database,backend,budget=None)
     server=ThreadingHTTPServer(('0.0.0.0' if args.public_demo else '127.0.0.1',args.port),handler_for(engine,private['password'],args.origin,args.public_demo,private.get('expiresAt')))
     print('Authenticated Navigator workspace ready',flush=True)
