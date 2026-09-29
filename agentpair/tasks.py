@@ -130,7 +130,7 @@ class TaskEngine:
             raise Limit('Invalid or excessive request estimate')
         with self.lock, self.connection() as db:
             used = db.execute('SELECT reserved FROM ledger WHERE id=1').fetchone()[0]
-            if used+estimate>self.budget: raise Limit('Experiment model estimate budget exhausted')
+            if self.budget is not None and used+estimate>self.budget: raise Limit('Experiment model estimate budget exhausted')
             db.execute('UPDATE ledger SET reserved=? WHERE id=1', (used+estimate,))
         return estimate
 

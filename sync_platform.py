@@ -1,6 +1,7 @@
 """Update this experiment without adding instances, calls or changing password."""
 import getpass
 import argparse
+import datetime
 import io
 import json
 from pathlib import Path
@@ -30,7 +31,8 @@ def main():
         ssh(host,'tar -xf - -C /home/pair/AgentPair',bundle.getvalue())
     password=(ROOT/'runtime'/'workspace-password.txt').read_text().strip()
     print(ssh(NAV,'cd /home/pair/AgentPair; python3 -m agentpair.bootstrap',
-              json.dumps({'relayToken':token,'password':password,'publicDemo':args.public_demo}).encode()).decode().strip())
+              json.dumps({'relayToken':token,'password':password,'publicDemo':args.public_demo,
+                          'expiresAt':datetime.datetime.fromisoformat('2026-09-29T08:30:28+00:00').timestamp()}).encode()).decode().strip())
 
 
 if __name__=='__main__': main()

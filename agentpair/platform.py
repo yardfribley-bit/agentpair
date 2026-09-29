@@ -15,7 +15,7 @@ from .transport import NodeBackend
 from .web import ASSETS
 
 
-def handler_for(engine, password, origin, public_demo=False):
+def handler_for(engine, password, origin, public_demo=False, expires_at=None):
     session=secrets.token_urlsafe(32); csrf=secrets.token_urlsafe(32)
     attempts=[]
     class Handler(BaseHTTPRequestHandler):
@@ -59,6 +59,8 @@ def handler_for(engine, password, origin, public_demo=False):
             except KeyError: self.respond(404,{'error':'Task not found'})
 
         def do_POST(self):
+            if expires_at is not None and time.time()>=expires_at:
+                self.respond(410,{'error':'本次实验已到期'}); return
             if self.headers.get('Origin')!=origin:
                 self.respond(403,{'error':'Origin rejected'}); return
             if self.headers.get('Content-Type','').split(';')[0]!='application/json':
@@ -112,8 +114,8 @@ def main():
     private=json.loads(sys.stdin.readline())
     if len(private['password'])<20: raise ValueError('Workspace password too short')
     backend=NodeBackend(private['relayToken'],args.driver,args.key,args.known_hosts)
-    engine=TaskEngine(args.database,backend)
-    server=ThreadingHTTPServer(('0.0.0.0' if args.public_demo else '127.0.0.1',args.port),handler_for(engine,private['password'],args.origin,args.public_demo))
+    engine=TaskEngine(args.database,backend,budget=None)
+    server=ThreadingHTTPServer(('0.0.0.0' if args.public_demo else '127.0.0.1',args.port),handler_for(engine,private['password'],args.origin,args.public_demo,private.get('expiresAt')))
     print('Authenticated Navigator workspace ready',flush=True)
     try: server.serve_forever()
     finally: server.server_close(); engine.close()
