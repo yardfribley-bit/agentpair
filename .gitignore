@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+runtime/
+logs/
+__pycache__/
+private-data/
+reports/
+runs/
