@@ -14,6 +14,7 @@ from .tasks import TaskEngine, Conflict, Limit
 from .transport import NodeBackend, CloudDriverBackend
 from .ucloud import UCloudClient
 from .resources import ResourceManager
+from .jev import JevClient, AdapterClient
 from .web import ASSETS
 
 
@@ -126,6 +127,11 @@ def main():
                                    cloud.get('zone','cn-bj2-04'))
     else:
         backend=NodeBackend(private['relayToken'],args.driver,args.key,args.known_hosts)
+    jev=private.get('jev',{})
+    if jev.get('provider')=='system_one_adapter':
+        backend.jev=AdapterClient(private['relayToken'],model=jev.get('model','deepseek-v4-flash'),threshold=jev.get('threshold',.8))
+    elif jev.get('apiKey'):
+        backend.jev=JevClient(jev['apiKey'],model=jev.get('model','jev-latest'),threshold=jev.get('threshold',.8))
     engine=TaskEngine(args.database,backend,budget=None)
     server=ThreadingHTTPServer(('0.0.0.0' if args.public_demo else '127.0.0.1',args.port),handler_for(engine,private['password'],args.origin,args.public_demo,private.get('expiresAt'),private.get('username','admin')))
     print('Authenticated Navigator workspace ready',flush=True)

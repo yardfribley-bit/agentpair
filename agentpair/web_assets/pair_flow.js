@@ -31,10 +31,11 @@ window.PairFlow=class PairFlow{
    if(!final&&complete)for(const finding of result.answer.findings||[])add('p',finding.claim,'final-answer');
   }
   if(result?.answer?.decision){
+   if(result.answer.jev)add('small',result.answer.jev.status==='evaluated'?'独立决策：'+result.answer.jev.model+' · '+result.answer.jev.provider:result.answer.jev.note);
    const decision=result.answer.decision;
    const audit=document.createElement('details');const title=document.createElement('summary');title.textContent='查看 Navigator 验收依据';audit.append(title);box.append(audit);
    const auditAdd=(tag,text)=>{const node=document.createElement(tag);node.textContent=text;audit.append(node);};
-   for(const check of decision.checks){auditAdd('p',({yes:'✓',no:'✕',unknown:'?'}[check.value]||'?')+' '+check.question+'：'+check.reason+'（'+(check.source==='deterministic'?'程序核验':'模型判断')+'）','progress-outcome');}
+   for(const check of decision.checks){auditAdd('p',({yes:'✓',no:'✕',unknown:'?'}[check.value]||'?')+' '+check.question+'：'+check.reason+'（'+(check.source==='deterministic'?'程序核验':check.source==='jev'?'独立决策模型':'模型判断')+'）','progress-outcome');}
    auditAdd('small',decision.confidenceNote);
   }
   if(this.status==='blocked')add('p',result?.answer?.summary||'缺少完成任务所需的证据或能力。','progress-outcome');

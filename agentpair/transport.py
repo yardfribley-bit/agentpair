@@ -9,11 +9,13 @@ import subprocess
 import tarfile
 import time
 from .pair_worker import run
+from .jev import apply_jev
 
 
 class NodeBackend:
     def __init__(self, token, driver, key, known_hosts):
         self.token=token; self.driver=driver; self.key=key; self.known_hosts=known_hosts
+        self.jev=None
 
     def estimate(self, envelope):
         # Reserve conservatively BEFORE collection/model invocation. Failed calls
@@ -21,7 +23,7 @@ class NodeBackend:
         return 0.10
 
     def call(self, role, envelope, timeout):
-        if role=='navigator': return run(envelope,self.token)
+        if role=='navigator': return apply_jev(self.jev,envelope,run(envelope,self.token))
         if role!='driver': raise ValueError('Invalid role')
         private=dict(envelope,relayToken=self.token)
         response=subprocess.run(['ssh','-i',self.key,'-o','BatchMode=yes','-o','IdentitiesOnly=yes',

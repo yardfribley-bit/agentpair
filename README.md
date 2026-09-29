@@ -44,7 +44,7 @@ AgentPair 是一个以结队编程为核心的双 Agent 协作框架，提供任
 
 Navigator 借鉴 Jev 的结构化决策思想，分别判断目标是否满足、依据是否充分、结果是否一致。每项返回 yes、no 或 unknown 和理由，程序据此选择交付、补查或需要补充信息。天气任务另有数值、单位和时间检查。
 
-**本项目未集成 Jev API。** 模型判断仍可能出错，未校准的自信程度不作为准确率。详见 [决策机制](DECISIONS.md)。
+已接入 TypeSafe 官方开源 System One Adapter，使用现有中转的 `deepseek-v4-flash` 执行规划判断和独立验收。运行的是 DeepSeek，并非 Jev 本体；模型自报概率不作为准确率。详见 [决策机制](DECISIONS.md)。
 
 ## 当前实现范围
 
