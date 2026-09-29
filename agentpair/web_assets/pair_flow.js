@@ -24,6 +24,12 @@ window.PairFlow=class PairFlow{
   labels.forEach((label,i)=>{const n=document.createElement('span');n.textContent=label;const stage=['plan','driver','review'][i-1];n.className=(i===0&&this.data.id||i===4&&complete||done.some(e=>e.stage===stage))?'finished':'';if(stage===active)n.classList.add('active');track.append(n);});
   const failure=events.filter(e=>e.errorType).at(-1);
   const result=this.records.filter(m=>m.round===this.round&&m.stage==='review').at(-1);
+  if(result?.answer?.decision){
+   const decision=result.answer.decision;
+   add('h3','Navigator 验收依据');
+   for(const check of decision.checks){add('p',({yes:'✓',no:'✕',unknown:'?'}[check.value]||'?')+' '+check.question+'：'+check.reason+'（'+(check.source==='deterministic'?'程序核验':'模型判断')+'）','progress-outcome');}
+   add('small',decision.confidenceNote);
+  }
   if(this.status==='blocked')add('p',result?.answer?.summary||'缺少完成任务所需的证据或能力。','progress-outcome');
   add('p',this.status==='failed'?'停止原因：'+(failure?.errorType||'请展开运行记录查看'):
     complete?(result?.answer?.summary||'结果已返回，可以继续补充要求。'):

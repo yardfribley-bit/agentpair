@@ -5,6 +5,7 @@ import urllib.request
 from .site_probe import collect
 from .site_worker import validate_findings
 from .weather import collect as weather
+from .decisions import decide
 
 
 def run(envelope, token):
@@ -43,6 +44,8 @@ def run(envelope, token):
     system+=('复核阶段必须增加verdict字段：pass/retry/blocked。仅实际满足用户要求时pass；可补查或修正时retry并写corrections；缺能力时blocked。'
              '天气答复必须给出地点、数据时间及时区、温度单位、来源URL，并说明模型估算而非实测。检查证据fresh、地点匹配和数值。没有证据或不新鲜不能pass。补查时根据前次review修正，禁止重复空泛拒绝。')
     if stage=='plan': system+='最终JSON必须包含tool字段，天气查询为{"name":"weather","city":"Shanghai等英文地名"}；不可省略。'
+    if stage=='review':
+        system+='必须输出checks对象，包含goal_met、grounded、consistent三项，每项为{"value":"yes/no/unknown","reason":"具体证据或缺口"}。分别检查用户目标、依据充分性、结论与证据一致性。天气还须核对地点；缺少证据填unknown。不要输出猜测的置信度数值。'
     messages=[{'role':'system','content':system},{'role':'user','content':json.dumps(context,ensure_ascii=False,separators=(',',':'))}]
     size=len(json.dumps(messages,ensure_ascii=False).encode())
     estimate=(size+1024)*(0.000408/117)+1200*(0.000408/59)
@@ -63,9 +66,8 @@ def run(envelope, token):
             answer['citationWarning']='模型生成了未提供的证据编号，已移除；请根据原始工具结果复核。'
             if stage=='review': answer['verdict']='retry'
     if stage=='review':
-        if answer.get('verdict') not in ('pass','retry','blocked'): answer['verdict']='blocked'
-        if tool.get('name')=='weather' and (not evidence or not evidence.get('fresh')):
-            answer['verdict']='retry'
+        answer['decision']=decide(answer,evidence,tool.get('name'))
+        answer['verdict']={'deliver':'pass','recheck':'retry','needs_information':'blocked'}[answer['decision']['action']]
     output={'answer':answer,'usage':result.get('usage',{}),'model':result.get('model'),
             'estimatedUpperCostCNY':estimate,'budgetMode':'historical_estimate_not_hard_cap'}
     if evidence: output['evidence']=evidence
