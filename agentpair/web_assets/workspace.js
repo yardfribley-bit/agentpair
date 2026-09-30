@@ -1,4 +1,6 @@
 const $=id=>document.getElementById(id);let csrf='',current=null,last='',logged=false,admin=false;
+const deviceLink=document.createElement('a');deviceLink.href='/devices';deviceLink.textContent='▣ 我的设备';deviceLink.style.cssText='display:block;padding:16px;color:inherit;text-decoration:none';document.querySelector('aside .brand').after(deviceLink);
+window.addEventListener('DOMContentLoaded',()=>{const css=document.createElement('link');css.rel='stylesheet';css.href='/workbench.css';document.head.append(css);const script=document.createElement('script');script.src='/workbench.js';script.onload=()=>{const consoleScript=document.createElement('script');consoleScript.src='/team_console.js';document.body.append(consoleScript);};document.body.append(script);});
 const readonly=document.body.dataset.readonly==='true';
 const deliverables=el('section',null,'card hidden');deliverables.id='deliverables';$('pair-board').after(deliverables);
 function renderDeliverables(task){
@@ -13,6 +15,7 @@ function renderDeliverables(task){
  };
  for(const m of task.messages.filter(m=>m.stage==='driver'&&m.round===task.round)){addCode(m.answer,'Driver');for(const [branch,data] of Object.entries(m.answer?.branches||{}))addCode(data.result?.answer,branch);}
  for(const m of task.messages.filter(m=>m.stage==='driver'&&m.round===task.round&&m.answer?.execution)){const x=m.answer.execution,box=el('details'),button=el('button','下载代码补丁');button.onclick=()=>download(x.patch||'',task.id+'.patch');box.append(el('summary','隔离构建/测试：'+x.status),button,el('pre',JSON.stringify(x.steps,null,2)));deliverables.append(box);}
+ for(const m of task.messages.filter(m=>m.stage==='driver'&&m.round===task.round&&m.answer?.toolSteps)){const box=el('details');box.append(el('summary','网页操作记录 · '+m.answer.browserStatus));for(const step of m.answer.toolSteps){box.append(el('p',(step.evidenceId||'')+' · '+(step.action?.op||'操作')+' · '+(step.ok?'成功':'失败')),el('pre',step.result?.text||step.reason||step.error||''));}deliverables.append(box);}
  deliverables.append(el('small','交付位置：本任务记录。只有隔离执行日志能证明对应命令已运行；未推送 GitHub，未执行的验证不算通过。'));
  if(review?.answer?.finalAnswer){const button=el('button','下载结果说明','secondary');button.onclick=()=>download(review.answer.finalAnswer,'result-'+task.id+'.txt');deliverables.append(button);}
 }
@@ -57,6 +60,7 @@ async function refreshResources(){
  if(readonly||resourcesBusy)return;resourcesBusy=true;
  try{
   const d=await api('/api/resources');resourcePanel.replaceChildren(el('h2','实时资源消耗'),el('small','更新于 '+new Date(d.updatedAt).toLocaleTimeString('zh-CN')));
+  if(d.leaseAlerts?.length){const alert=el('div',null,'notice caution');alert.append(el('strong','租约提醒'));for(const item of d.leaseAlerts)alert.append(el('p',item.message));resourcePanel.append(alert);}
   resourceSummary.textContent='资源 · '+d.activeDrivers+' 台 Driver · '+(d.tokens.input+d.tokens.output).toLocaleString()+' tokens';
   const grid=el('div',null,'resource-grid');resourcePanel.append(grid);
   const metric=(name,value,note)=>{const c=el('div',null,'resource-metric');c.append(el('small',name),el('strong',value),el('small',note));grid.append(c);};
@@ -72,7 +76,7 @@ async function refreshResources(){
   metric('Navigator 磁盘',gb(d.navigator.diskUsedBytes),'/ '+gb(d.navigator.diskTotalBytes));
   const detail=el('details'),title=el('summary','展开模型、服务器与任务明细');detail.append(title);resourcePanel.append(detail);
   for(const m of d.models)detail.append(el('p',m.model+' · '+m.kind+' · '+m.calls+' 次 · 输入 '+fmt(m.input)+' / 输出 '+fmt(m.output)+' token'));
-  for(const [i,l] of d.leases.entries())detail.append(el('p','Driver '+(i+1)+' · '+({active:'租约有效',released:'已释放',creating:'创建中',reconcile_required:'待核对'}[l.state]||l.state)+' · 剩余 '+Math.floor(l.remainingSeconds/60)+' 分 '+l.remainingSeconds%60+' 秒 · 报价 ¥'+l.hourlyQuoteCNY+'/小时 · 累计估算 '+(l.estimatedBilledCNY==null?'未知':'¥'+l.estimatedBilledCNY.toFixed(2))));
+  for(const [i,l] of d.leases.entries())detail.append(el('p','Driver '+(i+1)+' · '+(l.managed?'Navigator 托管':'外部资源')+' · '+({active:'租约有效',released:'已释放',creating:'创建中',reconcile_required:'待核对'}[l.state]||l.state)+' · 剩余 '+Math.floor(l.remainingSeconds/60)+' 分 '+l.remainingSeconds%60+' 秒 · 报价 ¥'+l.hourlyQuoteCNY+'/小时 · 累计估算 '+(l.estimatedBilledCNY==null?'未知':'¥'+l.estimatedBilledCNY.toFixed(2))));
   for(const task of d.tasks)detail.append(el('p',task.title+' · '+(labels[task.status]||task.status)+' · '+fmt(task.tokens)+' token'));
   if(d.leaseError)detail.append(el('p',d.leaseError));
   for(const note of d.notes)detail.append(el('small',note,'resource-note'));
