@@ -44,7 +44,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
 
         def do_GET(self):
             paths={'/':'workspace.html','/workspace.js':'workspace.js','/style.css':'style.css','/workspace.css':'workspace.css',
-                   '/pair_flow.js':'pair_flow.js','/pair_flow.css':'pair_flow.css'}
+                   '/pair_flow.js':'pair_flow.js','/pair_flow.css':'pair_flow.css','/collaboration.css':'collaboration.css'}
             if self.path in paths:
                 try: body=(ASSETS/paths[self.path]).read_bytes()
                 except OSError: self.respond(503,{'error':'Static asset unavailable'}); return

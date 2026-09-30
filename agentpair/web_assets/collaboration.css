@@ -1,0 +1,18 @@
+.collaboration-trace{margin:24px 0;padding:20px;background:#101c29;border:1px solid #365063;border-radius:14px;color:#d7e9f1}
+.pair-flow.has-task .flow-canvas,.pair-flow.has-task .flow-bottom,.pair-flow.has-task .flow-steps,.pair-flow.has-task .flow-replay{display:none}
+.trace-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.trace-heading h3{margin:0;font-size:18px;color:#eef8f5}.trace-heading small{color:#91a9b9}
+.trace-lanes{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin:18px 0}
+.trace-lane{display:flex;flex-direction:column;gap:9px;padding:14px;background:#17283a;border:1px solid #30495e;border-radius:10px}
+.trace-lane strong{font-size:14px}.trace-state{font-size:12px;color:#a9bdc9}.trace-state.is-active{color:#8fe4bd}
+.trace-state.is-active:before{content:'● ';animation:trace-breathe 1.6s ease-in-out infinite}
+.trace-details{margin:0!important;border-top:1px solid #314354;padding-top:14px;color:#d7e9f1!important}
+.trace-details>summary{cursor:pointer;color:#b8e7d8}.trace-timeline{list-style:none;margin:16px 0 0;padding:0;max-height:520px;overflow:auto}
+.trace-event{position:relative;padding:11px 12px 12px 22px;margin-left:8px;border-left:2px solid #45677a;border-bottom:1px solid #263c4d}
+.trace-event:before{content:'';position:absolute;left:-6px;top:20px;width:9px;height:9px;border-radius:50%;background:#74cbb3}
+.trace-branch_failed:before,.trace-stopped:before{background:#e78b7f}.trace-branch_handoff:before,.trace-handoff_requested:before{background:#bca9f1}
+.trace-meta{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;font-size:12px}.trace-meta time{color:#89a3b4}.trace-meta strong{color:#e7f5f1}.trace-meta span{color:#abd8cb}
+.trace-event p{margin:7px 0 3px;font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.trace-event small{display:block;color:#91a8b8;line-height:1.5;overflow-wrap:anywhere}
+@keyframes trace-breathe{50%{opacity:.35}}@media(prefers-reduced-motion:reduce){.trace-state.is-active:before{animation:none}}
+@media(max-width:680px){.collaboration-trace{padding:14px}.trace-lanes{grid-template-columns:1fr 1fr}}

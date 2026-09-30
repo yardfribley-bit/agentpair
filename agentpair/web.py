@@ -68,9 +68,9 @@ def handler_for(directory, snapshot=None):
                         data = project_run(directory)
                     body = json.dumps(data, ensure_ascii=False).encode()
                     mime = 'application/json; charset=utf-8'
-                elif self.path in ('/', '/app.js', '/style.css', '/pair_flow.js', '/pair_flow.css', '/workspace.js', '/workspace.css'):
+                elif self.path in ('/', '/app.js', '/style.css', '/pair_flow.js', '/pair_flow.css', '/collaboration.css', '/workspace.js', '/workspace.css'):
                     name = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css',
-                            '/pair_flow.js':'pair_flow.js','/pair_flow.css':'pair_flow.css',
+                            '/pair_flow.js':'pair_flow.js','/pair_flow.css':'pair_flow.css','/collaboration.css':'collaboration.css',
                             '/workspace.js':'workspace.js','/workspace.css':'workspace.css'}[self.path]
                     if self.path=='/' and public_demo and public_demo.is_file(): name='workspace.html'
                     body = (ASSETS / name).read_bytes()

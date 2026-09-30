@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from .methods import method
+from .collaboration import message as collaboration_message
 
 
 class Conflict(ValueError): pass
@@ -176,7 +177,7 @@ class TaskEngine:
             task = self._load(tid)
             if task['status'] != 'queued': return
             task['status']='running'; self._save(task)
-        deadline = time.monotonic()+self.deadline
+        deadline = time.monotonic()+(max(self.deadline,1800) if task.get('engineeringMethod')=='parallel' else self.deadline)
         outputs = {}
         try:
             stages=[('plan','navigator'),('driver','driver'),('review','navigator')]
@@ -197,8 +198,11 @@ class TaskEngine:
                     source = {'plan':'user','driver':'navigator','review':'driver'}[stage]
                     source_text = (task['messages'][-1].get('text','') if stage=='plan'
                                    else outputs['plan' if stage=='driver' else 'driver']['answer'].get('summary',''))
+                    packet=collaboration_message(source,role,'assignment',source_text,
+                        task_id=tid,round_number=task['round'],phase=stage)
                     task['events'].append({'at':now(),'round':task['round'],'kind':'handoff_requested',
                         'from':source,'to':role,'stage':stage,'summary':source_text[:240],
+                        'message':packet,
                         'note':'Context passed to backend; not a network receipt confirmation.'})
                     self._save(task)
                 answer = self.backend.call(role, envelope, max(1,deadline-time.monotonic()))
@@ -213,7 +217,8 @@ class TaskEngine:
                     task = self._load(tid)
                     task['messages'].append({'role':role,'stage':stage,'round':task['round'],
                                              'at':now(),'answer':answer['answer'], 'usage':answer.get('usage'),'model':answer.get('model')})
-                    task['events'].append({'at':now(),'round':task['round'],'kind':'stage_completed','role':role,'stage':stage})
+                    task['events'].append({'at':now(),'round':task['round'],'kind':'stage_completed','role':role,'stage':stage,
+                        'messageId':packet['id'],'summary':str(answer['answer'].get('summary',''))[:500]})
                     if stage=='driver' and answer.get('resourceDecision'):
                         task['events'].append({'at':now(),'round':task['round'],'kind':'resource_decision',
                             'text':answer['resourceDecision'],'executionNode':answer.get('executionNode'),

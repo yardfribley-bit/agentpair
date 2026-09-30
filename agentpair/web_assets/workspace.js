@@ -43,7 +43,7 @@ const methodLabel=el('label','工程方法'),methodSelect=el('select');methodSel
 const methodInfo=el('p',null,'notice'),methodOptions={
  local:['默认协作 · 不开云机器','适合查询、讨论和轻量建议。优势：启动快、无新增云机费。使用常驻 Navigator，0 台云 Driver；每轮通常 3 次生成调用、2 次决策调用，返工时增加。'],
  pair:['云端结对 · 1 台 Driver','Navigator 规划复核、Driver 独立处理。最多占用 1 台云 Driver，优先复用现有租约；约 ¥0.15/小时（参考报价），模型费用另计。可额外选择实验性隔离构建/测试；尚待真实云机验收，不在线安装项目依赖。'],
- parallel:['并行方案探索与评审 · 2 台 Driver','适合技术路线不确定、希望比较两种方案的任务。优势：A/B 分别探索，Navigator（C）统一比较并综合。最多占用 2 台云 Driver，优先复用；合计约 ¥0.30/小时（参考报价）。通常 4 次生成调用、2 次决策调用，返工更多；不保证优于单路线。当前代码产物为建议，未执行测试。']};
+ parallel:['并行方案探索与评审 · 2 台 Driver','适合技术路线不确定、希望比较两种方案的任务。A/B 独立探索后交换发现，交叉复核并分别修订，Navigator（C）统一验收。最多占用 2 台云 Driver，优先复用；合计约 ¥0.30/小时（参考报价）。基础流程约 8 次生成调用（规划、A/B 各探索/复核/修订、最终验收），另有决策调用与可能的返工，模型费用随之增加。当前代码产物为建议，未执行测试。']};
 for(const [value,[label]] of Object.entries(methodOptions)){const option=el('option',label);option.value=value;methodSelect.append(option);}
 methodLabel.firstChild.textContent='3 · 工程方法与资源';methodLabel.append(methodSelect);acceptanceLabel.after(methodLabel,methodInfo);
 const delivery=el('div',null,'delivery-note');delivery.append(el('h3','4 · 交付位置'),el('p','保存在本任务「成果与代码」中。云端执行任务提供代码补丁、构建/测试日志和退出码；未选择执行环境时仅提供建议。不会自动提交 GitHub 或导出安装包。'));$('create-form').append(delivery);

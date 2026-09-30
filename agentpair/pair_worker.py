@@ -7,10 +7,13 @@ from .site_worker import validate_findings
 from .weather import collect as weather
 from .decisions import decide
 from .repository import collect as repository
+from .collaboration import validate as validate_collaboration
 
 
 def run(envelope, token):
     task=envelope['task']; stage=envelope['mode']; outputs=envelope.get('outputs',{})
+    if task.get('collaborationMessage'):
+        validate_collaboration(task['collaborationMessage'],task_id=task['id'],recipient=task['branch'])
     adapter=task['adapter']
     if adapter not in ('discussion','public_site') or stage not in ('plan','driver','review'):
         raise ValueError('Unsupported adapter or stage')
@@ -60,6 +63,22 @@ def run(envelope, token):
         system+=('用户选择并行方案探索：Navigator 担任 C，Driver A/B 独立探索。规划必须输出 approaches 数组，包含两个不同且符合当前能力的具体方案。'
                  'Driver 必须按 task.approach 执行，不可声称代码已运行。复核必须比较两条分支在需求覆盖、证据、代价、局限上的差异，'
                  '输出 comparison 字符串和 selectedApproach（A/B/combined/none），在 finalAnswer 给出综合结果和选择理由。分支失败或没有证据时不能宣称两者都成功。')
+        if stage=='review':
+            system+=('branches 中每个分支包含 initial 第一轮成果、peerReview 对方给本分支的复核、reviewOfPeer 本分支给对方的复核、revision 接收反馈后的修订。'
+                     '逐项检查共享情报中的来源与证据，再比较修订结果；缺失交叉复核或修订时不得判定协作完整。')
+        if stage=='driver':
+            phase=task.get('collaborationPhase','explore')
+            if phase=='review_peer':
+                system+=('当前是交叉复核阶段。task.peerResult 是另一位 Driver 第一轮的实际输出，不是你的成果。'
+                         '根据用户验收标准逐项指出可验证的问题和缺失证据；输出 peerAssessment、questions 数组和 recommendations 数组。'
+                         '不要修改另一位的输出，也不要宣称已运行其代码。summary 要清楚指出通过点和待修点。')
+            elif phase=='revise':
+                system+=('当前是修订阶段。task.ownResult 是你第一轮成果；task.peerResult 是另一位 Driver 的成果；'
+                         'task.peerFeedback 是另一位 Driver 对你第一轮成果的复核。逐项处理可执行意见；'
+                         '输出 changes 数组，标明已修改和不能修改的原因。'
+                         '如仍无必要证据，明确标记未知；不得假称已测试或交付。')
+            else:
+                system+=('当前是独立探索阶段。先根据分配的 task.approach 工作；稍后另一位 Driver 会复核你的成果。')
     if stage=='review':
         system+='必须输出checks对象，包含goal_met、grounded、consistent三项，每项为{"value":"yes/no/unknown","reason":"具体证据或缺口"}。分别检查用户目标、依据充分性、结论与证据一致性。天气还须核对地点；缺少证据填unknown。不要输出猜测的置信度数值。'
         system+=('必须另写finalAnswer字符串，直接面向用户交付结果，不能写成JSON、复核过程或“Driver查询成功/我将检查”。'
@@ -127,6 +146,8 @@ def run(envelope, token):
         if task.get('engineeringMethod')=='parallel':
             branches=outputs.get('driver',{}).get('answer',{}).get('branches',{})
             answer['parallelValidated']=(len(branches)==2 and all(b.get('status')=='completed' for b in branches.values())
+                and all((b.get('peerReview') or {}).get('status')=='completed'
+                        and (b.get('revision') or {}).get('status')=='completed' for b in branches.values())
                 and isinstance(answer.get('comparison'),str) and bool(answer['comparison'].strip())
                 and answer.get('selectedApproach') in ('A','B','combined'))
         answer['decision']=decide(answer,evidence,tool.get('name'))

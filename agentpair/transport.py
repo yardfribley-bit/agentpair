@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .methods import method
 from .pair_worker import run
 from .jev import apply_jev
+from .collaboration import message as collaboration_message, validate as validate_collaboration
 
 
 class NodeBackend:
@@ -24,6 +25,8 @@ class NodeBackend:
     def estimate(self, envelope):
         # Reserve conservatively BEFORE collection/model invocation. Failed calls
         # remain reserved; history-derived rates are not provider monetary caps.
+        if envelope.get('mode')=='driver' and envelope.get('task',{}).get('engineeringMethod')=='parallel':
+            return 0.30
         return 0.10
 
     def call(self, role, envelope, timeout):
@@ -138,9 +141,12 @@ class CloudDriverBackend(NodeBackend):
 
     def _parallel(self,envelope,timeout):
         started=time.monotonic();nodes=[];excluded=[]
-        def event(branch,text,kind='branch_progress'):
+        def event(branch,text,kind='branch_progress',recipient=None,phase=None,intelligence=None,packet=None):
             callback=getattr(self,'event_callback',None)
-            if callback:callback(envelope['task']['id'],{'kind':kind,'role':branch,'stage':'driver','text':text})
+            if callback:callback(envelope['task']['id'],{'kind':kind,'role':branch,'stage':'driver',
+                'to':recipient,'phase':phase,'text':str(text)[:1200],
+                **({'intelligence':intelligence} if intelligence is not None else {}),
+                **({'message':packet} if packet is not None else {})})
         routes=envelope.get('outputs',{}).get('plan',{}).get('answer',{}).get('approaches')
         if not isinstance(routes,list) or len(routes)!=2 or not all(isinstance(x,str) and x.strip() for x in routes) or routes[0].strip()==routes[1].strip():
             raise ValueError('并行探索需要 Navigator 给出两个不同的方案，再启动机器')
@@ -150,27 +156,85 @@ class CloudDriverBackend(NodeBackend):
             ip,fresh=self._provision(excluded);excluded.append(self.lease_id)
             if fresh:self._deploy_worker(ip)
             nodes.append((branch,ip,self.lease_id,routes[index]))
-        def execute(node):
+        def execute(node,phase,peer=None,feedback=None,own=None):
             branch,ip,lease,route=node
             task=copy.deepcopy(envelope);task['task']['approach']=route;task['task']['branch']=branch
-            event(branch,'开始执行：'+route)
+            task['task']['collaborationPhase']=phase
+            packet=None
+            if peer is not None:
+                if isinstance(peer,tuple):peer,packet=peer
+                task['task']['peerResult']=peer
+            if feedback is not None:task['task']['peerFeedback']=feedback
+            if own is not None:task['task']['ownResult']=own
+            if packet is not None:
+                task['task']['collaborationMessage']=validate_collaboration(packet,
+                    task_id=envelope['task']['id'],recipient=branch)
+            event(branch,{'explore':'开始独立探索：','review_peer':'开始复核另一方案：','revise':'根据交叉意见修订：'}[phase]+route,phase=phase)
             try:
                 result=NodeBackend(self.token,ip,self.key,self.known_hosts).call('driver',task,max(1,timeout-(time.monotonic()-started)))
-                event(branch,result['answer'].get('summary','已返回结果'),'branch_completed')
+                if packet is not None:
+                    event(branch,'已处理交接消息并返回结果','branch_handoff_processed',phase=phase,
+                          recipient=packet['from'],packet=packet)
+                event(branch,result['answer'].get('summary','已返回结果'),'branch_completed',phase=phase)
                 return branch,{'status':'completed','result':result,'leaseId':lease,'approach':route}
             except Exception as error:
-                event(branch,'分支失败：'+type(error).__name__,'branch_failed')
+                event(branch,'分支失败：'+type(error).__name__,'branch_failed',phase=phase)
                 return branch,{'status':'failed','errorType':type(error).__name__,'leaseId':lease,'approach':route}
+        def phase_run(phase,inputs):
+            completed={}
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures=[pool.submit(execute,node,phase,*inputs.get(node[0],(None,None,None))) for node in nodes]
+                for future in as_completed(futures):
+                    branch,result=future.result();completed[branch]=result
+            return completed
+        initial=phase_run('explore',{})
+        names=('Driver A','Driver B')
+        if all(initial[name]['status']=='completed' for name in names):
+            reviews={}
+            for branch,other in ((names[0],names[1]),(names[1],names[0])):
+                peer=initial[other]['result']['answer']
+                intelligence={'from':other,'to':branch,'summary':str(peer.get('summary',''))[:500],
+                              'findings':peer.get('findings',[])[:4] if isinstance(peer.get('findings'),list) else []}
+                packet=collaboration_message(other,branch,'finding',intelligence['summary'],
+                    task_id=envelope['task']['id'],round_number=envelope['task'].get('round',1),
+                    phase='review_peer',evidence_refs=[ref for finding in intelligence['findings']
+                    if isinstance(finding,dict) for ref in finding.get('evidenceRefs',[])])
+                event(other,'已共享第一轮情报，交给 '+branch+' 交叉复核','branch_handoff',recipient=branch,
+                      phase='review_peer',intelligence=intelligence,packet=packet)
+                reviews[branch]=((peer,packet),None,initial[branch]['result']['answer'])
+            cross=phase_run('review_peer',reviews)
+        else:cross={}
+        if cross and all(cross[name]['status']=='completed' for name in names):
+            revisions={}
+            for branch,other in ((names[0],names[1]),(names[1],names[0])):
+                feedback=cross[other]['result']['answer']
+                peer=initial[other]['result']['answer']
+                intelligence={'from':other,'to':branch,'summary':str(feedback.get('summary',''))[:500],
+                    'questions':feedback.get('questions',[])[:4] if isinstance(feedback.get('questions'),list) else []}
+                packet=collaboration_message(other,branch,'peer_review',intelligence['summary'],
+                    task_id=envelope['task']['id'],round_number=envelope['task'].get('round',1),phase='revise')
+                event(other,'已共享交叉复核意见，交给 '+branch+' 修订','branch_handoff',recipient=branch,
+                      phase='revise',intelligence=intelligence,packet=packet)
+                revisions[branch]=((peer,packet),feedback,initial[branch]['result']['answer'])
+            revised=phase_run('revise',revisions)
+        else:revised={}
         results={}
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            for future in as_completed([pool.submit(execute,n) for n in nodes]):
-                branch,result=future.result();results[branch]=result
+        for name in names:
+            other=names[1] if name==names[0] else names[0]
+            first=initial[name];review=cross.get(other);review_of_peer=cross.get(name);revision=revised.get(name)
+            final=revision if revision and revision['status']=='completed' else first
+            results[name]=dict(final,initial=first,peerReview=review,reviewOfPeer=review_of_peer,revision=revision,
+                               status='completed' if review and review['status']=='completed'
+                               and review_of_peer and review_of_peer['status']=='completed'
+                               and revision and revision['status']=='completed' else 'failed')
         usage={'prompt_tokens':0,'completion_tokens':0,'total_tokens':0};cost=0
         for branch in results.values():
-            output=branch.get('result',{});cost+=output.get('estimatedUpperCostCNY',0)
-            for key in usage:usage[key]+=output.get('usage',{}).get(key,0)
+            for phase in ('initial','peerReview','revision'):
+                output=(branch.get(phase) or {}).get('result',{})
+                cost+=output.get('estimatedUpperCostCNY',0)
+                for key in usage:usage[key]+=output.get('usage',{}).get(key,0)
         evidence=next((results[b]['result'].get('evidence') for b in sorted(results) if results[b].get('result',{}).get('evidence')),None)
-        return {'answer':{'summary':'两条独立路线已返回，由 Navigator 比较、选择或综合。','branches':results},'evidence':evidence,
+        return {'answer':{'summary':'两条路线已探索、交叉复核并修订；交由 Navigator 比较验收。' if revised else '并行探索未完成交叉复核或修订，交由 Navigator 标注缺口。','branches':results},'evidence':evidence,
                 'usage':usage,'model':'deepseek-v3.2','estimatedUpperCostCNY':cost,
                 'budgetMode':'historical_estimate_not_hard_cap','executionNode':'ucloud_parallel',
                 'resourceDecision':'2 台独立 Driver；任务结束保留租约供复用，到期回收'}
