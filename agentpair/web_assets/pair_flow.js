@@ -48,16 +48,16 @@ window.PairFlow=class PairFlow{
   const labels=['收到任务','规划','Driver 处理','复核','本轮完成'];
   const complete=this.status==='completed';
   labels.forEach((label,i)=>{const n=document.createElement('span');n.textContent=label;const stage=['plan','driver','review'][i-1];n.className=(i===0&&this.data.id||i===4&&complete||done.some(e=>e.stage===stage))?'finished':'';if(stage===active)n.classList.add('active');track.append(n);});
-  this.trace(box,events);
   const failure=events.filter(e=>e.errorType).at(-1);
   const result=this.records.filter(m=>m.round===this.round&&m.stage==='review').at(-1);
   if(result?.answer){
-   add('h3',complete?'任务结果':'当前答复');
+   add('h3',complete?'任务结果摘要':'当前答复摘要');
    const final=result.answer.finalAnswer;
-   if(result.answer.comparison)add('p','方案对比：'+result.answer.comparison,'progress-outcome');
-   add('p',final||(!complete?result.answer.summary:'这条历史任务没有独立的最终答案，请查看下方结论。'),'final-answer');
-   if(!final&&complete)for(const finding of result.answer.findings||[])add('p',finding.claim,'final-answer');
+   const answer=final||result.answer.summary||(result.answer.findings||[]).map(f=>f.claim).join('；');
+   add('p',answer.length>220?answer.slice(0,220)+'…':answer||'尚无可交付结论，请查看验收记录。','final-answer');
+   if(answer.length>220)add('small','完整内容在下方「成果与代码」中。');
   }
+  this.trace(box,events);
   if(result?.answer?.decision){
    if(result.answer.jev)add('small',result.answer.jev.status==='evaluated'?'独立决策：'+result.answer.jev.model+' · '+result.answer.jev.provider:result.answer.jev.note);
    const decision=result.answer.decision;
