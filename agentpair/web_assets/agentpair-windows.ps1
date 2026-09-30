@@ -16,9 +16,10 @@ New-Item -ItemType Directory -Force -Path $folder | Out-Null
 $hash = [Security.Cryptography.SHA256]::Create()
 $key = ([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($Server)))).Replace('-','')
 $identityPath = Join-Path $folder ($key + '.identity')
-function Invoke-Api($path, $body, $token) {
+function Invoke-Api($path, $body, $token, $method='POST') {
     $headers = @{}
     if ($token) { $headers.Authorization = 'Bearer ' + $token }
+    if ($method -eq 'GET') { return Invoke-RestMethod -Uri ($Server+$path) -Method Get -Headers $headers -TimeoutSec 20 }
     $bytes = [Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Depth 8 -Compress))
     Invoke-RestMethod -Uri ($Server+$path) -Method Post -Headers $headers -ContentType 'application/json' -Body $bytes -TimeoutSec 20
 }
@@ -32,6 +33,21 @@ if ($PairCode) {
     $identity = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
 } else { throw 'Generate a pairing code on the My Devices page, then pass -PairCode.' }
 Write-Host 'Connected. Collecting process names/IDs and installed application metadata only. Ctrl+C stops.'
+function Invoke-DriverTask($task) {
+    $taskId=[string]$task.taskId; $lease=[string]$task.lease
+    try {
+        Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=@{state='running';summary='Windows Driver 已接收任务，正在采集证据。'}} $identity.token | Out-Null
+        # The first task protocol is intentionally allowlisted: no arbitrary shell or file execution.
+        $raw=@(Get-CimInstance Win32_Process)
+        $evidence=@{processes=@($raw | Select-Object -First 2000 | ForEach-Object {@{name=[string]$_.Name;pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId}})}
+        $required=@($task.payload.requiredEvidence)
+        $missing=@($required | Where-Object {$_ -ne 'processes'})
+        $state=if($missing.Count -eq 0){'completed'}else{'waiting_for_evidence'}
+        $result=@{state=$state;summary=if($state -eq 'completed'){'Windows Driver 已完成任务。'}else{'当前采集器不具备所需证据采集能力。'};evidence=$evidence;missingEvidence=$missing;nextSteps=@('为缺失证据增加经过授权的采集器能力')}
+        Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=$result} $identity.token | Out-Null
+        Write-Host ('Task '+$taskId+' -> '+$state)
+    } catch { Write-Warning 'Driver task execution or result upload failed.' }
+}
 do {
     try {
         $issues = @()
@@ -59,6 +75,8 @@ do {
         $body = @{os='Windows';architecture=$env:PROCESSOR_ARCHITECTURE;processes=$processes;applications=$apps;errors=$issues}
         Invoke-Api '/api/endpoint/report' $body $identity.token | Out-Null
         Write-Host ('Inventory uploaded at ' + (Get-Date -Format T))
+        $task=Invoke-Api '/api/endpoint/tasks' $null $identity.token 'GET'
+        if ($task.task) { Invoke-DriverTask $task.task }
     } catch {
         # Do not print response/request bodies or tokens.
         Write-Warning 'Inventory upload failed. Check connectivity, HTTPS certificate, or device binding.'
