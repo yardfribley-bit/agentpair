@@ -46,6 +46,21 @@ class TaskTests(unittest.TestCase):
         t=self.engine.create('task','goal');self.engine.process(t['id'])
         self.assertEqual(len(self.backend.calls),5)
         self.assertEqual(self.engine.get(t['id'])['status'],'completed')
+    def test_blocked_review_with_corrections_gets_bounded_rework(self):
+        original=self.backend.call
+        def call(role,envelope,timeout):
+            result=original(role,envelope,timeout)
+            if envelope['mode']=='review':
+                result['answer']['verdict']='blocked'
+                result['answer']['corrections']=['Add evidence for the missing claim']
+            return result
+        self.backend.call=call
+        t=self.engine.create('task','goal');self.engine.process(t['id'])
+        done=self.engine.get(t['id'])
+        self.assertEqual(len(self.backend.calls),7)
+        self.assertEqual(done['status'],'blocked')
+        reworks=[e for e in done['events'] if e['kind']=='rework']
+        self.assertEqual([e['attempt'] for e in reworks],[1,2])
     def test_cancel_queued_no_calls(self):
         t=self.engine.create('task','goal'); self.engine.cancel(t['id']); self.engine.process(t['id'])
         self.assertEqual(self.backend.calls,[])

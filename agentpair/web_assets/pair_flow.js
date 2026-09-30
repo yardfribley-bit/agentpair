@@ -22,7 +22,12 @@ window.PairFlow=class PairFlow{
    }
   }
   add('h2',states[this.status]||names[active]||'正在交接任务');
-  if(this.status==='blocked')box.querySelector('h2').textContent='未完成 · Navigator 未通过验收';
+  if(this.status==='blocked'){
+   const attempts=events.filter(e=>e.kind==='rework').length;
+   box.querySelector('h2').textContent=attempts
+    ?`验收未通过 · 已自动整改 ${attempts} 轮，仍需补充`
+    :'验收未通过 · 正在等待补充或能力支持';
+  }
   const user=this.records.filter(m=>m.role==='user'&&m.round===this.round).at(-1);
   add('p',user?.text||'提交任务后，这里会显示当前步骤和角色交接。','task-goal');
   const track=add('div','','progress-track');
@@ -46,7 +51,11 @@ window.PairFlow=class PairFlow{
    for(const check of decision.checks){auditAdd('p',({yes:'✓',no:'✕',unknown:'?'}[check.value]||'?')+' '+check.question+'：'+check.reason+'（'+(check.source==='deterministic'?'程序核验':check.source==='jev'?'独立决策模型':'模型判断')+'）','progress-outcome');}
    auditAdd('small',decision.confidenceNote);
   }
-  if(this.status==='blocked')add('p',result?.answer?.summary||'缺少完成任务所需的证据或能力。','progress-outcome');
+  if(this.status==='blocked'){
+   const corrections=result?.answer?.corrections||result?.answer?.nextSteps||[];
+   add('p',corrections.length?'最后一次验收意见：'+corrections.join('；'):'缺少完成任务所需的证据或能力。','progress-outcome');
+   add('p','可在下方追加要求继续推进；Navigator 会带上本轮验收意见重新规划，不会把未通过结果标成完成。','progress-outcome');
+  }
   add('p',this.status==='failed'?'停止原因：'+(failure?.errorType||'请展开运行记录查看'):
     complete?'':
     this.status==='queued'?'已进入队列，尚未开始模型调用。':active?'已完成 '+done.length+' / 3 个处理阶段；等待当前角色返回真实结果。':'','progress-outcome');

@@ -28,6 +28,9 @@ class TaskEngine:
         self.adapters = tuple(adapters)
         self.budget = budget
         self.max_rounds = max_rounds
+        # Rework is separate from user conversation rounds. Keep a small bound
+        # so an inconclusive review cannot silently loop forever.
+        self.max_rework_attempts = 2
         self.deadline = deadline
         self.lock = threading.RLock()
         self.jobs = queue.Queue()
@@ -224,14 +227,34 @@ class TaskEngine:
                         task['events'].append({'at':now(),'round':task['round'],'kind':'tool_result','stage':stage,
                             'text':evidence_text,'evidence':evidence})
                     self._save(task)
-                if stage=='review' and answer['answer'].get('verdict')=='retry' and attempts<1:
-                    attempts+=1
-                    stages.extend([('driver','driver'),('review','navigator')])
-                    with self.lock:
-                        task=self._load(tid)
-                        task['events'].append({'at':now(),'round':task['round'],'kind':'rework',
-                            'text':'Navigator 未通过验收，交回 Driver 补查：'+str(answer['answer'].get('corrections',[]))})
-                        self._save(task)
+                if stage=='review':
+                    review=answer['answer']
+                    verdict=review.get('verdict')
+                    corrections=review.get('corrections',[])
+                    next_steps=review.get('nextSteps',[])
+                    if isinstance(corrections,str): corrections=[corrections]
+                    if isinstance(next_steps,str): next_steps=[next_steps]
+                    if not isinstance(corrections,list): corrections=[]
+                    if not isinstance(next_steps,list): next_steps=[]
+                    actionable=[item.strip() for item in corrections+next_steps
+                                if isinstance(item,str) and item.strip()]
+                    if verdict=='retry' and not actionable:
+                        actionable=['根据验收意见补足证据并重新交付；避免重复已尝试步骤']
+                    # A low-confidence/unknown review is not automatically a
+                    # dead end: if Navigator identified concrete gaps, let the
+                    # Driver address them, then have Navigator review again.
+                    # Hard bounds, cancellation, deadline, and budget still apply.
+                    if ((verdict=='retry' or (verdict=='blocked' and actionable))
+                            and attempts<self.max_rework_attempts):
+                        attempts+=1
+                        stages.extend([('driver','driver'),('review','navigator')])
+                        with self.lock:
+                            task=self._load(tid)
+                            task['events'].append({'at':now(),'round':task['round'],'kind':'rework',
+                                'attempt':attempts,'maxAttempts':self.max_rework_attempts,
+                                'text':f'验收未通过（{verdict}），第 {attempts}/{self.max_rework_attempts} 次交回 Driver 按验收意见补正：'
+                                       +json.dumps(actionable,ensure_ascii=False)})
+                            self._save(task)
             with self.lock:
                 task = self._load(tid)
                 if task['status']=='cancelling': raise InterruptedError('Cancelled')
