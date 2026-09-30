@@ -2,7 +2,7 @@ $ErrorActionPreference='Stop'
 Set-Location $PSScriptRoot
 New-Item -ItemType Directory -Force build | Out-Null
 $compiler = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-& $compiler /nologo /target:winexe /platform:x64 /out:build\AgentPairWindows.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll AgentPairWindows.cs
+& $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /out:build\AgentPairWindows.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll AgentPairWindows.cs
 if ($LASTEXITCODE -ne 0) { throw 'C# build failed' }
 $tokens=$null; $errors=$null
 [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '..\agentpair\web_assets\agentpair-windows.ps1'),[ref]$tokens,[ref]$errors) | Out-Null
