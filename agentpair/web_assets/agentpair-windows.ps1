@@ -36,15 +36,37 @@ Write-Host 'Connected. Collecting process names/IDs and installed application me
 function Invoke-DriverTask($task) {
     $taskId=[string]$task.taskId; $lease=[string]$task.lease
     try {
-        Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=@{state='running';summary='Windows Driver 已接收任务，正在采集证据。'}} $identity.token | Out-Null
+        # Build the payload in separate variables.  This is deliberately verbose because
+        # Windows PowerShell 5.1 has brittle parsing around nested hashtables in pipelines.
+        $runningResult = New-Object PSObject -Property ([ordered]@{
+            state = 'running'
+            summary = 'Windows Driver 已接收任务，正在采集证据。'
+        })
+        $runningBody = New-Object PSObject -Property ([ordered]@{
+            taskId = $taskId
+            lease = $lease
+            result = $runningResult
+        })
+        Invoke-Api '/api/endpoint/tasks/result' $runningBody $identity.token | Out-Null
         # The first task protocol is intentionally allowlisted: no arbitrary shell or file execution.
         $raw=@(Get-CimInstance Win32_Process)
-        $evidence=@{processCount=[Math]::Min($raw.Count,2000)}
+        $evidence = New-Object PSObject -Property ([ordered]@{ processCount = [Math]::Min($raw.Count,2000) })
         $required=@($task.payload.requiredEvidence)
         $missing=@($required | Where-Object {$_ -ne 'processes'})
         if($missing.Count -eq 0){$state='completed';$summary='Windows Driver 已完成任务。'}else{$state='waiting_for_evidence';$summary='当前采集器不具备所需证据采集能力。'}
-        $result=@{state=$state;summary=$summary;evidence=$evidence;missingEvidence=$missing;nextSteps=@('为缺失证据增加经过授权的采集器能力')}
-        Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=$result} $identity.token | Out-Null
+        $result = New-Object PSObject -Property ([ordered]@{
+            state = $state
+            summary = $summary
+            evidence = $evidence
+            missingEvidence = $missing
+            nextSteps = @('为缺失证据增加经过授权的采集器能力')
+        })
+        $completeBody = New-Object PSObject -Property ([ordered]@{
+            taskId = $taskId
+            lease = $lease
+            result = $result
+        })
+        Invoke-Api '/api/endpoint/tasks/result' $completeBody $identity.token | Out-Null
         Write-Host ('Task '+$taskId+' -> '+$state)
     } catch { Write-Warning 'Driver task execution or result upload failed.' }
 }
