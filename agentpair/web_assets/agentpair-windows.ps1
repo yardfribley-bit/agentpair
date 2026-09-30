@@ -39,8 +39,7 @@ function Invoke-DriverTask($task) {
         Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=@{state='running';summary='Windows Driver 已接收任务，正在采集证据。'}} $identity.token | Out-Null
         # The first task protocol is intentionally allowlisted: no arbitrary shell or file execution.
         $raw=@(Get-CimInstance Win32_Process)
-        $evidence=@{}
-        $evidence.processes=@($raw | Select-Object -First 2000 | ForEach-Object {@{name=[string]$_.Name;pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId}})
+        $evidence=@{processCount=[Math]::Min($raw.Count,2000)}
         $required=@($task.payload.requiredEvidence)
         $missing=@($required | Where-Object {$_ -ne 'processes'})
         if($missing.Count -eq 0){$state='completed';$summary='Windows Driver 已完成任务。'}else{$state='waiting_for_evidence';$summary='当前采集器不具备所需证据采集能力。'}
