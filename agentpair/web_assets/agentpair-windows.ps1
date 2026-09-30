@@ -42,8 +42,8 @@ function Invoke-DriverTask($task) {
         $evidence=@{processes=@($raw | Select-Object -First 2000 | ForEach-Object {@{name=[string]$_.Name;pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId}})}
         $required=@($task.payload.requiredEvidence)
         $missing=@($required | Where-Object {$_ -ne 'processes'})
-        $state=if($missing.Count -eq 0){'completed'}else{'waiting_for_evidence'}
-        $result=@{state=$state;summary=if($state -eq 'completed'){'Windows Driver 已完成任务。'}else{'当前采集器不具备所需证据采集能力。'};evidence=$evidence;missingEvidence=$missing;nextSteps=@('为缺失证据增加经过授权的采集器能力')}
+        if($missing.Count -eq 0){$state='completed';$summary='Windows Driver 已完成任务。'}else{$state='waiting_for_evidence';$summary='当前采集器不具备所需证据采集能力。'}
+        $result=@{state=$state;summary=$summary;evidence=$evidence;missingEvidence=$missing;nextSteps=@('为缺失证据增加经过授权的采集器能力')}
         Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=$result} $identity.token | Out-Null
         Write-Host ('Task '+$taskId+' -> '+$state)
     } catch { Write-Warning 'Driver task execution or result upload failed.' }
