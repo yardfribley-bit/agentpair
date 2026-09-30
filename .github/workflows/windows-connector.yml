@@ -1,0 +1,25 @@
+name: Windows device installer
+on:
+  push:
+    paths:
+      - 'windows/**'
+      - 'agentpair/web_assets/agentpair-windows.ps1'
+      - '.github/workflows/windows-connector.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  installer:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile, package, install and launch
+        shell: powershell
+        run: ./windows/build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AgentPair-Windows-Installer
+          path: windows/dist/*.exe
+          if-no-files-found: error
+          retention-days: 7
