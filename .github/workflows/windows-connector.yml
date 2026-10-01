@@ -4,6 +4,7 @@ on:
     paths:
       - 'windows/**'
       - 'agentpair/web_assets/agentpair-windows.ps1'
+      - 'agentpair/endpoint_modules/**'
       - '.github/workflows/windows-connector.yml'
   workflow_dispatch:
 permissions:

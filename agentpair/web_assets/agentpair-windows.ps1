@@ -33,6 +33,45 @@ if ($PairCode) {
     $identity = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
 } else { throw 'Generate a pairing code on the My Devices page, then pass -PairCode.' }
 Write-Host 'Connected. Collecting process names/IDs and installed application metadata only. Ctrl+C stops.'
+function Invoke-CapabilityModule($module) {
+    if ($module.protocolVersion -ne 1 -or $module.runtime -ne 'powershell-5.1' -or
+        $module.timeoutSeconds -lt 1 -or $module.timeoutSeconds -gt 30 -or
+        $module.maxOutputBytes -lt 1 -or $module.maxOutputBytes -gt 524288 -or
+        @($module.permissions).Count -ne 1 -or $module.permissions[0] -ne 'target-process-read') {
+        throw 'Unsupported module manifest'
+    }
+    $source=[Convert]::FromBase64String([string]$module.sourceBase64)
+    if ($source.Length -gt 262144) { throw 'Module too large' }
+    $actual=([BitConverter]::ToString($hash.ComputeHash($source))).Replace('-','').ToLowerInvariant()
+    if ($actual -ne $module.sha256) { throw 'Module integrity check failed' }
+    $runFolder=Join-Path $folder ('module-'+[Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $runFolder | Out-Null
+    $child=$null
+    try {
+        $scriptPath=Join-Path $runFolder 'module.ps1'
+        $inputPath=Join-Path $runFolder 'input.json'
+        $outPath=Join-Path $runFolder 'output.json'
+        $errPath=Join-Path $runFolder 'error.txt'
+        [IO.File]::WriteAllBytes($scriptPath,$source)
+        [IO.File]::WriteAllText($inputPath,($module.parameters | ConvertTo-Json -Depth 8 -Compress),[Text.Encoding]::UTF8)
+        $exe=Join-Path $PSHOME 'powershell.exe'
+        $arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$scriptPath+'" -InputPath "'+$inputPath+'"'
+        $child=Start-Process -FilePath $exe -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $outPath -RedirectStandardError $errPath
+        if (-not $child.WaitForExit([int]$module.timeoutSeconds*1000)) {
+            $child.Kill(); $child.WaitForExit(); throw 'Module timed out'
+        }
+        $child.Refresh()
+        if ($child.ExitCode -ne 0) { throw 'Module failed; target may have exited or access was denied' }
+        if ((Get-Item -LiteralPath $outPath).Length -gt $module.maxOutputBytes) { throw 'Module output too large' }
+        $output=Get-Content -Raw -LiteralPath $outPath | ConvertFrom-Json
+        if ($output.schemaVersion -ne 1 -or $output.capability -ne $module.id -or
+            $output.target.pid -ne $module.parameters.pid -or $output.target.startedAt -ne $module.parameters.startedAt) { throw 'Invalid module evidence' }
+        return @{moduleId=$module.id;moduleVersion=$module.version;sha256=$actual;output=$output}
+    } finally {
+        if ($child -and -not $child.HasExited) { $child.Kill(); $child.WaitForExit() }
+        Remove-Item -LiteralPath $runFolder -Recurse -Force
+    }
+}
 function Invoke-DriverTask($task) {
     $taskId=[string]$task.taskId; $lease=[string]$task.lease
     try {
@@ -48,6 +87,16 @@ function Invoke-DriverTask($task) {
             result = $runningResult
         })
         Invoke-Api '/api/endpoint/tasks/result' $runningBody $identity.token | Out-Null
+        if ($task.payload.action -eq 'run_module') {
+            try {
+                $moduleEvidence=Invoke-CapabilityModule $task.payload.module
+                $moduleResult=@{state='completed';summary='采集模块执行成功，已返回目标进程证据；分析结论仍需云端验收。';evidence=$moduleEvidence}
+            } catch {
+                $moduleResult=@{state='failed';summary=[string]$_.Exception.Message;moduleId=$task.payload.module.id}
+            }
+            Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=$moduleResult} $identity.token | Out-Null
+            return
+        }
         # The first task protocol is intentionally allowlisted: no arbitrary shell or file execution.
         $raw=@(Get-CimInstance Win32_Process)
         $evidence = New-Object PSObject -Property ([ordered]@{ processCount = [Math]::Min($raw.Count,2000) })
@@ -75,7 +124,9 @@ do {
         $issues = @()
         $rawProcesses = @(Get-CimInstance Win32_Process)
         $processes = @($rawProcesses | Select-Object -First 2000 | ForEach-Object {
-            @{name=[string]$_.Name;pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId}
+            $startedAt=$null
+            if ($_.CreationDate) { $startedAt=$_.CreationDate.ToUniversalTime().ToString('o') }
+            @{name=[string]$_.Name;pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId;startedAt=$startedAt}
         })
         $apps = @()
         $roots = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
