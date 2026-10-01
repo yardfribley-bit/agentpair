@@ -35,6 +35,8 @@ class DeviceStore:
                 db.execute('ALTER TABLE devices ADD COLUMN analysis_task_id TEXT')
         from .experience_store import ExperienceStore
         self.experiences = ExperienceStore(self.connect)
+        from .endpoint_analysis import EndpointAnalysis
+        self.analyses = EndpointAnalysis(self)
 
     @contextmanager
     def connect(self):
@@ -45,6 +47,21 @@ class DeviceStore:
                 yield db
         finally:
             db.close()
+
+    def task_participants(self, task_id):
+        """Only devices linked to this task; never expose device credentials."""
+        with self.connect() as db:
+            rows=db.execute('SELECT a.data,a.state,d.id,d.name,d.seen,d.snapshot FROM endpoint_analyses a JOIN devices d ON d.id=a.device_id WHERE a.cloud_task=?',(task_id,)).fetchall()
+        nodes=[]
+        for row in rows:
+            record=json.loads(row['data']);snapshot=json.loads(row['snapshot'])
+            nodes.append({'id':row['id'],'name':'AppLens · '+row['name'],'kind':'applens',
+                          'online':time.time()-row['seen']<90,'lastSeen':row['seen'],
+                          'os':snapshot.get('os'),'application':record['title'],
+                          'state':row['state'],'completedSteps':len(record['evidence']),
+                          'totalSteps':len(record['steps']),'evidence':record['evidence'],
+                          'summary':record['message']})
+        return nodes
 
     def pairing(self, owner='admin'):
         code = secrets.token_urlsafe(18)
@@ -73,6 +90,9 @@ class DeviceStore:
         if not isinstance(snapshot, dict):
             raise ValueError('Invalid inventory')
         clean = {}
+        if 'applens' in snapshot:
+            from .applens_protocol import validate_manifest
+            clean['applens']=validate_manifest(snapshot['applens'])
         for key in ('processes', 'applications'):
             rows = snapshot.get(key)
             if not isinstance(rows, list) or len(rows) > 2000:
@@ -194,6 +214,8 @@ class DeviceStore:
                 if module:
                     snapshot=json.loads(db.execute('SELECT snapshot FROM devices WHERE id=?',(device['id'],)).fetchone()['snapshot'])
                     self.experiences.record(db,device['owner'],module,snapshot,task_id,result['state']=='completed')
+            if task_row:
+                self.analyses.advance(db,json.loads(task_row['payload']),task_id,result)
         return {'accepted':True,'taskId':task_id,'state':result['state']}
 
     def task(self, owner, task_id):

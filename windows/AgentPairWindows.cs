@@ -25,7 +25,7 @@ class AgentPairWindows : Form {
         };
     }
     AgentPairWindows() {
-        Text="AgentPair · Windows 设备接入"; Size=new Size(700,580); MinimumSize=new Size(650,530);
+        Text="AppLens · Windows 应用透镜"; Size=new Size(700,580); MinimumSize=new Size(650,530);
         Font=new Font("Microsoft YaHei UI",10); StartPosition=FormStartPosition.CenterScreen; BackColor=Color.FromArgb(246,248,252);
         var layout=new TableLayoutPanel { Dock=DockStyle.Fill, Padding=new Padding(24), ColumnCount=1, RowCount=10 };
         Controls.Add(layout);

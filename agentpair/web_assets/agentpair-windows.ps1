@@ -2,6 +2,8 @@
 # Foreground only. Ctrl+C stops collection. No admin, scheduled task or remote shell.
 param([Parameter(Mandatory=$true)][string]$Server,
       [string]$PairCode,
+      [string]$AnalyzeProcess,
+      [string]$Goal,
       [switch]$Once)
 $ErrorActionPreference = 'Stop'
 $uri = [Uri]$Server
@@ -33,6 +35,7 @@ if ($PairCode) {
     $identity = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
 } else { throw 'Generate a pairing code on the My Devices page, then pass -PairCode.' }
 Write-Host 'Connected. Collecting process names/IDs and installed application metadata only. Ctrl+C stops.'
+$activeAnalysis=$null
 function Invoke-CapabilityModule($module) {
     if ($module.protocolVersion -ne 1 -or $module.runtime -ne 'powershell-5.1' -or
         $module.timeoutSeconds -lt 1 -or $module.timeoutSeconds -gt 30 -or
@@ -151,12 +154,32 @@ do {
         }
         $issues += 'Installed apps from uninstall registry only; Store/portable apps may be missing. Protected process paths may be unavailable.'
         $body = @{os='Windows';architecture=$env:PROCESSOR_ARCHITECTURE;processes=$processes;applications=$apps;errors=$issues}
+        $body.applens=@{product='AppLens';protocolVersion=1;capabilities=@{
+            process_inventory='available';application_inventory='available';process_details='available';process_tcp='available';
+            process_events='unsupported';network_events='unsupported';file_events='unsupported';cloud_requests='available'}}
         $body.osVersion=[Environment]::OSVersion.Version.ToString()
         $body.hostRuntimeVersion=$PSVersionTable.PSVersion.ToString()
         Invoke-Api '/api/endpoint/report' $body $identity.token | Out-Null
         Write-Host ('Inventory uploaded at ' + (Get-Date -Format T))
+        if ($AnalyzeProcess -and -not $activeAnalysis) {
+            if (-not $Goal) { throw 'Analysis goal required' }
+            $target=@($processes | Where-Object {$_.name -eq $AnalyzeProcess} | Sort-Object startedAt | Select-Object -First 1)
+            if ($target.Count -eq 0) { throw 'Requested application is not running' }
+            $request=@{title=('Analyze '+$AnalyzeProcess);message=$Goal;processTarget=@{pid=$target[0].pid;startedAt=$target[0].startedAt}}
+            $activeAnalysis=Invoke-Api '/api/endpoint/requests' $request $identity.token
+            Write-Host ('Application analysis submitted: '+$activeAnalysis.analysisId)
+        }
         $task=Invoke-Api '/api/endpoint/tasks' $null $identity.token 'GET'
         if ($task.task) { Invoke-DriverTask $task.task }
+        if ($activeAnalysis) {
+            $analysis=Invoke-Api ('/api/endpoint/analyses/'+$activeAnalysis.analysisId) $null $identity.token 'GET'
+            Write-Host ('Analysis state: '+$analysis.state+' / '+$analysis.cloudState)
+            if ($analysis.results) {
+                $last=@($analysis.results)[-1]
+                $answer=$last.outputs.review.answer
+                if ($answer.finalAnswer) { Write-Host $answer.finalAnswer } else { Write-Host $answer.summary }
+            }
+        }
     } catch {
         # Do not print response/request bodies or tokens.
         Write-Warning 'Inventory upload failed. Check connectivity, HTTPS certificate, or device binding.'

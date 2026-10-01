@@ -1,6 +1,6 @@
 [Setup]
 AppId=AgentPairWindowsConnector
-AppName=AgentPair Windows
+AppName=AppLens 应用透镜
 AppVersion=0.1.0
 AppPublisher=AgentPair
 DefaultDirName={localappdata}\Programs\AgentPair Windows
