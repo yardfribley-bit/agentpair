@@ -14,7 +14,7 @@ class AgentPairWindows : Form {
  Button start=new Button(),stop=new Button();
  Panel overview=new Panel(),settings=new Panel();
  DataGridView calls=new DataGridView();
- Process collector;
+ Process collector,capture;
  string deviceId="",selectedId="";
  readonly string folder=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AgentPair");
  readonly JavaScriptSerializer json=new JavaScriptSerializer {MaxJsonLength=2097152};
@@ -60,6 +60,7 @@ class AgentPairWindows : Form {
   detail=LabelAt(overview,"请选择一条调用",0,578,920,45);
   ButtonAt(overview,"查看这次调用 ↗",0,635,180,()=>OpenPlatform(true));
   ButtonAt(overview,"打开本机记录",195,635,150,()=>{Directory.CreateDirectory(folder);Process.Start(folder);});
+  ButtonAt(overview,"启用完整正文采集",360,635,185,()=>EnableCapture());
   settings.Location=new Point(24,116);settings.Size=new Size(930,500);main.Controls.Add(settings);settings.Visible=false;
   LabelAt(settings,"连接与首次配对",0,0,650,40,18);
   LabelAt(settings,"平台地址",0,60,650,30);server.Location=new Point(0,95);server.Size=new Size(740,30);server.Text="https://50.118.187.180/";settings.Controls.Add(server);
@@ -68,19 +69,28 @@ class AgentPairWindows : Form {
   LabelAt(settings,"设备凭证由 Windows DPAPI 保护；关闭窗口停止采集。\n只采模型请求输入，不单独采工具事件。",0,290,820,70);
   output.Location=new Point(24,825);output.Size=new Size(930,45);output.Multiline=true;output.ReadOnly=true;output.BorderStyle=BorderStyle.None;output.ForeColor=Color.FromArgb(112,130,156);main.Controls.Add(output);
   var timer=new Timer {Interval=2000};timer.Tick+=(s,e)=>RefreshState();timer.Start();
-  FormClosing+=(s,e)=>StopCollection();
+  FormClosing+=(s,e)=>{StopCollection();if(capture!=null&&!capture.HasExited)File.WriteAllText(Path.Combine(folder,"capture-stop"),"stop");};
   Shown+=(s,e)=>{if(Directory.Exists(folder)&&Directory.GetFiles(folder,"*.identity").Length>0)StartCollection();else Page(true);};
  }
  void Page(bool config){settings.Visible=config;overview.Visible=!config;}
+ void EnableCapture(){
+  if(capture!=null&&!capture.HasExited){Log("完整正文代理已运行；等待真实模型请求。");return;}
+  if(MessageBox.Show("将备份并修改 WorkBuddy 自身代理设置，重启 WorkBuddy。只采模型请求正文，不采令牌或响应。退出 AppLens 时会恢复配置并尝试重启 WorkBuddy，请先保存工作。继续？","启用完整正文采集",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;
+  Directory.CreateDirectory(folder);
+  var script=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-network.ps1");
+  var info=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell\\v1.0\\powershell.exe"),"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "+Quote(script)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+  capture=new Process {StartInfo=info};capture.OutputDataReceived+=(s,e)=>Log(e.Data);capture.ErrorDataReceived+=(s,e)=>Log(e.Data);
+  try{capture.Start();capture.BeginOutputReadLine();capture.BeginErrorReadLine();}catch(Exception ex){Log(ex.Message);}
+ }
  void OpenPlatform(bool selected){try{Info(server.Text.Trim(),"",false);var path="/model-data?device="+Uri.EscapeDataString(deviceId);if(selected&&selectedId!="")path+="&request="+selectedId;Process.Start(new Uri(new Uri(server.Text.Trim()),path).ToString());}catch(Exception ex){MessageBox.Show(ex.Message);}}
  void Log(string line){if(String.IsNullOrEmpty(line)||IsDisposed)return;try{BeginInvoke((Action)(()=>output.Text=line));}catch(InvalidOperationException){}}
  void StartCollection(){if(collector!=null)return;try{
   collector=new Process {StartInfo=Info(server.Text.Trim(),code.Text.Trim(),false),EnableRaisingEvents=true};
   collector.OutputDataReceived+=(s,e)=>Log(e.Data);collector.ErrorDataReceived+=(s,e)=>{if(!String.IsNullOrEmpty(e.Data))Log("连接或采集失败，请检查配对及 HTTPS 连接。");};
   collector.Exited+=(s,e)=>Log("采集进程已停止，请检查连接状态。");
-  collector.Start();collector.BeginOutputReadLine();collector.BeginErrorReadLine();code.Clear();Page(false);stop.Text="暂停采集";Log("正在连接并采集……");
+  collector.Start();collector.BeginOutputReadLine();collector.BeginErrorReadLine();if(capture!=null&&!capture.HasExited)File.WriteAllText(Path.Combine(folder,"capture-enabled"),"enabled");code.Clear();Page(false);stop.Text="暂停采集";Log("正在连接并采集……");
  }catch(Exception ex){collector=null;MessageBox.Show(ex.Message,"无法启动");}}
- void StopCollection(){if(collector!=null){try{if(!collector.HasExited)collector.Kill();}catch(InvalidOperationException){}collector.Dispose();collector=null;}stop.Text="恢复采集";collectorState.Text="采集器\n已暂停";}
+ void StopCollection(){var gate=Path.Combine(folder,"capture-enabled");if(File.Exists(gate))File.Delete(gate);if(collector!=null){try{if(!collector.HasExited)collector.Kill();}catch(InvalidOperationException){}collector.Dispose();collector=null;}stop.Text="恢复采集";collectorState.Text="采集器\n已暂停";}
  void RefreshState(){try{
   var path=Path.Combine(folder,"context-state.json");if(!File.Exists(path))return;
   var state=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path));
@@ -90,7 +100,7 @@ class AgentPairWindows : Form {
   collectorState.Text="采集器\n"+(collector!=null&&!collector.HasExited?"正在采集":"已暂停");
   var records=(IEnumerable)state["calls"];int synced=0,count=0;calls.Rows.Clear();
   foreach(Dictionary<string,object> c in records){count++;bool ok=Convert.ToBoolean(c["receipt"]);if(ok)synced++;string id=Convert.ToString(c["id"]);
-   string integrity=Convert.ToString(c["recordStatus"]);integrity=integrity=="truncated"?"源记录截断":integrity=="parseable"?"可解析 · 未截断":"未验证";
+   string integrity=Convert.ToString(c["recordStatus"]);integrity=integrity=="wire_length_matched"?"HTTP 正文 · 长度一致":integrity=="wire_length_unknown"?"HTTP 正文 · 长度未验证":integrity=="truncated"?"日志截断":integrity=="parseable"?"日志可解析":"未验证";
    int row=calls.Rows.Add(DateTimeOffset.FromUnixTimeMilliseconds((long)(Convert.ToDouble(c["timestamp"])*1000)).LocalDateTime.ToString("HH:mm:ss")+" · "+id.Substring(0,8),c["sessionName"],c["model"]??"未采集",(Convert.ToDouble(c["bodyBytes"])/1024).ToString("F1")+" KB",integrity,ok?"回执哈希一致":"待上传");calls.Rows[row].Tag=c;if(id==selectedId)calls.Rows[row].Selected=true;
   }uploadState.Text="上传同步\n"+synced+" / "+count+" 已确认";if(Convert.ToString(state["error"])!="")output.Text=Convert.ToString(state["error"]);SelectCall();
  }catch(IOException){}catch(Exception){Log("调用状态读取失败；未将失败显示为成功。");}}

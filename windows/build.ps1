@@ -1,6 +1,7 @@
 $ErrorActionPreference='Stop'
 Set-Location $PSScriptRoot
 New-Item -ItemType Directory -Force build | Out-Null
+& (Join-Path $PSScriptRoot 'prepare-capture.ps1')
 # Windows PowerShell 5.1 reads BOM-less UTF-8 as ANSI. Normalize the shipped
 # host before parsing/packaging so Chinese messages cannot corrupt syntax.
 $hostPath=Join-Path $PSScriptRoot '..\agentpair\web_assets\agentpair-windows.ps1'
@@ -16,6 +17,10 @@ $contextPath=Join-Path $PSScriptRoot 'workbuddy-context.ps1'
 [IO.File]::WriteAllText($contextPath,[IO.File]::ReadAllText($contextPath,[Text.Encoding]::UTF8),$utf8Bom)
 [System.Management.Automation.Language.Parser]::ParseFile($contextPath,[ref]$tokens,[ref]$errors) | Out-Null
 if($errors.Count){throw 'WorkBuddy context collector syntax errors'}
+$networkPath=Join-Path $PSScriptRoot 'workbuddy-network.ps1'
+[IO.File]::WriteAllText($networkPath,[IO.File]::ReadAllText($networkPath,[Text.Encoding]::UTF8),$utf8Bom)
+[System.Management.Automation.Language.Parser]::ParseFile($networkPath,[ref]$tokens,[ref]$errors)|Out-Null
+if($errors.Count){throw 'WorkBuddy network capture syntax errors'}
 & (Join-Path $PSScriptRoot 'test-context.ps1')
 if(Test-Path (Join-Path $PSScriptRoot 'test-modules.ps1')){& (Join-Path $PSScriptRoot 'test-modules.ps1')}
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"

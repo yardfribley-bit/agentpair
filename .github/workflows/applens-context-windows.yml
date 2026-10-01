@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'windows/**'
+      - 'macos/workbuddy_network_capture.py'
       - 'agentpair/web_assets/agentpair-windows.ps1'
       - '.github/workflows/applens-context-windows.yml'
 permissions:
@@ -14,6 +15,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Build, context tests, package and installed binary acceptance
         shell: powershell
         run: |
@@ -21,7 +25,7 @@ jobs:
           Set-Location windows
           New-Item -ItemType Directory -Force build | Out-Null
           $bom=New-Object Text.UTF8Encoding($true)
-          foreach($path in @('workbuddy-context.ps1','test-context.ps1','..\agentpair\web_assets\agentpair-windows.ps1')) {
+          foreach($path in @('workbuddy-context.ps1','workbuddy-network.ps1','prepare-capture.ps1','test-context.ps1','..\agentpair\web_assets\agentpair-windows.ps1')) {
             [IO.File]::WriteAllText((Join-Path (Get-Location) $path),[IO.File]::ReadAllText((Join-Path (Get-Location) $path),[Text.Encoding]::UTF8),$bom)
             $tokens=$null;$errors=$null
             [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path),[ref]$tokens,[ref]$errors)|Out-Null
@@ -29,6 +33,9 @@ jobs:
           }
           & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /codepage:65001 /target:winexe /platform:x64 /out:build\AgentPairWindows.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll AgentPairWindows.cs
           if($LASTEXITCODE){throw 'C# compile failed'}
+          ./prepare-capture.ps1
+          python test-capture-runtime.py
+          if($LASTEXITCODE){throw 'Complete body capture integration failed'}
           ./test-context.ps1
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" setup.iss
           if($LASTEXITCODE){throw 'Installer build failed'}

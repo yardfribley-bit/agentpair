@@ -14,4 +14,14 @@ if(@($state.calls).Count -ne 1 -or !$state.calls[0].receipt -or $state.calls[0].
 if($script:posted[0].body -ne $body){throw 'Original body changed'}
 Sync-WorkBuddyContext @{deviceId='fixture';token='fixture'} $data (Join-Path $fixture 'workbuddy')
 if($script:posted.Count -ne 1){throw 'Already acknowledged context was resent'}
+$networkBody=@{model='wire-model';messages=@(@{role='system';content=('A'*150000)},@{role='user';content='END_MARKER'})}|ConvertTo-Json -Depth 5 -Compress
+$raw=[Text.Encoding]::UTF8.GetBytes($networkBody)
+$network=@{host='copilot.tencent.com';path='/v2/chat/completions';flowID='fixture-flow';observedAt=[DateTimeOffset]::UtcNow.ToString('o');requestBodyBase64=[Convert]::ToBase64String($raw);requestSHA256=(Get-ContextDigest $networkBody);declaredContentLength=$raw.Length;capturedWireBodyBytes=$raw.Length}
+[IO.File]::WriteAllText((Join-Path $data 'workbuddy-network.jsonl'),($network|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+Sync-WorkBuddyContext @{deviceId='fixture';token='fixture'} $data (Join-Path $fixture 'workbuddy')
+$wire=@($script:posted|Where-Object {$_.source -eq 'workbuddy_network_context'})
+if($wire.Count -ne 1 -or $wire[0].body -ne $networkBody -or !$wire[0].wireLengthMatched -or $wire[0].model -ne 'wire-model'){throw 'Complete HTTP body upload acceptance failed'}
+$network.requestSHA256='invalid'
+[IO.File]::WriteAllText((Join-Path $data 'workbuddy-network.jsonl'),($network|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+if(@(Get-WorkBuddyNetworkContext $data (Get-Date).AddDays(-1)).Count){throw 'Invalid digest accepted'}
 Write-Host 'PASS: generation-only collection, original bytes, receipt confirmation, dedup and metadata state'

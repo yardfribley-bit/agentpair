@@ -3,6 +3,26 @@ function Get-ContextDigest([string]$text) {
     $sha=[Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-','').ToLowerInvariant() } finally {$sha.Dispose()}
 }
+function Get-WorkBuddyNetworkContext($folder,$since) {
+    $path=Join-Path $folder 'workbuddy-network.jsonl'
+    if(!(Test-Path $path)){return @()}
+    $result=@{}
+    foreach($line in [IO.File]::ReadLines($path)){
+        try{
+            $r=$line|ConvertFrom-Json
+            if($r.host -ne 'copilot.tencent.com' -or $r.path -notin @('/v1/chat/completions','/v2/chat/completions','/v3/chat/completions')){continue}
+            $date=[DateTimeOffset]::Parse($r.observedAt);if($date.LocalDateTime -lt $since){continue}
+            $raw=[Convert]::FromBase64String($r.requestBodyBase64);if($raw.Length -gt 1000000){continue}
+            $body=([Text.UTF8Encoding]::new($false,$true)).GetString($raw)
+            $digest=Get-ContextDigest $body;if($digest -ne $r.requestSHA256){continue}
+            $parsed=$body|ConvertFrom-Json;if($parsed.messages -isnot [Array]){continue}
+            $matched=($null -ne $r.declaredContentLength -and $r.declaredContentLength -isnot [bool] -and $r.declaredContentLength -ge 0 -and $r.declaredContentLength -eq $r.capturedWireBodyBytes)
+            $id=Get-ContextDigest ('network:'+$r.flowID)
+            $result[$id]=@{id=$id;source='workbuddy_network_context';body=$body;bodySHA256=$digest;timestamp=($date.ToUnixTimeMilliseconds()/1000.0);model=$parsed.model;modelEvidence='同一 HTTP 请求体 model 字段';sessionId=('network:'+$r.flowID);sessionName=('HTTP 请求 '+([string]$r.flowID).Substring(0,[Math]::Min(8,([string]$r.flowID).Length)));truncated=$false;complete=$false;wireLengthMatched=$matched;destination=('copilot.tencent.com'+$r.path);recordStatus=if($matched){'wire_length_matched'}else{'wire_length_unknown'};recordJSONValid=$true;integrityEvidence='完整 HTTP 正文 SHA256 校验；声明/捕获长度一致不代表远端处理成功'}
+        }catch{continue}
+    }
+    return @($result.Values)
+}
 function Get-WorkBuddyRequestMetadata($root,$since) {
     $rows=New-Object System.Collections.Generic.List[object]
     $logs=Join-Path $root 'logs'
@@ -39,12 +59,14 @@ function Sync-WorkBuddyContext($identity,$folder,$WorkBuddyRoot=(Join-Path $env:
             $sessions=@($candidates|Where-Object {$_.sessionId -and $_.model -eq $model}|ForEach-Object {$_.sessionId}|Sort-Object -Unique)
             $sessionId=if($doc.trace.sessionId){$doc.trace.sessionId}elseif($sessions.Count -eq 1){$sessions[0]}else{'unknown'}
             $valid=$false;try{$parsed=$body|ConvertFrom-Json;$valid=($parsed -is [Array]) -or ($null -ne $parsed.messages)}catch{}
-            $status=if($body.Length -gt 100000){'truncated'}elseif($valid){'parseable'}else{'unparseable'}
+            $status=if($body.Length -eq 100003 -and $body.EndsWith('...')){'truncated'}elseif($valid){'parseable'}else{'unparseable'}
             $calls.Add(@{id=$id;source='workbuddy_generation_context';body=$body;bodySHA256=(Get-ContextDigest $body);timestamp=($date.ToUnixTimeMilliseconds()/1000.0);model=$model;modelEvidence=$evidence;sessionId=$sessionId;sessionName=if($sessionId -eq 'unknown'){'会话未识别'}else{'已关联会话'};truncated=($status -eq 'truncated');complete=$false;recordStatus=$status;recordJSONValid=$valid;integrityEvidence='源记录截断上限100000 UTF-16单元；JSON解析不证明网络请求完整'})
             if($calls.Count -ge 100){break}
         }
         if($calls.Count -ge 100){break}
     }
+    foreach($network in @(Get-WorkBuddyNetworkContext $folder $since)){$calls.Add($network)}
+    $calls=@($calls|Sort-Object timestamp -Descending|Select-Object -First 100)
     $errorMessage='';$view=New-Object System.Collections.Generic.List[object]
     foreach($call in $calls){
         $signature=$call.bodySHA256+'|'+$call.model+'|'+$call.recordStatus+'|'+$call.sessionId
