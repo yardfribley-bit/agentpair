@@ -57,6 +57,8 @@ function Invoke-CapabilityModule($module) {
         $exe=Join-Path $PSHOME 'powershell.exe'
         $arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$scriptPath+'" -InputPath "'+$inputPath+'"'
         $child=Start-Process -FilePath $exe -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $outPath -RedirectStandardError $errPath
+        # Retain the process handle so PowerShell 5.1 can read ExitCode after exit.
+        $null=$child.Handle
         if (-not $child.WaitForExit([int]$module.timeoutSeconds*1000)) {
             $child.Kill(); $child.WaitForExit(); throw 'Module timed out'
         }

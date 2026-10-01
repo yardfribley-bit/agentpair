@@ -16,6 +16,11 @@ try {
         if ($errors.Count) { throw 'Module syntax errors' }
         $bytes=[IO.File]::ReadAllBytes((Resolve-Path $path))
         $manifest=@{protocolVersion=1;id=$id;version='1.0.0';runtime='powershell-5.1';permissions=@('target-process-read');timeoutSeconds=30;maxOutputBytes=524288;sourceBase64=[Convert]::ToBase64String($bytes);sha256=([BitConverter]::ToString($hash.ComputeHash($bytes))).Replace('-','').ToLowerInvariant();parameters=@{pid=$PID;startedAt=(Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')}}
+        $diagnosticInput=Join-Path $folder 'diagnostic-input.json'
+        [IO.File]::WriteAllText($diagnosticInput,($manifest.parameters | ConvertTo-Json),[Text.Encoding]::UTF8)
+        Write-Host ('Direct module test: '+$id)
+        & $path -InputPath $diagnosticInput | Out-Null
+        Write-Host ('Production executor test: '+$id)
         $result=Invoke-CapabilityModule $manifest
         if ($result.output.target.pid -ne $PID) { throw 'Evidence mismatch' }
         $manifest.sha256='invalid'
