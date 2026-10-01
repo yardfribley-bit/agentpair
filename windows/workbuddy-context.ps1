@@ -3,11 +3,26 @@ function Get-ContextDigest([string]$text) {
     $sha=[Security.Cryptography.SHA256]::Create()
     try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text)))).Replace('-','').ToLowerInvariant() } finally {$sha.Dispose()}
 }
+function Read-WorkBuddyLines([string]$path) {
+    $stream=$null;$reader=$null
+    try {
+        $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,
+            ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        $reader=New-Object IO.StreamReader($stream)
+        while(-not $reader.EndOfStream){$reader.ReadLine()}
+    } catch [IO.IOException] {
+        # A live WorkBuddy log may briefly deny reads. Continue with the
+        # independent network capture; retry this log on the next poll.
+        return
+    } finally {
+        if($reader){$reader.Dispose()}elseif($stream){$stream.Dispose()}
+    }
+}
 function Get-WorkBuddyNetworkContext($folder,$since) {
     $path=Join-Path $folder 'workbuddy-network.jsonl'
     if(!(Test-Path $path)){return @()}
     $result=@{}
-    foreach($line in [IO.File]::ReadLines($path)){
+    foreach($line in @(Read-WorkBuddyLines $path)){
         try{
             $r=$line|ConvertFrom-Json
             if($r.host -ne 'copilot.tencent.com' -or $r.path -notin @('/v1/chat/completions','/v2/chat/completions','/v3/chat/completions')){continue}
@@ -28,7 +43,7 @@ function Get-WorkBuddyRequestMetadata($root,$since) {
     $logs=Join-Path $root 'logs'
     if (!(Test-Path $logs)) {return @()}
     foreach($file in @(Get-ChildItem $logs -Filter '*.log' -Recurse -File -ErrorAction SilentlyContinue | Where-Object {$_.LastWriteTime -ge $since})) {
-        foreach($line in [IO.File]::ReadLines($file.FullName)) {
+        foreach($line in @(Read-WorkBuddyLines $file.FullName)) {
             if($line -notmatch '\[ModelProvider\]' -or ($line -notmatch 'Sending request:' -and $line -notmatch 'message-to-model-request latency')) {continue}
             $time=[regex]::Match($line,'^\[(\d+/\d+/\d+), (\d+:\d+:\d+) (AM|PM)\.(\d+)\]')
             $pidMatch=[regex]::Match($line,'\[pid=(\d+)\]');$modelMatch=[regex]::Match($line,'\bmodel(?:Name|Id)?=([A-Za-z0-9_.:/-]+)')

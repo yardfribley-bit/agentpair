@@ -34,7 +34,31 @@ if ($PairCode) {
     $plain = [Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBytes($identityPath),$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
     $identity = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
 } else { throw 'Generate a pairing code on the My Devices page, then pass -PairCode.' }
-Write-Host 'Connected. Collecting process names/IDs and installed application metadata only. Ctrl+C stops.'
+$connectionPath=Join-Path $folder 'connection-state.json'
+function Save-Connection($accepted,$message) {
+    $state=@{deviceId=$identity.deviceId;server=$Server;connected=$accepted;message=$message;updatedAt=(Get-Date).ToUniversalTime().ToString('o')}
+    [IO.File]::WriteAllText($connectionPath,($state|ConvertTo-Json -Compress),[Text.Encoding]::UTF8)
+}
+try {
+    Invoke-Api '/api/endpoint/heartbeat' @{os='Windows'} $identity.token | Out-Null
+    Save-Connection $true '平台已确认连接；心跳运行中'
+} catch {Save-Connection $false '平台连接失败，请检查设备绑定及网络';throw}
+$heartbeatJob=$null
+if(-not $Once) {
+    $heartbeatJob=Start-Job -ArgumentList $Server,$identity.token,$identity.deviceId,$connectionPath -ScriptBlock {
+        param($origin,$token,$deviceId,$path)
+        [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+        while($true) {
+            try {
+                Invoke-RestMethod -Uri ($origin+'/api/endpoint/heartbeat') -Method Post -Headers @{Authorization=('Bearer '+$token)} -ContentType 'application/json' -Body '{"os":"Windows"}' -TimeoutSec 8 | Out-Null
+                $state=@{deviceId=$deviceId;server=$origin;connected=$true;message='平台已确认连接；心跳运行中';updatedAt=(Get-Date).ToUniversalTime().ToString('o')}
+            } catch {$state=@{deviceId=$deviceId;server=$origin;connected=$false;message='心跳失败，正在重试';updatedAt=(Get-Date).ToUniversalTime().ToString('o')}}
+            $tmp=$path+'.tmp';[IO.File]::WriteAllText($tmp,($state|ConvertTo-Json -Compress),[Text.Encoding]::UTF8);Move-Item $tmp $path -Force
+            Start-Sleep -Seconds 15
+        }
+    }
+}
+Write-Host 'Connected. Platform heartbeat confirmed; collection runs independently.'
 $contextScript=Join-Path $PSScriptRoot 'workbuddy-context.ps1'
 if(Test-Path $contextScript){. $contextScript}
 $activeAnalysis=$null
@@ -94,6 +118,15 @@ function Invoke-DriverTask($task) {
             result = $runningResult
         })
         Invoke-Api '/api/endpoint/tasks/result' $runningBody $identity.token | Out-Null
+        if ($task.payload.action -eq 'install_software') {
+            $script=Join-Path $PSScriptRoot 'software-install.ps1'
+            if(-not (Test-Path $script)) {throw 'Software installation capability not installed; upgrade endpoint'}
+            . $script
+            $report={param($progress) Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=$progress} $identity.token | Out-Null}
+            $installed=Invoke-SoftwareInstall $task.payload.software $report
+            Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=$installed} $identity.token | Out-Null
+            return
+        }
         if ($task.payload.experienceRef) {
             Write-Host ('Reusing validated collection method: '+$task.payload.experienceRef.id+'; collecting fresh evidence.')
         }
@@ -163,7 +196,10 @@ do {
         $body.hostRuntimeVersion=$PSVersionTable.PSVersion.ToString()
         Invoke-Api '/api/endpoint/report' $body $identity.token | Out-Null
         Write-Host ('Inventory uploaded at ' + (Get-Date -Format T))
-        if(Test-Path $contextScript){Sync-WorkBuddyContext $identity $folder}
+        if(Test-Path $contextScript){
+            try {Sync-WorkBuddyContext $identity $folder}
+            catch {Write-Warning ('Model context sync failed; inventory already uploaded. Error: '+$_.Exception.GetType().Name)}
+        }
         if ($AnalyzeProcess -and -not $activeAnalysis) {
             if (-not $Goal) { throw 'Analysis goal required' }
             $target=@($processes | Where-Object {$_.name -eq $AnalyzeProcess} | Sort-Object startedAt | Select-Object -First 1)
@@ -190,3 +226,4 @@ do {
     }
     if (-not $Once) { Start-Sleep -Seconds 30 }
 } while (-not $Once)
+if($heartbeatJob){Stop-Job $heartbeatJob;Remove-Job $heartbeatJob}

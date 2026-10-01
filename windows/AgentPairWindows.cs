@@ -85,18 +85,27 @@ class AgentPairWindows : Form {
  }
  void OpenPlatform(bool selected){try{Info(server.Text.Trim(),"",false);var path="/model-data?device="+Uri.EscapeDataString(deviceId);if(selected&&selectedId!="")path+="&request="+selectedId;Process.Start(new Uri(new Uri(server.Text.Trim()),path).ToString());}catch(Exception ex){MessageBox.Show(ex.Message);}}
  void Log(string line){if(String.IsNullOrEmpty(line)||IsDisposed)return;try{BeginInvoke((Action)(()=>output.Text=line));}catch(InvalidOperationException){}}
- void StartCollection(){if(collector!=null)return;try{
+ void StartCollection(){if(collector!=null){if(!collector.HasExited)return;collector.Dispose();collector=null;}try{
   collector=new Process {StartInfo=Info(server.Text.Trim(),code.Text.Trim(),false),EnableRaisingEvents=true};
   collector.OutputDataReceived+=(s,e)=>Log(e.Data);collector.ErrorDataReceived+=(s,e)=>{if(!String.IsNullOrEmpty(e.Data))Log("连接或采集失败，请检查配对及 HTTPS 连接。");};
-  collector.Exited+=(s,e)=>Log("采集进程已停止，请检查连接状态。");
+  collector.Exited+=(s,e)=>Log("连接进程已停止，可重试；已配对时请留空配对码。");
   collector.Start();collector.BeginOutputReadLine();collector.BeginErrorReadLine();if(capture!=null&&!capture.HasExited)File.WriteAllText(Path.Combine(folder,"capture-enabled"),"enabled");code.Clear();Page(false);stop.Text="暂停采集";Log("正在连接并采集……");
  }catch(Exception ex){collector=null;MessageBox.Show(ex.Message,"无法启动");}}
  void StopCollection(){var gate=Path.Combine(folder,"capture-enabled");if(File.Exists(gate))File.Delete(gate);if(collector!=null){try{if(!collector.HasExited)collector.Kill();}catch(InvalidOperationException){}collector.Dispose();collector=null;}stop.Text="恢复采集";collectorState.Text="采集器\n已暂停";}
  void RefreshState(){try{
+  var connectedPath=Path.Combine(folder,"connection-state.json");
+  if(File.Exists(connectedPath)){
+   var c=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(connectedPath));
+   if(Convert.ToString(c["server"])==server.Text.TrimEnd('/')){
+    deviceId=Convert.ToString(c["deviceId"]);DateTimeOffset updated;
+    bool live=DateTimeOffset.TryParse(Convert.ToString(c["updatedAt"]),out updated)&&DateTimeOffset.UtcNow-updated<TimeSpan.FromSeconds(45)&&Convert.ToBoolean(c["connected"]);
+    connection.Text=(live?"已连接平台 · 心跳正常 · ":"连接中断 · ")+deviceId;
+   }
+  }
   var path=Path.Combine(folder,"context-state.json");if(!File.Exists(path))return;
   var state=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path));
   if(Convert.ToString(state["server"])!=server.Text.TrimEnd('/'))return;
-  deviceId=Convert.ToString(state["deviceId"]);connection.Text=Convert.ToString(state["server"])+" · 已绑定设备 "+deviceId;
+  deviceId=Convert.ToString(state["deviceId"]);
   appState.Text="应用\nWorkBuddy · "+(Convert.ToBoolean(state["appRunning"])?"运行中":"未运行");
   collectorState.Text="采集器\n"+(collector!=null&&!collector.HasExited?"正在采集":"已暂停");
   var records=(IEnumerable)state["calls"];int synced=0,count=0;calls.Rows.Clear();

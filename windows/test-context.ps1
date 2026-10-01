@@ -21,6 +21,16 @@ $network=@{host='copilot.tencent.com';path='/v2/chat/completions';flowID='fixtur
 Sync-WorkBuddyContext @{deviceId='fixture';token='fixture'} $data (Join-Path $fixture 'workbuddy')
 $wire=@($script:posted|Where-Object {$_.source -eq 'workbuddy_network_context'})
 if($wire.Count -ne 1 -or $wire[0].body -ne $networkBody -or !$wire[0].wireLengthMatched -or $wire[0].model -ne 'wire-model'){throw 'Complete HTTP body upload acceptance failed'}
+$logs=Join-Path $fixture 'workbuddy\logs';New-Item -ItemType Directory -Force $logs|Out-Null
+$busyLog=Join-Path $logs 'workbuddy-active.log'
+[IO.File]::WriteAllText($busyLog,'active log',[Text.Encoding]::UTF8)
+$locked=[IO.File]::Open($busyLog,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+try {
+    $network.flowID='locked-log-network-flow'
+    [IO.File]::WriteAllText((Join-Path $data 'workbuddy-network.jsonl'),($network|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+    Sync-WorkBuddyContext @{deviceId='fixture';token='fixture'} $data (Join-Path $fixture 'workbuddy')
+    if(@($script:posted|Where-Object {$_.source -eq 'workbuddy_network_context' -and $_.sessionId -eq 'network:locked-log-network-flow'}).Count -ne 1){throw 'Locked log blocked independent network upload'}
+} finally {$locked.Dispose()}
 $network.requestSHA256='invalid'
 [IO.File]::WriteAllText((Join-Path $data 'workbuddy-network.jsonl'),($network|ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
 if(@(Get-WorkBuddyNetworkContext $data (Get-Date).AddDays(-1)).Count){throw 'Invalid digest accepted'}
