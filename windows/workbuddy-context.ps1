@@ -16,7 +16,7 @@ function Get-WorkBuddyNetworkContext($folder,$since) {
             $body=([Text.UTF8Encoding]::new($false,$true)).GetString($raw)
             $digest=Get-ContextDigest $body;if($digest -ne $r.requestSHA256){continue}
             $parsed=$body|ConvertFrom-Json;if($parsed.messages -isnot [Array]){continue}
-            $matched=($null -ne $r.declaredContentLength -and $r.declaredContentLength -isnot [bool] -and $r.declaredContentLength -ge 0 -and $r.declaredContentLength -eq $r.capturedWireBodyBytes)
+            $matched=(($r.declaredContentLength -is [int] -or $r.declaredContentLength -is [long]) -and $r.declaredContentLength -ge 0 -and $r.declaredContentLength -eq $r.capturedWireBodyBytes)
             $id=Get-ContextDigest ('network:'+$r.flowID)
             $result[$id]=@{id=$id;source='workbuddy_network_context';body=$body;bodySHA256=$digest;timestamp=($date.ToUnixTimeMilliseconds()/1000.0);model=$parsed.model;modelEvidence='同一 HTTP 请求体 model 字段';sessionId=('network:'+$r.flowID);sessionName=('HTTP 请求 '+([string]$r.flowID).Substring(0,[Math]::Min(8,([string]$r.flowID).Length)));truncated=$false;complete=$false;wireLengthMatched=$matched;destination=('copilot.tencent.com'+$r.path);recordStatus=if($matched){'wire_length_matched'}else{'wire_length_unknown'};recordJSONValid=$true;integrityEvidence='完整 HTTP 正文 SHA256 校验；声明/捕获长度一致不代表远端处理成功'}
         }catch{continue}

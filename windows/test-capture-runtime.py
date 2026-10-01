@@ -38,5 +38,10 @@ with tempfile.TemporaryDirectory(prefix='applens-wire-') as temp:
             assert r['declaredContentLength']==r['capturedWireBodyBytes']==len(body)>100000
             assert 'fixture-not-to-be-stored' not in capture.read_text()
             gate.unlink();send();assert len(capture.read_text().splitlines())==1
-            print('PASS: packaged Windows proxy, verified TLS, complete >150KB body, hash/length, no headers, pause gate')
-        finally:process.terminate();process.wait(timeout=20);server.shutdown()
+        finally:
+            # PyInstaller one-file binaries spawn a child; terminating only the
+            # bootstrap PID leaves that child holding the Windows log handle.
+            if os.name=='nt':subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=False)
+            else:process.terminate()
+            process.wait(timeout=20);server.shutdown();server.server_close()
+print('PASS: packaged Windows proxy, verified TLS, complete >150KB body, hash/length, no headers, pause gate, process cleanup')

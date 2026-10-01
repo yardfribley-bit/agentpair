@@ -74,8 +74,9 @@ class AgentPairWindows : Form {
  }
  void Page(bool config){settings.Visible=config;overview.Visible=!config;}
  void EnableCapture(){
+  if(collector==null||collector.HasExited){MessageBox.Show("请先配对并恢复采集，再启用完整正文采集。");return;}
   if(capture!=null&&!capture.HasExited){Log("完整正文代理已运行；等待真实模型请求。");return;}
-  if(MessageBox.Show("将备份并修改 WorkBuddy 自身代理设置，重启 WorkBuddy。只采模型请求正文，不采令牌或响应。退出 AppLens 时会恢复配置并尝试重启 WorkBuddy，请先保存工作。继续？","启用完整正文采集",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;
+  if(MessageBox.Show("将备份并修改 WorkBuddy 自身代理设置，重启 WorkBuddy。保留模型请求原文，不保存鉴权请求头或响应。原文可能含敏感数据。退出 AppLens 时会恢复配置并尝试重启 WorkBuddy，请先保存工作。继续？","启用完整正文采集",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;
   Directory.CreateDirectory(folder);
   var script=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-network.ps1");
   var info=new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell\\v1.0\\powershell.exe"),"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "+Quote(script)){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};

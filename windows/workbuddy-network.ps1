@@ -82,8 +82,8 @@ finally{
     $restart=($remaining.Count -gt 0 -and $configured)
     if($restart){foreach($p in $remaining|Where-Object {$_.MainWindowHandle -ne 0}){$null=$p.CloseMainWindow();$null=$p.WaitForExit(10000)}}
     $remaining=@(Get-Process -Name WorkBuddy -ErrorAction SilentlyContinue|Where-Object {$_.Path -eq $WorkBuddyExe})
-    if(!$remaining.Count){
-        if($proxy -and !$proxy.HasExited){Stop-Process -Id $proxy.Id -ErrorAction SilentlyContinue}
+    if(!$configured -or !$remaining.Count){
+        if($proxy -and !$proxy.HasExited){& (Join-Path $env:WINDIR 'System32\taskkill.exe') /PID $proxy.Id /T /F |Out-Null}
         if($restart){foreach($name in @('HTTP_PROXY','HTTPS_PROXY','NODE_EXTRA_CA_CERTS','APPLENS_WORKBUDDY_NETWORK_JSONL','APPLENS_CAPTURE_ENABLED_FILE')){Remove-Item ('Env:\'+$name) -ErrorAction SilentlyContinue};Start-Process $WorkBuddyExe|Out-Null}
     }else{Write-Output '已停止记录并恢复配置；WorkBuddy 未退出，代理仅转发。请退出 WorkBuddy 后关闭采集代理。'}
     $mutex.ReleaseMutex()
