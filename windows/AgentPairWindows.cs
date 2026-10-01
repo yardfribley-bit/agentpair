@@ -106,7 +106,7 @@ class AgentPairWindows : Form {
  }catch(IOException){}catch(Exception){Log("调用状态读取失败；未将失败显示为成功。");}}
  void SelectCall(){if(calls.SelectedRows.Count==0)return;var c=calls.SelectedRows[0].Tag as Dictionary<string,object>;if(c==null)return;selectedId=Convert.ToString(c["id"]);bool ok=Convert.ToBoolean(c["receipt"]);stage.Text="发现记录 → 本机保存 → "+(ok?"上传成功 → 平台回执一致":"待上传 → 等待平台回执");detail.Text="SHA256 "+c["bodySHA256"]+"\n"+c["modelEvidence"];}
  [STAThread] static int Main(string[] args){
-  if(args.Length==1&&args[0]=="--self-test")return File.Exists(Script)&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-context.ps1"))?0:2;
+  if(args.Length==1&&args[0]=="--self-test")return File.Exists(Script)&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-context.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-network.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture","mitmdump.exe"))?0:2;
   if(args.Length==3&&args[0]=="--once"){try{using(var p=Process.Start(Info(args[1],args[2],true))){p.OutputDataReceived+=(s,e)=>{};p.ErrorDataReceived+=(s,e)=>{};p.BeginOutputReadLine();p.BeginErrorReadLine();if(!p.WaitForExit(90000)){p.Kill();return 3;}return p.ExitCode;}}catch{return 2;}}
   Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new AgentPairWindows());return 0;
  }

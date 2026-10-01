@@ -71,6 +71,7 @@ try{
     }
 }catch{Write-Output $_.Exception.Message;exit 1}
 finally{
+    if($locked){
     Remove-Item $gate -Force -ErrorAction SilentlyContinue
     Restore-Proxy
     # A running WorkBuddy still remembers its proxy. Gracefully restart after
@@ -84,5 +85,7 @@ finally{
         if($proxy -and !$proxy.HasExited){Stop-Process -Id $proxy.Id -ErrorAction SilentlyContinue}
         if($restart){foreach($name in @('HTTP_PROXY','HTTPS_PROXY','NODE_EXTRA_CA_CERTS','APPLENS_WORKBUDDY_NETWORK_JSONL','APPLENS_CAPTURE_ENABLED_FILE')){Remove-Item ('Env:\'+$name) -ErrorAction SilentlyContinue};Start-Process $WorkBuddyExe|Out-Null}
     }else{Write-Output '已停止记录并恢复配置；WorkBuddy 未退出，代理仅转发。请退出 WorkBuddy 后关闭采集代理。'}
-    if($locked){$mutex.ReleaseMutex()};$mutex.Dispose()
+    $mutex.ReleaseMutex()
+    }
+    $mutex.Dispose()
 }
