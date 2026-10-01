@@ -64,5 +64,15 @@ class DeviceTests(unittest.TestCase):
         self.store.dispatch('admin',self.identity['deviceId'],{'goal':'only device one'})
         self.assertIsNone(self.store.pull(other['token']))
 
+    def test_poll_does_not_invalidate_client_action_lease(self):
+        task=self.store.dispatch('admin',self.identity['deviceId'],{'goal':'手机交互'})
+        first=self.store.pull(self.identity['token'])
+        self.store.complete(self.identity['token'],task['taskId'],first['lease'],{'state':'received'})
+        for _ in range(3):
+            self.assertEqual(self.store.pull(self.identity['token'])['lease'],first['lease'])
+        self.store.complete(self.identity['token'],task['taskId'],first['lease'],{'state':'running'})
+        self.assertEqual(self.store.pull(self.identity['token'])['lease'],first['lease'])
+        self.store.complete(self.identity['token'],task['taskId'],first['lease'],{'state':'completed','summary':'回传成功'})
+
 
 if __name__ == '__main__': unittest.main()

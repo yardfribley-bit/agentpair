@@ -6,9 +6,14 @@ $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path $hostScrip
 if ($errors.Count) { throw 'Host syntax errors' }
 $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-CapabilityModule'},$true)
 Invoke-Expression $function.Extent.Text
+foreach ($name in @('Invoke-Api','Invoke-DriverTask')) {
+    $definition=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+    Invoke-Expression $definition.Extent.Text
+}
 $folder=Join-Path $env:TEMP ('agentpair-module-test-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $folder | Out-Null
 $hash=[Security.Cryptography.SHA256]::Create()
+$fixture=$null
 try {
     foreach ($id in @('process_details','process_tcp')) {
         $path=Join-Path $PSScriptRoot ('..\agentpair\endpoint_modules\'+$id+'.ps1')
@@ -28,8 +33,25 @@ try {
         try { Invoke-CapabilityModule $manifest | Out-Null } catch { $rejected=$true }
         if (-not $rejected) { throw 'Tampered module was accepted' }
     }
+    $fixtureScript=Join-Path $PSScriptRoot 'module_protocol_fixture.py'
+    $startedAt=(Get-Process -Id $PID).StartTime.ToUniversalTime().ToString('o')
+    $arguments='"'+$fixtureScript+'" --directory "'+$folder+'" --pid '+$PID+' --started-at "'+$startedAt+'"'
+    $fixture=Start-Process -FilePath (Get-Command python).Source -ArgumentList $arguments -PassThru -WindowStyle Hidden
+    $ready=Join-Path $folder 'ready.json'
+    for ($i=0; $i -lt 100 -and -not (Test-Path $ready); $i++) { Start-Sleep -Milliseconds 100 }
+    $settings=Get-Content -Raw -LiteralPath $ready | ConvertFrom-Json
+    $Server=$settings.server; $identity=$settings.identity
+    foreach ($id in @('process_details','process_tcp')) {
+        $pulled=Invoke-Api '/api/endpoint/tasks' $null $identity.token 'GET'
+        if ($pulled.task.payload.module.id -ne $id) { throw 'Wrong dispatched module' }
+        Invoke-DriverTask $pulled.task
+    }
+    $assertion=Invoke-Api '/assert' $null $identity.token 'GET'
+    if (-not $assertion.passed) { throw 'Protocol acceptance failed' }
+    Write-Host 'Production device store -> HTTP task pull -> Windows execution -> HTTP evidence upload passed.'
     Write-Host 'Both dynamic modules executed; integrity rejection passed.'
 } finally {
+    if ($fixture -and -not $fixture.HasExited) { Stop-Process -Id $fixture.Id -Force }
     $hash.Dispose()
     Remove-Item -LiteralPath $folder -Recurse -Force
 }
