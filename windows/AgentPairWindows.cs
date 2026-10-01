@@ -30,7 +30,7 @@ class AgentPairWindows : Form {
  Label LabelAt(Control parent,string text,int x,int y,int w,int h,int size=10){var l=new Label {Text=text,Location=new Point(x,y),Size=new Size(w,h),Font=new Font("Microsoft YaHei UI",size),ForeColor=Color.FromArgb(35,53,82)};parent.Controls.Add(l);return l;}
  Button ButtonAt(Control parent,string text,int x,int y,int w,Action action){var b=new Button {Text=text,Location=new Point(x,y),Size=new Size(w,34),FlatStyle=FlatStyle.Flat,BackColor=Color.White};parent.Controls.Add(b);b.Click+=(s,e)=>action();return b;}
  AgentPairWindows(){
-  Text="AppLens · 模型上下文采集";Size=new Size(1220,930);MinimumSize=new Size(1100,850);Font=new Font("Microsoft YaHei UI",10);BackColor=Color.White;StartPosition=FormStartPosition.CenterScreen;
+  Text="AppLens · 模型上下文采集";Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);Size=new Size(1220,930);MinimumSize=new Size(1100,850);Font=new Font("Microsoft YaHei UI",10);BackColor=Color.White;StartPosition=FormStartPosition.CenterScreen;
   var sidebar=new Panel {Dock=DockStyle.Left,Width=185,BackColor=Color.FromArgb(244,248,255)};Controls.Add(sidebar);
   LabelAt(sidebar,"◢ AppLens",18,28,160,44,20);
   ButtonAt(sidebar,"▣  采集总览",15,115,155,()=>Page(false));

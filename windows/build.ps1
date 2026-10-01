@@ -8,7 +8,7 @@ $hostPath=Join-Path $PSScriptRoot '..\agentpair\web_assets\agentpair-windows.ps1
 $utf8Bom=New-Object System.Text.UTF8Encoding($true)
 [IO.File]::WriteAllText($hostPath,[IO.File]::ReadAllText($hostPath,[Text.Encoding]::UTF8),$utf8Bom)
 $compiler = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-& $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /out:build\AgentPairWindows.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll AgentPairWindows.cs
+& $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /win32icon:..\assets\applens\applens.ico /out:build\AgentPairWindows.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll AgentPairWindows.cs
 if ($LASTEXITCODE -ne 0) { throw 'C# build failed' }
 $tokens=$null; $errors=$null
 [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path '..\agentpair\web_assets\agentpair-windows.ps1'),[ref]$tokens,[ref]$errors) | Out-Null
@@ -21,6 +21,10 @@ $networkPath=Join-Path $PSScriptRoot 'workbuddy-network.ps1'
 [IO.File]::WriteAllText($networkPath,[IO.File]::ReadAllText($networkPath,[Text.Encoding]::UTF8),$utf8Bom)
 [System.Management.Automation.Language.Parser]::ParseFile($networkPath,[ref]$tokens,[ref]$errors)|Out-Null
 if($errors.Count){throw 'WorkBuddy network capture syntax errors'}
+$softwarePath=Join-Path $PSScriptRoot 'software-install.ps1'
+[IO.File]::WriteAllText($softwarePath,[IO.File]::ReadAllText($softwarePath,[Text.Encoding]::UTF8),$utf8Bom)
+[System.Management.Automation.Language.Parser]::ParseFile($softwarePath,[ref]$tokens,[ref]$errors)|Out-Null
+if($errors.Count){throw 'Software installer PowerShell syntax errors'}
 & (Join-Path $PSScriptRoot 'test-context.ps1')
 if(Test-Path (Join-Path $PSScriptRoot 'test-modules.ps1')){& (Join-Path $PSScriptRoot 'test-modules.ps1')}
 $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
