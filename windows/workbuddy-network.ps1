@@ -22,7 +22,7 @@ function Restore-Proxy {
     Remove-Item $backup -Force
 }
 if($Action -eq 'Restore'){[IO.File]::WriteAllText($stopFile,'stop');Restore-Proxy;exit}
-$proxy=$null;$mutex=New-Object Threading.Mutex($false,'Local\AppLensWorkBuddyCapture');$locked=$false
+$proxy=$null;$configured=$false;$mutex=New-Object Threading.Mutex($false,'Local\AppLensWorkBuddyCapture');$locked=$false
 try{
     $locked=$mutex.WaitOne(0);if(!$locked){throw '完整正文采集已运行'}
     $exe=Join-Path $PSScriptRoot 'capture\mitmdump.exe'
@@ -62,6 +62,7 @@ try{
     $current|Add-Member -NotePropertyName 'http.proxy' -NotePropertyValue $url
     New-Item -ItemType Directory -Force (Split-Path $settings) | Out-Null
     [IO.File]::WriteAllText($settings,($current|ConvertTo-Json -Depth 30),[Text.UTF8Encoding]::new($false))
+    $configured=$true
     $env:HTTP_PROXY=$url;$env:HTTPS_PROXY=$url;$env:NODE_EXTRA_CA_CERTS=$ca
     Start-Process $WorkBuddyExe | Out-Null
     Write-Output '完整正文代理已启动；等待真实模型请求，尚不代表采集成功'
@@ -78,7 +79,7 @@ finally{
     # restoration before stopping forwarding; if closing fails keep forwarding,
     # with recording disabled, instead of silently breaking the user's network.
     $remaining=@(Get-Process -Name WorkBuddy -ErrorAction SilentlyContinue|Where-Object {$_.Path -eq $WorkBuddyExe})
-    $restart=($remaining.Count -gt 0 -and (Test-Path $stopFile))
+    $restart=($remaining.Count -gt 0 -and $configured)
     if($restart){foreach($p in $remaining|Where-Object {$_.MainWindowHandle -ne 0}){$null=$p.CloseMainWindow();$null=$p.WaitForExit(10000)}}
     $remaining=@(Get-Process -Name WorkBuddy -ErrorAction SilentlyContinue|Where-Object {$_.Path -eq $WorkBuddyExe})
     if(!$remaining.Count){
