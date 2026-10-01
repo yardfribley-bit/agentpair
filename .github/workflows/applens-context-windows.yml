@@ -1,0 +1,48 @@
+name: AppLens Context Windows
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'windows/**'
+      - 'agentpair/web_assets/agentpair-windows.ps1'
+      - '.github/workflows/applens-context-windows.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, context tests, package and installed binary acceptance
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          Set-Location windows
+          New-Item -ItemType Directory -Force build | Out-Null
+          $bom=New-Object Text.UTF8Encoding($true)
+          foreach($path in @('workbuddy-context.ps1','test-context.ps1','..\agentpair\web_assets\agentpair-windows.ps1')) {
+            [IO.File]::WriteAllText((Join-Path (Get-Location) $path),[IO.File]::ReadAllText((Join-Path (Get-Location) $path),[Text.Encoding]::UTF8),$bom)
+            $tokens=$null;$errors=$null
+            [Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path),[ref]$tokens,[ref]$errors)|Out-Null
+            if($errors.Count){$errors|Format-List;throw 'PowerShell syntax failed'}
+          }
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /codepage:65001 /target:winexe /platform:x64 /out:build\AgentPairWindows.exe /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll AgentPairWindows.cs
+          if($LASTEXITCODE){throw 'C# compile failed'}
+          ./test-context.ps1
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" setup.iss
+          if($LASTEXITCODE){throw 'Installer build failed'}
+          $destination=Join-Path $env:TEMP 'AppLensContextAcceptance'
+          $installer=Start-Process -FilePath (Resolve-Path 'dist\AgentPair-Windows-Setup-0.1.0.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/DIR="'+$destination+'"')) -Wait -PassThru
+          if($installer.ExitCode){throw 'Install failed'}
+          $self=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -ArgumentList '--self-test' -Wait -PassThru
+          if($self.ExitCode){throw 'Installed self test failed'}
+          $ui=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -PassThru
+          Start-Sleep -Seconds 3
+          if($ui.HasExited){throw 'GUI exited unexpectedly'}
+          Stop-Process -Id $ui.Id
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AppLens-Windows-Context-Installer
+          path: windows/dist/*.exe
+          if-no-files-found: error
