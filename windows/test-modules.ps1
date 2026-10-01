@@ -49,6 +49,15 @@ try {
     $assertion=Invoke-Api '/assert' $null $identity.token 'GET'
     if (-not $assertion.passed) { throw 'Protocol acceptance failed' }
     Write-Host 'Production device store -> HTTP task pull -> Windows execution -> HTTP evidence upload passed.'
+    Invoke-Api '/reuse' $null $identity.token 'GET' | Out-Null
+    foreach ($id in @('process_details','process_tcp')) {
+        $pulled=Invoke-Api '/api/endpoint/tasks' $null $identity.token 'GET'
+        if (-not $pulled.task.payload.experienceRef) { throw 'Successful method was not reused' }
+        Invoke-DriverTask $pulled.task
+    }
+    $assertion=Invoke-Api '/experiences' $null $identity.token 'GET'
+    if (-not $assertion.passed) { throw 'Replay evidence not retained' }
+    Write-Host 'Successful methods saved, matched, replayed and validated with fresh Windows evidence.'
     Write-Host 'Both dynamic modules executed; integrity rejection passed.'
 } finally {
     if ($fixture -and -not $fixture.HasExited) { Stop-Process -Id $fixture.Id -Force }

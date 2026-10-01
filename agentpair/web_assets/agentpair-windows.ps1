@@ -89,6 +89,9 @@ function Invoke-DriverTask($task) {
             result = $runningResult
         })
         Invoke-Api '/api/endpoint/tasks/result' $runningBody $identity.token | Out-Null
+        if ($task.payload.experienceRef) {
+            Write-Host ('Reusing validated collection method: '+$task.payload.experienceRef.id+'; collecting fresh evidence.')
+        }
         if ($task.payload.action -eq 'run_module') {
             try {
                 $moduleEvidence=Invoke-CapabilityModule $task.payload.module
@@ -148,6 +151,8 @@ do {
         }
         $issues += 'Installed apps from uninstall registry only; Store/portable apps may be missing. Protected process paths may be unavailable.'
         $body = @{os='Windows';architecture=$env:PROCESSOR_ARCHITECTURE;processes=$processes;applications=$apps;errors=$issues}
+        $body.osVersion=[Environment]::OSVersion.Version.ToString()
+        $body.hostRuntimeVersion=$PSVersionTable.PSVersion.ToString()
         Invoke-Api '/api/endpoint/report' $body $identity.token | Out-Null
         Write-Host ('Inventory uploaded at ' + (Get-Date -Format T))
         $task=Invoke-Api '/api/endpoint/tasks' $null $identity.token 'GET'

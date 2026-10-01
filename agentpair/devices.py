@@ -33,6 +33,8 @@ class DeviceStore:
                     db.execute('ALTER TABLE '+table+" ADD COLUMN owner TEXT NOT NULL DEFAULT 'admin'")
             if 'analysis_task_id' not in {r['name'] for r in db.execute('PRAGMA table_info(devices)')}:
                 db.execute('ALTER TABLE devices ADD COLUMN analysis_task_id TEXT')
+        from .experience_store import ExperienceStore
+        self.experiences = ExperienceStore(self.connect)
 
     @contextmanager
     def connect(self):
@@ -99,6 +101,8 @@ class DeviceStore:
                     item['startedAt'] = row['startedAt']
         clean['os'] = str(snapshot.get('os', 'Windows'))[:100]
         clean['architecture'] = str(snapshot.get('architecture', 'unknown'))[:20]
+        for field in ('osVersion','hostRuntimeVersion'):
+            clean[field] = str(snapshot.get(field, 'unknown'))[:100]
         errors = snapshot.get('errors', [])
         if not isinstance(errors, list) or any(not isinstance(x, str) for x in errors):
             raise ValueError('Invalid collection errors')
@@ -124,6 +128,13 @@ class DeviceStore:
             raise ValueError('Task goal required')
         from .endpoint_modules import prepare
         payload = prepare(payload)
+        if 'module' in payload:
+            device = self.get(device_id, owner)
+            if not device: raise PermissionError('Device not owned by this account')
+            experience = self.experiences.match(owner, payload['module'], device['snapshot'])
+            # Never trust a caller-provided experience claim.
+            payload.pop('experienceRef', None)
+            if experience: payload['experienceRef'] = experience
         task_id=secrets.token_hex(16); now=time.time()
         with self.connect() as db:
             device=db.execute('SELECT id FROM devices WHERE id=? AND owner=? AND revoked=0',(device_id,owner)).fetchone()
@@ -178,6 +189,11 @@ class DeviceStore:
             changed=db.execute("UPDATE driver_tasks SET state=?,result=?,lease_until=?,updated=? WHERE id=? AND device_id=? AND lease=? AND state IN ('assigned','received','running')",
                                (result['state'],json.dumps(result,ensure_ascii=False),until,now,task_id,device['id'],lease))
             if changed.rowcount!=1: raise PermissionError('Task lease expired or result already accepted')
+            if task_row and result['state'] in ('completed','failed'):
+                module=json.loads(task_row['payload']).get('module')
+                if module:
+                    snapshot=json.loads(db.execute('SELECT snapshot FROM devices WHERE id=?',(device['id'],)).fetchone()['snapshot'])
+                    self.experiences.record(db,device['owner'],module,snapshot,task_id,result['state']=='completed')
         return {'accepted':True,'taskId':task_id,'state':result['state']}
 
     def task(self, owner, task_id):

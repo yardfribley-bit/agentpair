@@ -15,6 +15,8 @@ args = p.parse_args()
 root = Path(args.directory)
 store = DeviceStore(root / 'devices.db')
 identity = store.enroll(store.pairing()['code'], 'CI Windows')
+store.report(identity['token'], {'os':'Windows','osVersion':'CI-Windows2022',
+    'architecture':'AMD64','hostRuntimeVersion':'5.1','processes':[],'applications':[]})
 tasks = [store.dispatch('admin', identity['deviceId'], {
     'goal': 'Protocol acceptance', 'action': 'run_module', 'moduleId': module,
     'parameters': {'pid': args.pid, 'startedAt': args.started_at}})['taskId']
@@ -39,6 +41,18 @@ class Handler(BaseHTTPRequestHandler):
             items = [store.task('admin', task) for task in tasks]
             ok = all(x['state'] == 'completed' and x['result']['evidence']['output']['target']['pid'] == args.pid for x in items)
             return self.reply(200 if ok else 500, {'passed': ok, 'states': [x['state'] for x in items]})
+        if self.path == '/reuse':
+            for module in ('process_details','process_tcp'):
+                queued=store.dispatch('admin',identity['deviceId'],{'goal':'Replay verified collection',
+                    'action':'run_module','moduleId':module,'parameters':{'pid':args.pid,'startedAt':args.started_at}})
+                item=store.task('admin',queued['taskId'])
+                if not item['payload'].get('experienceRef'): return self.reply(500,{'error':'Missing experience'})
+                tasks.append(queued['taskId'])
+            return self.reply(200,{'accepted':True})
+        if self.path == '/experiences':
+            items=store.experiences.list('admin')
+            passed=len(items)==2 and all(x['successfulRuns']==2 for x in items)
+            return self.reply(200 if passed else 500,{'passed':passed})
         self.reply(404, {})
     def do_POST(self):
         if self.path != '/api/endpoint/tasks/result': return self.reply(404, {})
