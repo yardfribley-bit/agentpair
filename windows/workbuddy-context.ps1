@@ -1,3 +1,13 @@
+function Write-CaptureEvent($folder,$call,$phase,$deviceId) {
+    $record=@{};foreach($name in $call.Keys){if($name -ne 'body'){$record[$name]=$call[$name]}}
+    $record.preview=$call.body.Substring(0,[Math]::Min(1200,$call.body.Length))
+    $record.bodyBytes=[Text.Encoding]::UTF8.GetByteCount($call.body)
+    $record.receipt=($phase -eq 'received')
+    $event=@{server=$Server;deviceId=$deviceId;id=$call.id;phase=$phase;record=$record;updatedAt=(Get-Date).ToString('o')}
+    $path=Join-Path $folder 'capture-event.json';$temp=$path+'.tmp'
+    [IO.File]::WriteAllText($temp,($event|ConvertTo-Json -Depth 6 -Compress),[Text.Encoding]::UTF8)
+    Move-Item $temp $path -Force
+}
 # Generation input only. No independent tool events, reply collection or request rewriting.
 function Get-ContextDigest([string]$text) {
     $sha=[Security.Cryptography.SHA256]::Create()
@@ -86,12 +96,15 @@ function Sync-WorkBuddyContext($identity,$folder,$WorkBuddyRoot=(Join-Path $env:
     foreach($call in $calls){
         $signature=$call.bodySHA256+'|'+$call.model+'|'+$call.recordStatus+'|'+$call.sessionId
         if($receipts[$call.id] -ne $signature){try{
+            Write-CaptureEvent $folder $call 'queued' $identity.deviceId
+            Write-CaptureEvent $folder $call 'uploading' $identity.deviceId
             $result=Invoke-Api '/api/applens/model-context' @{requests=@($call)} $identity.token
             $ack=@($result.receipts|Where-Object {$_.id -eq $call.id -and $_.bodySHA256 -eq $call.bodySHA256})
             if($ack.Count -ne 1){throw 'Receipt mismatch'};$receipts[$call.id]=$signature
-        }catch{$errorMessage='上传失败，等待重试；未确认平台接收'}}
+            Write-CaptureEvent $folder $call 'received' $identity.deviceId
+        }catch{$errorMessage='上传失败，等待重试；未确认平台接收';Write-CaptureEvent $folder $call 'failed' $identity.deviceId}}
         $summary=@{};foreach($name in $call.Keys){if($name -ne 'body'){$summary[$name]=$call[$name]}}
-        $summary.bodyBytes=[Text.Encoding]::UTF8.GetByteCount($call.body);$summary.receipt=($receipts[$call.id] -eq $signature);$view.Add($summary)
+        $summary.preview=$call.body.Substring(0,[Math]::Min(1200,$call.body.Length));$summary.bodyBytes=[Text.Encoding]::UTF8.GetByteCount($call.body);$summary.receipt=($receipts[$call.id] -eq $signature);$view.Add($summary)
     }
     [IO.File]::WriteAllText($receiptsPath,(@{deviceId=$identity.deviceId;receipts=$receipts}|ConvertTo-Json -Depth 5 -Compress),[Text.Encoding]::UTF8)
     $state=@{deviceId=$identity.deviceId;server=$Server;active=$true;updatedAt=(Get-Date).ToString('o');calls=$view.ToArray();error=$errorMessage;appRunning=(@(Get-Process -Name '*workbuddy*' -ErrorAction SilentlyContinue).Count -gt 0)}

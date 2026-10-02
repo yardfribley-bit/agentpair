@@ -15,6 +15,7 @@
 @property NSTimer *telemetryTimer;
 @property NSTextField *telemetryStatus;
 @property NSString *dashboardFile;
+@property NSDictionary *captureEvent;
 @end
 @implementation AppLens
 - (NSTextField*)field:(NSString*)value y:(CGFloat)y {
@@ -37,8 +38,8 @@
 }
 - (void)publish:(id)sender {
  BOOL running=NO;for(NSRunningApplication *app in NSWorkspace.sharedWorkspace.runningApplications)if([app.localizedName.lowercaseString containsString:@"workbuddy"])running=YES;
- NSMutableArray *calls=[NSMutableArray array];NSUInteger synced=0;for(NSDictionary*c in self.calls){NSMutableDictionary*m=[c mutableCopy];[m removeObjectForKey:@"body"];BOOL ok=[self.receipts[c[@"id"]] isEqual:c[@"bodySHA256"]];m[@"receipt"]=@(ok);m[@"bodyBytes"]=@([c[@"body"] lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);if(ok)synced++;[calls addObject:m];}
- NSDictionary *state=@{@"server":self.server.stringValue,@"deviceId":self.deviceId?:@"",@"connected":@(self.token!=nil),@"active":@(self.telemetryActive),@"appRunning":@(running),@"status":[NSString stringWithFormat:@"%@ %@",self.status.stringValue,self.telemetryStatus.stringValue],@"calls":calls,@"synced":@(synced)};
+ NSMutableArray *calls=[NSMutableArray array];NSUInteger synced=0;for(NSDictionary*c in self.calls){NSMutableDictionary*m=[c mutableCopy];[m removeObjectForKey:@"body"];NSString *raw=c[@"body"]?:@"";m[@"preview"]=[raw substringToIndex:MIN(raw.length,1200)];BOOL ok=[self.receipts[c[@"id"]] isEqual:c[@"bodySHA256"]];m[@"receipt"]=@(ok);m[@"bodyBytes"]=@([c[@"body"] lengthOfBytesUsingEncoding:NSUTF8StringEncoding]);if(ok)synced++;[calls addObject:m];}
+ NSDictionary *state=@{@"server":self.server.stringValue,@"deviceId":self.deviceId?:@"",@"connected":@(self.token!=nil),@"active":@(self.telemetryActive),@"appRunning":@(running),@"status":[NSString stringWithFormat:@"%@ %@",self.status.stringValue,self.telemetryStatus.stringValue],@"calls":calls,@"synced":@(synced),@"captureEvent":self.captureEvent?:@{}};
  NSData *d=[NSJSONSerialization dataWithJSONObject:state options:0 error:nil];NSString *json=[[NSString alloc]initWithData:d encoding:NSUTF8StringEncoding];[self.web evaluateJavaScript:[NSString stringWithFormat:@"update(%@)",json] completionHandler:nil];
 }
 - (void)userContentController:(WKUserContentController*)controller didReceiveScriptMessage:(WKScriptMessage*)message {
@@ -53,6 +54,9 @@
 }
 - (void)showTelemetry:(id)sender{[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[self.server.stringValue stringByAppendingString:[NSString stringWithFormat:@"/model-data?device=%@",self.deviceId?:@""]]]];}
 - (NSString*)metadataSignature:(NSDictionary*)c {return [NSString stringWithFormat:@"%@|%@|%@|%@",c[@"model"]?:@"",c[@"recordStatus"]?:@"",c[@"sessionId"]?:@"",c[@"modelEvidence"]?:@""];}
+- (void)capturePhase:(NSString*)phase call:(NSDictionary*)call {
+ dispatch_async(dispatch_get_main_queue(),^{self.captureEvent=@{@"id":call[@"id"]?:@"",@"phase":phase};[self publish:nil];});
+}
 - (void)telemetry:(id)sender {
  if(self.telemetryBusy)return;self.telemetryBusy=YES;self.telemetryActive=YES;
  if(!self.telemetryTimer)self.telemetryTimer=[NSTimer scheduledTimerWithTimeInterval:10 target:self selector:@selector(refreshTelemetry:) userInfo:nil repeats:YES];
@@ -60,7 +64,7 @@
   NSString*script=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"workbuddy_context.py"];
   NSTask*t=[NSTask new];t.launchPath=@"/usr/bin/python3";t.arguments=@[script,@"--since",[NSString stringWithFormat:@"%.0f",NSDate.date.timeIntervalSince1970-86400]];NSPipe*p=[NSPipe pipe];t.standardOutput=p;t.standardError=[NSFileHandle fileHandleWithNullDevice];NSError*error=nil;BOOL launched=[t launchAndReturnError:&error];NSData*d=launched?[p.fileHandleForReading readDataToEndOfFile]:nil;if(launched)[t waitUntilExit];NSDictionary*r=d?[NSJSONSerialization JSONObjectWithData:d options:0 error:nil]:nil;
   NSError*uploadError=nil;
-  BOOL contextUploaded=NO;if(r){NSData*e=[NSData dataWithContentsOfFile:r[@"contextFile"]];NSDictionary*batch=e?[NSJSONSerialization JSONObjectWithData:e options:0 error:nil]:nil;if(batch){self.calls=batch[@"requests"]?:@[];contextUploaded=self.token&&self.active;NSMutableArray *pending=[NSMutableArray array];for(NSDictionary *c in self.calls)if(![self.receipts[c[@"id"]] isEqual:c[@"bodySHA256"]]||![self.receipts[[c[@"id"] stringByAppendingString:@"-metadata"]] isEqual:[self metadataSignature:c]])[pending addObject:c];for(NSUInteger start=0;start<pending.count&&self.token&&self.active;start++){NSArray *part=[pending subarrayWithRange:NSMakeRange(start,1)];NSDictionary *response=[self api:@"/api/applens/model-context" body:@{@"requests":part} base:self.server.stringValue error:&uploadError];if(!response){contextUploaded=NO;break;}for(NSDictionary *receipt in response[@"receipts"])self.receipts[receipt[@"id"]]=receipt[@"bodySHA256"];for(NSDictionary *c in part){if(![self.receipts[c[@"id"]] isEqual:c[@"bodySHA256"]])contextUploaded=NO;else self.receipts[[c[@"id"] stringByAppendingString:@"-metadata"]]=[self metadataSignature:c];}}}}
+  BOOL contextUploaded=NO;if(r){NSData*e=[NSData dataWithContentsOfFile:r[@"contextFile"]];NSDictionary*batch=e?[NSJSONSerialization JSONObjectWithData:e options:0 error:nil]:nil;if(batch){self.calls=batch[@"requests"]?:@[];contextUploaded=self.token&&self.active;NSMutableArray *pending=[NSMutableArray array];for(NSDictionary *c in self.calls)if(![self.receipts[c[@"id"]] isEqual:c[@"bodySHA256"]]||![self.receipts[[c[@"id"] stringByAppendingString:@"-metadata"]] isEqual:[self metadataSignature:c]])[pending addObject:c];for(NSUInteger start=0;start<pending.count&&self.token&&self.active;start++){[self capturePhase:@"queued" call:pending[start]];NSArray *part=[pending subarrayWithRange:NSMakeRange(start,1)];[self capturePhase:@"uploading" call:pending[start]];NSDictionary *response=[self api:@"/api/applens/model-context" body:@{@"requests":part} base:self.server.stringValue error:&uploadError];if(!response){contextUploaded=NO;[self capturePhase:@"failed" call:pending[start]];break;}for(NSDictionary *receipt in response[@"receipts"])self.receipts[receipt[@"id"]]=receipt[@"bodySHA256"];for(NSDictionary *c in part){if(![self.receipts[c[@"id"]] isEqual:c[@"bodySHA256"]]){contextUploaded=NO;[self capturePhase:@"failed" call:c];}else {self.receipts[[c[@"id"] stringByAppendingString:@"-metadata"]]=[self metadataSignature:c];[self capturePhase:@"received" call:c];}}}}}
   NSData *receiptsData=[NSJSONSerialization dataWithJSONObject:@{@"deviceId":self.deviceId?:@"",@"receipts":self.receipts} options:0 error:nil];[receiptsData writeToFile:self.receiptFile atomically:YES];[[NSFileManager defaultManager]setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:self.receiptFile error:nil];
   dispatch_async(dispatch_get_main_queue(),^{self.telemetryBusy=NO;self.telemetryStatus.stringValue=r?[NSString stringWithFormat:@"%@ 条模型输入记录 · %@",r[@"requests"],contextUploaded?@"采集原文与平台回执哈希一致":uploadError?@"上传失败，保留本地":@"等待配对上传"]:@"模型上下文采集失败。";});
  });

@@ -14,6 +14,8 @@ class AgentPairWindows : Form {
  Button start=new Button(),stop=new Button();
  Panel overview=new Panel(),settings=new Panel();
  DataGridView calls=new DataGridView();
+ WebBrowser captureScene=new WebBrowser();
+ Dictionary<string,object> lastCaptureState=new Dictionary<string,object>();
  Process collector,capture;
  string deviceId="",selectedId="";
  readonly string folder=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AgentPair");
@@ -42,7 +44,7 @@ class AgentPairWindows : Form {
   LabelAt(main,"发现本机模型输入，保留原文并同步至所属账号。",24,75,680,30);
   ButtonAt(main,"在平台查看 ↗",700,28,145,()=>OpenPlatform(false));
   stop=ButtonAt(main,"暂停采集",850,28,130,()=>{if(collector==null)StartCollection();else StopCollection();});
-  overview.Location=new Point(24,116);overview.Size=new Size(950,690);main.Controls.Add(overview);
+  overview.Location=new Point(24,116);overview.Size=new Size(950,1130);main.Controls.Add(overview);
   connection=LabelAt(overview,"尚未配对 · 请打开连接设置",0,0,730,40);connection.BackColor=Color.FromArgb(237,245,255);
   ButtonAt(overview,"连接设置",790,0,140,()=>Page(true));
   appState=LabelAt(overview,"应用\nWorkBuddy · 等待检测",0,60,285,75,12);
@@ -51,23 +53,24 @@ class AgentPairWindows : Form {
   foreach(var l in new[]{appState,collectorState,uploadState}){l.BackColor=Color.FromArgb(246,249,255);l.Padding=new Padding(12);}
   ButtonAt(overview,"重试",815,105,100,()=>{StopCollection();StartCollection();});
   var warning=LabelAt(overview,"源记录可能截断；回执哈希一致只确认采集字节。完整请求体通道需明确接入，不推断远端接收。",0,153,930,50);warning.BackColor=Color.FromArgb(255,247,233);warning.Padding=new Padding(10);
-  LabelAt(overview,"最近模型调用",0,220,700,30,14);
-  calls.Location=new Point(0,255);calls.Size=new Size(930,215);calls.BackgroundColor=Color.White;calls.BorderStyle=BorderStyle.FixedSingle;calls.ReadOnly=true;calls.AllowUserToAddRows=false;calls.AllowUserToDeleteRows=false;calls.RowHeadersVisible=false;calls.AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill;calls.SelectionMode=DataGridViewSelectionMode.FullRowSelect;calls.MultiSelect=false;
+  captureScene.Location=new Point(0,215);captureScene.Size=new Size(930,420);captureScene.ScriptErrorsSuppressed=true;captureScene.AllowWebBrowserDrop=false;captureScene.IsWebBrowserContextMenuEnabled=false;captureScene.WebBrowserShortcutsEnabled=false;captureScene.DocumentCompleted+=(s,e)=>PublishCapture();captureScene.Navigating+=(s,e)=>{if(!e.Url.IsFile||!String.Equals(e.Url.LocalPath,Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"),StringComparison.OrdinalIgnoreCase))e.Cancel=true;};overview.Controls.Add(captureScene);captureScene.Navigate(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"));
+  LabelAt(overview,"最近模型调用",0,650,700,30,14);
+  calls.Location=new Point(0,685);calls.Size=new Size(930,215);calls.BackgroundColor=Color.White;calls.BorderStyle=BorderStyle.FixedSingle;calls.ReadOnly=true;calls.AllowUserToAddRows=false;calls.AllowUserToDeleteRows=false;calls.RowHeadersVisible=false;calls.AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill;calls.SelectionMode=DataGridViewSelectionMode.FullRowSelect;calls.MultiSelect=false;
   foreach(var title in new[]{"时间 / 调用","会话","模型","原文大小","完整性","上传"})calls.Columns.Add(title,title);
   overview.Controls.Add(calls);calls.SelectionChanged+=(s,e)=>SelectCall();
-  LabelAt(overview,"选中调用 · 上传阶段",0,487,800,30,14);
-  stage=LabelAt(overview,"发现记录 → 本机保存 → 待上传 → 等待平台回执",0,530,920,40,12);
-  detail=LabelAt(overview,"请选择一条调用",0,578,920,45);
-  ButtonAt(overview,"查看这次调用 ↗",0,635,180,()=>OpenPlatform(true));
-  ButtonAt(overview,"打开本机记录",195,635,150,()=>{Directory.CreateDirectory(folder);Process.Start(folder);});
-  ButtonAt(overview,"启用完整正文采集",360,635,185,()=>EnableCapture());
+  LabelAt(overview,"选中调用 · 上传阶段",0,917,800,30,14);
+  stage=LabelAt(overview,"发现记录 → 本机保存 → 待上传 → 等待平台回执",0,960,920,40,12);
+  detail=LabelAt(overview,"请选择一条调用",0,1008,920,45);
+  ButtonAt(overview,"查看这次调用 ↗",0,1065,180,()=>OpenPlatform(true));
+  ButtonAt(overview,"打开本机记录",195,1065,150,()=>{Directory.CreateDirectory(folder);Process.Start(folder);});
+  ButtonAt(overview,"启用完整正文采集",360,1065,185,()=>EnableCapture());
   settings.Location=new Point(24,116);settings.Size=new Size(930,500);main.Controls.Add(settings);settings.Visible=false;
   LabelAt(settings,"连接与首次配对",0,0,650,40,18);
   LabelAt(settings,"平台地址",0,60,650,30);server.Location=new Point(0,95);server.Size=new Size(740,30);server.Text="https://50.118.187.180/";settings.Controls.Add(server);
   LabelAt(settings,"一次性配对码（已配对可留空）",0,145,650,30);code.Location=new Point(0,180);code.Size=new Size(740,30);code.UseSystemPasswordChar=true;settings.Controls.Add(code);
   start=ButtonAt(settings,"配对并开始同步",0,235,190,()=>StartCollection());
   LabelAt(settings,"设备凭证由 Windows DPAPI 保护；关闭窗口停止采集。\n只采模型请求输入，不单独采工具事件。",0,290,820,70);
-  output.Location=new Point(24,825);output.Size=new Size(930,45);output.Multiline=true;output.ReadOnly=true;output.BorderStyle=BorderStyle.None;output.ForeColor=Color.FromArgb(112,130,156);main.Controls.Add(output);
+  output.Location=new Point(24,1260);output.Size=new Size(930,45);output.Multiline=true;output.ReadOnly=true;output.BorderStyle=BorderStyle.None;output.ForeColor=Color.FromArgb(112,130,156);main.Controls.Add(output);
   var timer=new Timer {Interval=2000};timer.Tick+=(s,e)=>RefreshState();timer.Start();
   FormClosing+=(s,e)=>{StopCollection();if(capture!=null&&!capture.HasExited)File.WriteAllText(Path.Combine(folder,"capture-stop"),"stop");};
   Shown+=(s,e)=>{if(Directory.Exists(folder)&&Directory.GetFiles(folder,"*.identity").Length>0)StartCollection();else Page(true);};
@@ -92,6 +95,7 @@ class AgentPairWindows : Form {
   collector.Start();collector.BeginOutputReadLine();collector.BeginErrorReadLine();if(capture!=null&&!capture.HasExited)File.WriteAllText(Path.Combine(folder,"capture-enabled"),"enabled");code.Clear();Page(false);stop.Text="暂停采集";Log("正在连接并采集……");
  }catch(Exception ex){collector=null;MessageBox.Show(ex.Message,"无法启动");}}
  void StopCollection(){var gate=Path.Combine(folder,"capture-enabled");if(File.Exists(gate))File.Delete(gate);if(collector!=null){try{if(!collector.HasExited)collector.Kill();}catch(InvalidOperationException){}collector.Dispose();collector=null;}stop.Text="恢复采集";collectorState.Text="采集器\n已暂停";}
+ void PublishCapture(){try{if(captureScene.Document!=null)captureScene.Document.InvokeScript("updateCaptureJSON",new object[]{json.Serialize(lastCaptureState)});}catch(Exception){}}
  void RefreshState(){try{
   var connectedPath=Path.Combine(folder,"connection-state.json");
   if(File.Exists(connectedPath)){
@@ -102,10 +106,12 @@ class AgentPairWindows : Form {
     connection.Text=(live?"已连接平台 · 心跳正常 · ":"连接中断 · ")+deviceId;
    }
   }
-  var path=Path.Combine(folder,"context-state.json");if(!File.Exists(path))return;
-  var state=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path));
+  var path=Path.Combine(folder,"context-state.json");
+  var state=File.Exists(path)?json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path)):new Dictionary<string,object>{{"server",server.Text.TrimEnd('/')},{"deviceId",deviceId},{"appRunning",Process.GetProcessesByName("WorkBuddy").Length>0},{"calls",new object[0]},{"error",""}};
   if(Convert.ToString(state["server"])!=server.Text.TrimEnd('/'))return;
   deviceId=Convert.ToString(state["deviceId"]);
+  state["active"]=collector!=null&&!collector.HasExited;state["connected"]=deviceId!="";
+  var eventPath=Path.Combine(folder,"capture-event.json");if(File.Exists(eventPath)){var ev=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(eventPath));DateTimeOffset stamp;if(DateTimeOffset.TryParse(Convert.ToString(ev["updatedAt"]),out stamp)&&DateTimeOffset.UtcNow-stamp<TimeSpan.FromMinutes(2)&&Convert.ToString(ev["server"])==server.Text.TrimEnd('/')&&Convert.ToString(ev["deviceId"])==deviceId)state["captureEvent"]=ev;}lastCaptureState=state;PublishCapture();
   appState.Text="应用\nWorkBuddy · "+(Convert.ToBoolean(state["appRunning"])?"运行中":"未运行");
   collectorState.Text="采集器\n"+(collector!=null&&!collector.HasExited?"正在采集":"已暂停");
   var records=(IEnumerable)state["calls"];int synced=0,count=0;calls.Rows.Clear();
@@ -116,8 +122,9 @@ class AgentPairWindows : Form {
  }catch(IOException){}catch(Exception){Log("调用状态读取失败；未将失败显示为成功。");}}
  void SelectCall(){if(calls.SelectedRows.Count==0)return;var c=calls.SelectedRows[0].Tag as Dictionary<string,object>;if(c==null)return;selectedId=Convert.ToString(c["id"]);bool ok=Convert.ToBoolean(c["receipt"]);stage.Text="发现记录 → 本机保存 → "+(ok?"上传成功 → 平台回执一致":"待上传 → 等待平台回执");detail.Text="SHA256 "+c["bodySHA256"]+"\n"+c["modelEvidence"];}
  [STAThread] static int Main(string[] args){
-  if(args.Length==1&&args[0]=="--self-test")return File.Exists(Script)&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-context.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-network.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture","mitmdump.exe"))?0:2;
+  if(args.Length==1&&args[0]=="--self-test")return File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"))&&File.Exists(Script)&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-context.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-network.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture","mitmdump.exe"))?0:2;
   if(args.Length==3&&args[0]=="--once"){try{using(var p=Process.Start(Info(args[1],args[2],true))){p.OutputDataReceived+=(s,e)=>{};p.ErrorDataReceived+=(s,e)=>{};p.BeginOutputReadLine();p.BeginErrorReadLine();if(!p.WaitForExit(90000)){p.Kill();return 3;}return p.ExitCode;}}catch{return 2;}}
+  try{using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE_BROWSER_EMULATION")){key.SetValue(Path.GetFileName(Application.ExecutablePath),11001,Microsoft.Win32.RegistryValueKind.DWord);}}catch{}
   Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new AgentPairWindows());return 0;
  }
 }

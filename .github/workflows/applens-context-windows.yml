@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'windows/**'
+      - 'client-ui/**'
       - 'assets/applens/**'
       - 'macos/workbuddy_network_capture.py'
       - 'agentpair/web_assets/agentpair-windows.ps1'

@@ -13,6 +13,7 @@ Compression=lzma2
 SolidCompression=yes
 UninstallDisplayIcon={app}\AgentPairWindows.exe
 [Files]
+Source: "..\client-ui\capture.html"; DestDir: "{app}"; Flags: ignoreversion
 Source: "build\AgentPairWindows.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\agentpair\web_assets\agentpair-windows.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "workbuddy-context.ps1"; DestDir: "{app}"; Flags: ignoreversion
