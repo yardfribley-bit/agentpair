@@ -19,7 +19,7 @@ class AgentPairWindows : Form {
  Process collector,capture;
  string deviceId="",selectedId="";
  readonly string folder=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AgentPair");
- readonly JavaScriptSerializer json=new JavaScriptSerializer {MaxJsonLength=2097152};
+ readonly JavaScriptSerializer json=new JavaScriptSerializer {MaxJsonLength=8388608};
  static string Script {get{return Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"agentpair-windows.ps1");}}
  static string Quote(string s){return "\"" + s.Replace("\"","") + "\"";}
  static ProcessStartInfo Info(string origin,string pairing,bool once){
@@ -95,7 +95,7 @@ class AgentPairWindows : Form {
   collector.Start();collector.BeginOutputReadLine();collector.BeginErrorReadLine();if(capture!=null&&!capture.HasExited)File.WriteAllText(Path.Combine(folder,"capture-enabled"),"enabled");code.Clear();Page(false);stop.Text="暂停采集";Log("正在连接并采集……");
  }catch(Exception ex){collector=null;MessageBox.Show(ex.Message,"无法启动");}}
  void StopCollection(){var gate=Path.Combine(folder,"capture-enabled");if(File.Exists(gate))File.Delete(gate);if(collector!=null){try{if(!collector.HasExited)collector.Kill();}catch(InvalidOperationException){}collector.Dispose();collector=null;}stop.Text="恢复采集";collectorState.Text="采集器\n已暂停";}
- void PublishCapture(){try{if(captureScene.Document!=null)captureScene.Document.InvokeScript("updateCaptureJSON",new object[]{json.Serialize(lastCaptureState)});}catch(Exception){}}
+ void PublishCapture(){try{if(captureScene.Document!=null){captureScene.Document.InvokeScript("updateCaptureJSON",new object[]{json.Serialize(lastCaptureState)});int height=Math.Max(520,Math.Min(2400,captureScene.Document.Body.ScrollRectangle.Height));int delta=height-captureScene.Height;if(delta!=0){captureScene.Height=height;foreach(Control child in overview.Controls)if(child!=captureScene&&child.Top>=750)child.Top+=delta;overview.Height+=delta;output.Top+=delta;}}}catch(Exception){}}
  void RefreshState(){try{
   var connectedPath=Path.Combine(folder,"connection-state.json");
   if(File.Exists(connectedPath)){
@@ -111,7 +111,7 @@ class AgentPairWindows : Form {
   if(Convert.ToString(state["server"])!=server.Text.TrimEnd('/'))return;
   deviceId=Convert.ToString(state["deviceId"]);
   state["active"]=collector!=null&&!collector.HasExited;state["connected"]=deviceId!="";
-  var eventPath=Path.Combine(folder,"capture-event.json");if(File.Exists(eventPath)){var ev=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(eventPath));DateTimeOffset stamp;if(DateTimeOffset.TryParse(Convert.ToString(ev["updatedAt"]),out stamp)&&DateTimeOffset.UtcNow-stamp<TimeSpan.FromMinutes(2)&&Convert.ToString(ev["server"])==server.Text.TrimEnd('/')&&Convert.ToString(ev["deviceId"])==deviceId)state["captureEvent"]=ev;}lastCaptureState=state;PublishCapture();
+  var eventPath=Path.Combine(folder,"capture-event.json");if(File.Exists(eventPath)){var ev=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(eventPath));DateTimeOffset stamp;if(DateTimeOffset.TryParse(Convert.ToString(ev["updatedAt"]),out stamp)&&DateTimeOffset.UtcNow-stamp<TimeSpan.FromMinutes(2)&&Convert.ToString(ev["server"])==server.Text.TrimEnd('/')&&Convert.ToString(ev["deviceId"])==deviceId){state["captureBody"]=ev["captureBody"];state["captureBodyId"]=ev["id"];state["captureBodySHA256"]=ev["bodySHA256"];ev.Remove("captureBody");state["captureEvent"]=ev;}}lastCaptureState=state;PublishCapture();
   appState.Text="应用\nWorkBuddy · "+(Convert.ToBoolean(state["appRunning"])?"运行中":"未运行");
   collectorState.Text="采集器\n"+(collector!=null&&!collector.HasExited?"正在采集":"已暂停");
   var records=(IEnumerable)state["calls"];int synced=0,count=0;calls.Rows.Clear();
