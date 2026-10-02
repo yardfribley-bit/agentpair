@@ -121,10 +121,27 @@ class AgentPairWindows : Form {
   }uploadState.Text="上传同步\n"+synced+" / "+count+" 已确认";if(Convert.ToString(state["error"])!="")output.Text=Convert.ToString(state["error"]);SelectCall();
  }catch(IOException){}catch(Exception){Log("调用状态读取失败；未将失败显示为成功。");}}
  void SelectCall(){if(calls.SelectedRows.Count==0)return;var c=calls.SelectedRows[0].Tag as Dictionary<string,object>;if(c==null)return;selectedId=Convert.ToString(c["id"]);bool ok=Convert.ToBoolean(c["receipt"]);stage.Text="发现记录 → 本机保存 → "+(ok?"上传成功 → 平台回执一致":"待上传 → 等待平台回执");detail.Text="SHA256 "+c["bodySHA256"]+"\n"+c["modelEvidence"];}
+ static int VerifyCollectionView(){
+  int result=3;using(var form=new Form {Text="AppLens 采集界面验收",Size=new Size(1000,1000)})using(var browser=new WebBrowser {Dock=DockStyle.Fill,ScriptErrorsSuppressed=true})using(var timeout=new Timer {Interval=15000}){
+   form.Controls.Add(browser);timeout.Tick+=(s,e)=>{timeout.Stop();form.Close();};
+   browser.DocumentCompleted+=(s,e)=>{try{
+    string id=new string('a',64),digest=new string('b',64),body="{\"messages\":[{\"role\":\"user\",\"content\":\"fixture task\"}]}";
+    var record=new Dictionary<string,object>{{"id",id},{"bodySHA256",digest},{"source","workbuddy_network_context"},{"timestamp",1700000000},{"bodyBytes",body.Length},{"receipt",false}};
+    var state=new Dictionary<string,object>{{"calls",new object[]{record}},{"active",true},{"connected",true},{"appRunning",true},{"captureBody",body},{"captureBodyId",id},{"captureBodySHA256",digest},{"captureEvent",new Dictionary<string,object>{{"id",id},{"phase","failed"}}}};
+    var serializer=new JavaScriptSerializer();browser.Document.InvokeScript("updateCaptureJSON",new object[]{serializer.Serialize(state)});
+    if(!browser.Document.GetElementById("inventory").InnerText.Contains("fixture task")||!browser.Document.GetElementById("status").InnerText.Contains("上传失败"))throw new Exception("Native collection rendering failed");
+    record["receipt"]=true;state["captureEvent"]=new Dictionary<string,object>{{"id",id},{"phase","received"}};
+    browser.Document.InvokeScript("updateCaptureJSON",new object[]{serializer.Serialize(state)});
+    if(!browser.Document.GetElementById("inventory").InnerText.Contains("已同步到 AgentPair")||!browser.Document.GetElementById("receipt").InnerText.Contains("一致"))throw new Exception("Native acknowledgement rendering failed");
+    result=0;
+   }catch(Exception){result=3;}timeout.Stop();form.Close();};
+   form.Shown+=(s,e)=>{timeout.Start();browser.Navigate(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"));};Application.Run(form);
+  }return result;
+ }
  [STAThread] static int Main(string[] args){
   if(args.Length==1&&args[0]=="--self-test")return File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"))&&File.Exists(Script)&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-context.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-network.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture","mitmdump.exe"))?0:2;
   if(args.Length==3&&args[0]=="--once"){try{using(var p=Process.Start(Info(args[1],args[2],true))){p.OutputDataReceived+=(s,e)=>{};p.ErrorDataReceived+=(s,e)=>{};p.BeginOutputReadLine();p.BeginErrorReadLine();if(!p.WaitForExit(90000)){p.Kill();return 3;}return p.ExitCode;}}catch{return 2;}}
   try{using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Internet Explorer\Main\FeatureControl\FEATURE_BROWSER_EMULATION")){key.SetValue(Path.GetFileName(Application.ExecutablePath),11001,Microsoft.Win32.RegistryValueKind.DWord);}}catch{}
-  Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new AgentPairWindows());return 0;
+  Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);if(args.Length==1&&args[0]=="--capture-ui-self-test")return VerifyCollectionView();Application.Run(new AgentPairWindows());return 0;
  }
 }

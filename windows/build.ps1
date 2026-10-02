@@ -36,6 +36,8 @@ $p=Start-Process -FilePath (Resolve-Path 'dist\AgentPair-Windows-Setup-0.1.0.exe
 if($p.ExitCode -ne 0) {throw 'Installer acceptance failed'}
 $p=Start-Process (Join-Path $install 'AgentPairWindows.exe') -ArgumentList '--self-test' -Wait -PassThru
 if($p.ExitCode -ne 0) {throw 'Installed binary self-test failed'}
+$captureTest=Start-Process (Join-Path $install 'AgentPairWindows.exe') -ArgumentList '--capture-ui-self-test' -Wait -PassThru
+if($captureTest.ExitCode -ne 0){throw 'Native capture content/receipt UI acceptance failed'}
 $p=Start-Process (Join-Path $install 'AgentPairWindows.exe') -PassThru
 Start-Sleep -Seconds 3
 if($p.HasExited) {throw 'Installed GUI exited unexpectedly'}

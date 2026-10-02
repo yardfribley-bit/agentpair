@@ -46,6 +46,8 @@ jobs:
           if($installer.ExitCode){throw 'Install failed'}
           $self=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -ArgumentList '--self-test' -Wait -PassThru
           if($self.ExitCode){throw 'Installed self test failed'}
+          $captureTest=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -ArgumentList '--capture-ui-self-test' -Wait -PassThru
+          if($captureTest.ExitCode){throw 'Native capture content/receipt UI acceptance failed'}
           $ui=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -PassThru
           Start-Sleep -Seconds 3
           if($ui.HasExited){throw 'GUI exited unexpectedly'}
