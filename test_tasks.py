@@ -61,6 +61,33 @@ class TaskTests(unittest.TestCase):
         self.assertEqual(done['status'],'blocked')
         reworks=[e for e in done['events'] if e['kind']=='rework']
         self.assertEqual([e['attempt'] for e in reworks],[1,2])
+
+    def test_pass_with_explicit_evidence_gap_cannot_complete(self):
+        class GapBackend(FakeBackend):
+            def call(self, role, envelope, timeout):
+                result=super().call(role,envelope,timeout)
+                if envelope['mode']=='review':
+                    result['answer'].update(verdict='pass',summary='应用存在，但无法判断网络行为',nextSteps=['采集网络连接'])
+                return result
+        from pathlib import Path
+        engine=TaskEngine(Path(self.tmp.name)/'gap.db',GapBackend())
+        task=engine.create('gap','analyze')
+        import time
+        for _ in range(50):
+            if engine.get(task['id'])['status'] not in ('queued','running'): break
+            time.sleep(.01)
+        self.assertEqual(engine.get(task['id'])['status'],'needs_more_evidence')
+        self.assertTrue(any(e['kind']=='acceptance_guard' for e in engine.get(task['id'])['events']))
+        engine.close()
+    def test_accepted_scope_limitations_are_not_blocking_gaps(self):
+        from agentpair.tasks import _review_has_unresolved_gap
+        review={'summary':'快照未提供 DNS；不证明数据外传',
+                'decision':{'action':'deliver','checks':[
+                    {'id':key,'value':'yes'} for key in
+                    ('goal_met','grounded','consistent','delivery','readable_answer')]}}
+        self.assertFalse(_review_has_unresolved_gap(review))
+        review['blockingGaps']=['任务要求网络数据，但尚未采集']
+        self.assertTrue(_review_has_unresolved_gap(review))
     def test_cancel_queued_no_calls(self):
         t=self.engine.create('task','goal'); self.engine.cancel(t['id']); self.engine.process(t['id'])
         self.assertEqual(self.backend.calls,[])

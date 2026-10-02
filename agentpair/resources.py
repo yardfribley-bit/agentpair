@@ -30,6 +30,9 @@ class ResourceManager:
         tmp=p.with_suffix('.tmp')
         tmp.write_text(json.dumps(lease,ensure_ascii=False,indent=2))
         os.chmod(tmp,0o600)
+        if os.geteuid()==0:
+            owner=self.directory.stat()
+            os.chown(tmp,owner.st_uid,owner.st_gid)
         tmp.replace(p)
 
     def quote(self, config, eip):
@@ -63,7 +66,7 @@ class ResourceManager:
         self._save(lease)
         # Narrow config is assembled by the caller; only authorized key is put in cloud-init.
         import base64
-        userdata='#cloud-config\nusers:\n  - default\n  - name: pair\n    lock_passwd: true\n    groups: [docker]\n    ssh_authorized_keys:\n      - '+ssh_public_key.strip()+'\nssh_pwauth: false\ngroups: [docker]\npackages: [docker.io, git]\nwrite_files:\n  - path: /etc/agentpair-driver\n    permissions: "0444"\n    content: isolated-driver\nruncmd:\n  - [systemctl, enable, --now, docker]\n'
+        userdata='#cloud-config\nusers:\n  - default\n  - name: pair\n    lock_passwd: true\n    groups: sudo\n    sudo: ALL=(ALL) NOPASSWD:ALL\n    ssh_authorized_keys:\n      - '+ssh_public_key.strip()+'\nssh_pwauth: false\npackages: [git, python3, ca-certificates]\nwrite_files:\n  - path: /etc/agentpair-driver\n    permissions: "0444"\n    content: isolated-driver\n'
         request={**config,'Name':name,'MaxCount':1,'MinCount':1,
                  'SecurityGroupId':config['SecurityGroupId'],
                  'UserData':base64.b64encode(userdata.encode()).decode(),
@@ -110,6 +113,14 @@ class ResourceManager:
                         pass
                     time.sleep(3)
                 else: raise RuntimeError('Host still exists after termination')
+        firewall=lease.get('dedicatedFirewallId')
+        if firewall:
+            rows=self.api.call('DescribeFirewall').get('DataSet',[])
+            match=next((r for r in rows if r.get('FWId')==firewall),None)
+            if match and match.get('ResourceCount')==0:
+                self.api.call('DeleteFirewall',FWId=firewall)
+            elif match:
+                raise RuntimeError('Dedicated firewall still bound; refusing deletion')
         lease['state']='released';lease['releasedAt']=self.clock().isoformat()
         self._save(lease)
         return lease

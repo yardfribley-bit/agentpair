@@ -34,6 +34,18 @@ class DeviceTests(unittest.TestCase):
         self.assertEqual(self.store.list(), [])
         with self.assertRaises(PermissionError): self.store.report(self.identity['token'], self.data)
 
+    def test_heartbeat_is_independent_of_collection(self):
+        result=self.store.heartbeat(self.identity['token'],{'os':'Windows'})
+        self.assertTrue(result['accepted'])
+        self.assertTrue(self.store.list()[0]['online'])
+        self.assertEqual(self.store.list()[0]['snapshot'],{'os':'Windows'})
+        self.store.report(self.identity['token'],self.data)
+        before=self.store.list()[0]['snapshot']
+        self.store.heartbeat(self.identity['token'],{'os':'Windows'})
+        self.assertEqual(self.store.list()[0]['snapshot'],before)
+        self.store.revoke(self.identity['deviceId'])
+        with self.assertRaises(PermissionError):self.store.heartbeat(self.identity['token'],{'os':'Windows'})
+
     def test_invalid_token_and_payload(self):
         with self.assertRaises(PermissionError): self.store.report('wrong', self.data)
         for invalid in ([], {'processes': 'oops', 'applications': []}, {**self.data, 'errors': 1}):
@@ -63,6 +75,16 @@ class DeviceTests(unittest.TestCase):
         other=self.store.enroll(self.store.pairing()['code'],'other')
         self.store.dispatch('admin',self.identity['deviceId'],{'goal':'only device one'})
         self.assertIsNone(self.store.pull(other['token']))
+
+    def test_poll_does_not_invalidate_client_action_lease(self):
+        task=self.store.dispatch('admin',self.identity['deviceId'],{'goal':'手机交互'})
+        first=self.store.pull(self.identity['token'])
+        self.store.complete(self.identity['token'],task['taskId'],first['lease'],{'state':'received'})
+        for _ in range(3):
+            self.assertEqual(self.store.pull(self.identity['token'])['lease'],first['lease'])
+        self.store.complete(self.identity['token'],task['taskId'],first['lease'],{'state':'running'})
+        self.assertEqual(self.store.pull(self.identity['token'])['lease'],first['lease'])
+        self.store.complete(self.identity['token'],task['taskId'],first['lease'],{'state':'completed','summary':'回传成功'})
 
 
 if __name__ == '__main__': unittest.main()

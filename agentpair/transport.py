@@ -9,6 +9,9 @@ import subprocess
 import tarfile
 import time
 import copy
+import threading
+import re
+from urllib.parse import urlsplit
 import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .methods import method
@@ -29,27 +32,63 @@ class NodeBackend:
             return 0.30
         return 0.10
 
+    def observe(self, envelope, role, item):
+        callback=getattr(self,'event_callback',None)
+        if callback and item.get('kind') in {
+                'worker_received','worker_completed','worker_failed','model_started',
+                'model_completed','tool_started','tool_result'}:
+            callback(envelope['task']['id'],dict(item,
+                role=envelope['task'].get('branch',role),stage=envelope['mode'],
+                jobId=envelope['task'].get('jobId'),
+                phase=envelope['task'].get('collaborationPhase'),
+                invocationId=(envelope.get('handoff') or {}).get('id'),
+                messageId=(envelope['task'].get('collaborationMessage') or envelope.get('handoff') or {}).get('id')))
+
     def call(self, role, envelope, timeout):
-        if role=='navigator': return apply_jev(self.jev,envelope,run(envelope,self.token))
+        if role=='navigator': return apply_jev(self.jev,envelope,run(envelope,self.token,
+            emit=lambda item:self.observe(envelope,role,item)))
         if role!='driver': raise ValueError('Invalid role')
         private=dict(envelope,relayToken=self.token)
-        response=subprocess.run(['ssh','-i',self.key,'-o','BatchMode=yes','-o','IdentitiesOnly=yes',
+        response=subprocess.Popen(['ssh','-i',self.key,'-o','BatchMode=yes','-o','IdentitiesOnly=yes',
             '-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+self.known_hosts,
             '-o','ConnectTimeout=8','pair@'+self.driver,
             'cd /home/pair/AgentPair && python3 -m agentpair.pair_worker'],
-            input=json.dumps(private).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-            timeout=min(timeout,600),check=False)
+            stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+        output=[];errors=[]
+        def drain_output():output.append(response.stdout.read(4000000))
+        def drain_events():
+            for line in response.stderr:
+                try:
+                    item=json.loads(line)
+                    if item.get('event')=='tool_result':
+                        receipt=item['receipt']
+                        self.observe(envelope,role,{'kind':'tool_result',
+                            'text':str(receipt.get('tool'))+' · '+('成功' if receipt.get('ok') else '失败'),
+                            'receipt':receipt})
+                    elif item.get('event')=='worker_event':
+                        self.observe(envelope,role,item['data'])
+                    else:errors.append(item)
+                except (ValueError,KeyError):pass
+        readers=[threading.Thread(target=drain_output,daemon=True),threading.Thread(target=drain_events,daemon=True)]
+        for reader in readers:reader.start()
+        try:
+            response.stdin.write(json.dumps(private).encode());response.stdin.close()
+            response.wait(timeout=min(timeout,600))
+        except BaseException:
+            response.kill();response.wait();raise
+        finally:
+            for reader in readers:reader.join(timeout=3)
         if response.returncode:
-            try: reason=json.loads(response.stderr).get('errorType','WorkerError')
-            except (ValueError,TypeError): reason='SSH or worker error'
+            try: reason=errors[-1].get('errorType','WorkerError')
+            except (ValueError,TypeError,IndexError): reason='SSH or worker error'
             raise RuntimeError('Driver: '+str(reason)[:80])
-        return json.loads(response.stdout)
+        return json.loads(b''.join(output))
 
 
 class CloudDriverBackend(NodeBackend):
     """Allocate one bounded UCloud Driver lazily, then use the normal SSH worker."""
     def __init__(self, token, manager, key, known_hosts, public_key, firewall_id,
-                 worker_root, zone='cn-bj2-04'):
+                 worker_root, zone='cn-bj2-04', persistent_driver=None):
         super().__init__(token,None,key,known_hosts)
         self.manager=manager
         self.public_key=public_key
@@ -57,6 +96,36 @@ class CloudDriverBackend(NodeBackend):
         self.worker_root=Path(worker_root)
         self.zone=zone
         self.lease_id=None
+        self.persistent_driver=str(persistent_driver or '').strip()
+        if self.persistent_driver:
+            address=ipaddress.ip_address(self.persistent_driver)
+            if address.version!=4 or not address.is_global:
+                raise ValueError('Persistent Driver must have a public IPv4 address')
+        self._persistent_status=None
+        self._persistent_checked=0.0
+        self._persistent_lock=threading.Lock()
+        self._persistent_work={}
+
+    def persistent_status(self):
+        if not self.persistent_driver:return None
+        with self._persistent_lock:
+            if time.monotonic()-self._persistent_checked>10 or self._persistent_status is None:
+                command=['ssh','-i',self.key,'-o','BatchMode=yes','-o','IdentitiesOnly=yes',
+                    '-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+self.known_hosts,
+                    '-o','ConnectTimeout=4','pair@'+self.persistent_driver,
+                    'if test -f /home/pair/AgentPair/agentpair/pair_worker.py; then echo READY; else echo UNPREPARED; fi']
+                try:
+                    probe=subprocess.run(command,capture_output=True,timeout=7)
+                    self._persistent_status={'reachable':probe.returncode==0,
+                        'workerReady':probe.returncode==0 and probe.stdout.strip()==b'READY',
+                        'checkedAt':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+                except (OSError,subprocess.TimeoutExpired):
+                    self._persistent_status={'reachable':False,
+                        'workerReady':False,
+                        'checkedAt':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+                self._persistent_checked=time.monotonic()
+            return dict(self._persistent_status,ip=self.persistent_driver,
+                currentTasks=list(self._persistent_work.values()))
 
     def _driver_ip(self, lease):
         hosts=self.manager.api.call('DescribeUHostInstance',**{'UHostIds.0':lease['hostId']}).get('UHostSet',[])
@@ -69,8 +138,15 @@ class CloudDriverBackend(NodeBackend):
         return None
 
     def _provision(self, excluded=()):
+        persistent_id='persistent:'+self.persistent_driver
+        if self.persistent_driver and persistent_id not in excluded:
+            self.lease_id=persistent_id
+            # The pre-registered machine is paid for separately; never allocate a
+            # replacement on connection failure without an explicit new decision.
+            return self.persistent_driver,True
         self.manager.release_expired()
         leases=[x for x in self.manager.records() if x['state']=='active' and x.get('hostId') and x['id'] not in excluded
+                and x.get('platform','linux')=='linux' and x.get('purpose')!='Windows installer/inventory acceptance'
                 and (datetime.datetime.fromisoformat(x['expiresAt'])-self.manager.clock()).total_seconds()>600]
         if self.lease_id:leases.sort(key=lambda x:x['id']!=self.lease_id)
         for lease in leases:
@@ -113,18 +189,33 @@ class CloudDriverBackend(NodeBackend):
 
     def call(self,role,envelope,timeout):
         if role=='driver':
+            if envelope['task'].get('executionProfile') in ('python','node'):
+                raise ValueError('旧 Docker 执行环境已停用，请选择原生开发环境；未创建资源')
+            browser=envelope['task'].get('executionProfile') in ('native','browser')
+            if browser:
+                assets=self.worker_root/'browser-assets'
+                if not all((assets/n).is_file() for n in ('browserkit','lightpanda')):
+                    raise RuntimeError('Verified browser binaries unavailable; no machine allocated')
+                text=json.dumps([m.get('text','') for m in envelope.get('history',[]) if m.get('role')=='user'])
+                domains=sorted({urlsplit(u).hostname for u in re.findall(r'https?://[^\s"<>\\]+',text) if urlsplit(u).hostname})
+                if not domains:raise ValueError('浏览器任务请写明完整 https:// 网站地址；未创建资源')
             selected=envelope['task'].get('engineeringMethod','local')
             count=method(selected)['drivers']
             if not count:
-                result=run(envelope,self.token)
+                result=run(envelope,self.token,emit=lambda item:self.observe(envelope,role,item))
                 result['executionNode']='navigator_local'
                 result['resourceDecision']='No paid Driver instance needed for this task'
                 return result
             if count==2:return self._parallel(envelope,timeout)
             ip,fresh=self._provision()
             self.driver=ip
+            callback=getattr(self,'event_callback',None)
+            if callback:callback(envelope['task']['id'],{'kind':'node_assigned','role':'driver','stage':'driver',
+                'address':ip,'nodeKind':'persistent_linux' if self.lease_id=='persistent:'+self.persistent_driver else 'leased_linux',
+                'text':'已分配 Linux Driver '+ip})
             if fresh:self._deploy_worker(ip)
-            if envelope['task'].get('executionProfile','none')!='none':
+            if browser:self._deploy_browser(ip,domains)
+            elif envelope['task'].get('executionProfile','none')!='none':
                 from .executor import PROFILES
                 image=PROFILES[envelope['task']['executionProfile']][0]
                 prepared=subprocess.run(['ssh','-i',self.key,'-o','BatchMode=yes','-o','IdentitiesOnly=yes',
@@ -132,19 +223,36 @@ class CloudDriverBackend(NodeBackend):
                     'pair@'+ip,'test -f /etc/agentpair-driver && docker pull '+image],
                     capture_output=True,timeout=180)
                 if prepared.returncode: raise RuntimeError('Isolated Driver runtime not ready; no code executed')
-            result=super().call(role,envelope,timeout)
-            result['executionNode']='ucloud_driver'
-            result['resourceDecision']='Cloud Driver provisioned under a one-hour lease'
-            result['leaseId']=self.lease_id
+            persistent=self.lease_id=='persistent:'+self.persistent_driver
+            task_id=envelope['task']['id']
+            if persistent:
+                with self._persistent_lock:self._persistent_work[task_id]={'id':task_id,'title':envelope['task']['title']}
+            try:result=super().call(role,envelope,timeout)
+            finally:
+                if persistent:
+                    with self._persistent_lock:self._persistent_work.pop(task_id,None)
+            result['executionNode']='persistent_linux_driver' if persistent else 'ucloud_driver'
+            result['resourceDecision']='Reused registered Linux Driver' if persistent else 'Cloud Driver provisioned under a one-hour lease'
+            if not persistent:result['leaseId']=self.lease_id
             return result
         return super().call(role,envelope,timeout)
 
+    def _deploy_browser(self,ip,domains):
+        args=['ssh','-i',self.key,'-o','BatchMode=yes','-o','IdentitiesOnly=yes',
+              '-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+self.known_hosts,'pair@'+ip]
+        bundle=io.BytesIO()
+        with tarfile.open(fileobj=bundle,mode='w') as archive:
+            for name in ('browserkit','lightpanda'):
+                archive.add(self.worker_root/'browser-assets'/name,arcname=name)
+        subprocess.run(args+['mkdir -p /home/pair/AgentPair/browser-assets && tar -xf - -C /home/pair/AgentPair/browser-assets'],input=bundle.getvalue(),capture_output=True,check=True,timeout=150)
+        subprocess.run(args+['cd /home/pair/AgentPair && python3 -m agentpair.browser_setup'],input=json.dumps(domains).encode(),capture_output=True,check=True,timeout=90)
+
     def _parallel(self,envelope,timeout):
         started=time.monotonic();nodes=[];excluded=[]
-        def event(branch,text,kind='branch_progress',recipient=None,phase=None,intelligence=None,packet=None):
+        def event(branch,text,kind='branch_progress',recipient=None,phase=None,intelligence=None,packet=None,job_id=None):
             callback=getattr(self,'event_callback',None)
             if callback:callback(envelope['task']['id'],{'kind':kind,'role':branch,'stage':'driver',
-                'to':recipient,'phase':phase,'text':str(text)[:1200],
+                'to':recipient,'phase':phase,'text':str(text)[:1200],'jobId':job_id,
                 **({'intelligence':intelligence} if intelligence is not None else {}),
                 **({'message':packet} if packet is not None else {})})
         routes=envelope.get('outputs',{}).get('plan',{}).get('answer',{}).get('approaches')
@@ -154,11 +262,14 @@ class CloudDriverBackend(NodeBackend):
             branch='Driver '+('A' if index==0 else 'B')
             event(branch,'准备独立节点，优先复用本计费周期的租约')
             ip,fresh=self._provision(excluded);excluded.append(self.lease_id)
+            event(branch,'已分配 Linux Driver '+ip,'node_assigned',phase='explore',
+                  intelligence={'address':ip,'nodeKind':'persistent_linux' if self.lease_id=='persistent:'+self.persistent_driver else 'leased_linux'})
             if fresh:self._deploy_worker(ip)
             nodes.append((branch,ip,self.lease_id,routes[index]))
         def execute(node,phase,peer=None,feedback=None,own=None):
             branch,ip,lease,route=node
             task=copy.deepcopy(envelope);task['task']['approach']=route;task['task']['branch']=branch
+            task['task']['jobId']=secrets.token_hex(16)
             task['task']['collaborationPhase']=phase
             packet=None
             if peer is not None:
@@ -169,16 +280,18 @@ class CloudDriverBackend(NodeBackend):
             if packet is not None:
                 task['task']['collaborationMessage']=validate_collaboration(packet,
                     task_id=envelope['task']['id'],recipient=branch)
-            event(branch,{'explore':'开始独立探索：','review_peer':'开始复核另一方案：','revise':'根据交叉意见修订：'}[phase]+route,phase=phase)
+            event(branch,{'explore':'开始独立探索：','review_peer':'开始复核另一方案：','revise':'根据交叉意见修订：'}[phase]+route,'job_started',phase=phase,job_id=task['task']['jobId'])
             try:
-                result=NodeBackend(self.token,ip,self.key,self.known_hosts).call('driver',task,max(1,timeout-(time.monotonic()-started)))
+                worker=NodeBackend(self.token,ip,self.key,self.known_hosts)
+                worker.event_callback=getattr(self,'event_callback',None)
+                result=worker.call('driver',task,max(1,timeout-(time.monotonic()-started)))
                 if packet is not None:
                     event(branch,'已处理交接消息并返回结果','branch_handoff_processed',phase=phase,
                           recipient=packet['from'],packet=packet)
-                event(branch,result['answer'].get('summary','已返回结果'),'branch_completed',phase=phase)
+                event(branch,result['answer'].get('summary','已返回结果'),'job_completed',phase=phase,job_id=task['task']['jobId'])
                 return branch,{'status':'completed','result':result,'leaseId':lease,'approach':route}
             except Exception as error:
-                event(branch,'分支失败：'+type(error).__name__,'branch_failed',phase=phase)
+                event(branch,'分支失败：'+type(error).__name__,'job_failed',phase=phase,job_id=task['task']['jobId'])
                 return branch,{'status':'failed','errorType':type(error).__name__,'leaseId':lease,'approach':route}
         def phase_run(phase,inputs):
             completed={}
@@ -198,7 +311,7 @@ class CloudDriverBackend(NodeBackend):
                 packet=collaboration_message(other,branch,'finding',intelligence['summary'],
                     task_id=envelope['task']['id'],round_number=envelope['task'].get('round',1),
                     phase='review_peer',evidence_refs=[ref for finding in intelligence['findings']
-                    if isinstance(finding,dict) for ref in finding.get('evidenceRefs',[])])
+                    if isinstance(finding,dict) for ref in finding.get('evidenceRefs',[])],content=peer)
                 event(other,'已共享第一轮情报，交给 '+branch+' 交叉复核','branch_handoff',recipient=branch,
                       phase='review_peer',intelligence=intelligence,packet=packet)
                 reviews[branch]=((peer,packet),None,initial[branch]['result']['answer'])
@@ -212,7 +325,7 @@ class CloudDriverBackend(NodeBackend):
                 intelligence={'from':other,'to':branch,'summary':str(feedback.get('summary',''))[:500],
                     'questions':feedback.get('questions',[])[:4] if isinstance(feedback.get('questions'),list) else []}
                 packet=collaboration_message(other,branch,'peer_review',intelligence['summary'],
-                    task_id=envelope['task']['id'],round_number=envelope['task'].get('round',1),phase='revise')
+                    task_id=envelope['task']['id'],round_number=envelope['task'].get('round',1),phase='revise',content=feedback)
                 event(other,'已共享交叉复核意见，交给 '+branch+' 修订','branch_handoff',recipient=branch,
                       phase='revise',intelligence=intelligence,packet=packet)
                 revisions[branch]=((peer,packet),feedback,initial[branch]['result']['answer'])

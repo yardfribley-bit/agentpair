@@ -1,0 +1,73 @@
+--- a/internal/bridge/tab_manager.go
++++ b/internal/bridge/tab_manager.go
+@@ -5,6 +5,7 @@
+ 	"errors"
+ 	"fmt"
+ 	"log/slog"
++	"os"
+ 	"sync"
+ 	"time"
+ 
+@@ -182,6 +183,21 @@
+ 	if err := chromedp.Run(createCtx,
+ 		chromedp.ActionFunc(func(ctx context.Context) error {
+ 			params := target.CreateTarget("about:blank").WithFocus(false)
++			if browserContextID == "" && os.Getenv("PINCHTAB_LIGHTPANDA") == "1" {
++				browserExec, execErr := browserExecutorContext(tm.browserCtx)
++				if execErr != nil { return execErr }
++				infos, listErr := target.GetTargets().Do(browserExec)
++				if listErr != nil { return listErr }
++				for _, info := range infos {
++					if info.Type == "page" {
++						tm.mu.RLock(); count := len(tm.tabs); tm.mu.RUnlock()
++						if count > 0 { return fmt.Errorf("Lightpanda supports one active page; reuse its tabId") }
++						targetID = info.TargetID
++						return nil
++					}
++				}
++				return fmt.Errorf("Lightpanda has no initialized page target")
++			}
+ 			if browserContextID != "" {
+ 				params = params.WithBrowserContextID(cdp.BrowserContextID(browserContextID))
+ 			}
+--- a/internal/bridge/bridge_lifecycle.go
++++ b/internal/bridge/bridge_lifecycle.go
+@@ -98,6 +98,11 @@
+ 
+ func preventDebuggerPauses(ctx context.Context) error {
+ 	if _, err := debugger.Enable().Do(ctx); err != nil {
++		var protocolErr *cdproto.Error
++		if os.Getenv("PINCHTAB_LIGHTPANDA") == "1" && errors.As(err, &protocolErr) && protocolErr.Code == -32601 {
++			slog.Warn("Lightpanda has no Debugger domain; debugger pause guard unavailable")
++			return nil
++		}
+ 		return fmt.Errorf("enable debugger domain: %w", err)
+ 	}
+ 	if err := debugger.SetSkipAllPauses(true).Do(ctx); err != nil {
+--- a/internal/bridge/cdpops/navigation.go
++++ b/internal/bridge/cdpops/navigation.go
+@@ -4,6 +4,7 @@
+ 	"context"
+ 	"encoding/json"
+ 	"fmt"
++	"os"
+ 	"sync"
+ 	"sync/atomic"
+ 	"time"
+@@ -243,6 +244,16 @@
+ }
+ 
+ func (w *navigationLifecycleWaiter) wait(ctx context.Context) error {
++	if os.Getenv("PINCHTAB_LIGHTPANDA") == "1" {
++		ticker := time.NewTicker(100*time.Millisecond)
++		defer ticker.Stop()
++		for {
++			var ready bool
++			if err := chromedp.Run(ctx, chromedp.Evaluate(`location.href !== 'about:blank' && (document.readyState === 'interactive' || document.readyState === 'complete')`, &ready)); err != nil { return err }
++			if ready { return nil }
++			select { case <-ctx.Done(): return ctx.Err(); case <-ticker.C: }
++		}
++	}
+ 	select {
+ 	case <-w.ready:
+ 		return nil

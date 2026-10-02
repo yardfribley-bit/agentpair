@@ -1,0 +1,21 @@
+const credentialsButton=el('button','服务与凭证','secondary');credentialsButton.type='button';
+document.querySelector('.account-actions').append(credentialsButton);
+const credentialPanel=el('section',null,'card hidden');credentialPanel.id='credential-panel';credentialPanel.setAttribute('role','dialog');credentialPanel.setAttribute('aria-label','服务与凭证');
+Object.assign(credentialPanel.style,{position:'fixed',zIndex:110,top:'85px',right:'24px',width:'min(600px, calc(100vw - 48px))',maxHeight:'82vh',overflow:'auto'});
+const closeCredentials=el('button','关闭','secondary');closeCredentials.type='button';
+const credentialStatus=el('p'),serviceList=el('div'),credentialForm=el('form');let editing='';
+credentialPanel.append(closeCredentials,el('h2','服务与凭证'),el('p','自定义外部服务。说明和文档供 Navigator 了解用途；秘密字段仅保存在服务器私有目录，不进入模型或 Driver。请勿在名称、说明或 URL 中填写密钥。'),serviceList,credentialStatus,credentialForm);
+const inputs={};
+for(const [name,title,type] of [['name','服务名称','text'],['purpose','用途与使用范围','text'],['endpoint','接口地址（HTTPS，无查询参数）','url'],['docsUrl','文档地址（HTTPS，可选）','url']]){const label=el('label',title),input=el('input');input.type=type;input.maxLength=name==='purpose'?1500:1000;input.required=name==='name';label.append(input);inputs[name]=input;credentialForm.append(label);}
+const authLabel=el('label','认证方式'),auth=el('select');for(const [v,t] of [['api_key','API Key'],['bearer','Bearer Token'],['basic','用户名 / 密码'],['custom','自定义字段 / 请求头']]){const option=el('option',t);option.value=v;auth.append(option);}authLabel.append(auth);credentialForm.append(authLabel);
+const fields=el('div');credentialForm.append(fields);
+function addField(name='',existing=false){const row=el('div'),label=el('label','字段名称 / 秘密值'),key=el('input'),value=el('input'),remove=el('button','移除此字段','secondary');key.placeholder='例如 api_key、email、X-API-Key';key.value=name;key.required=true;key.pattern='[A-Za-z][A-Za-z0-9_.-]{0,63}';value.type='password';value.autocomplete='new-password';value.placeholder=existing?'已保存；留空保持不变':'输入秘密值（不会回显）';value.required=!existing;remove.type='button';remove.onclick=()=>row.remove();label.append(key,value);row.append(label,remove);row.fieldName=key;row.fieldValue=value;fields.append(row);}
+const add=el('button','＋ 添加凭证字段','secondary');add.type='button';add.onclick=()=>addField();const save=el('button','保存服务','primary');credentialForm.append(add,save);
+credentialPanel.append(el('small','保存不验证有效性、不消耗查询额度、不授权自动付费。通用文档学习和服务调用尚未启用。凭证以权限受限文件保存，并非加密保险库。'));
+document.body.append(credentialPanel);
+function resetService(){editing='';credentialForm.reset();fields.replaceChildren();addField('api_key');save.textContent='保存新服务';}
+async function loadServices(){const d=await api('/api/credentials');serviceList.replaceChildren();for(const s of d.items){const b=el('button',s.name+' · 已保存，未验证','secondary');b.type='button';b.onclick=()=>{editing=s.id;for(const name in inputs)inputs[name].value=s[name]||'';auth.value=s.authType;fields.replaceChildren();for(const name of s.fields)addField(name,true);save.textContent='保存修改';};serviceList.append(b);}const fresh=el('button','＋ 新建服务','secondary');fresh.type='button';fresh.onclick=resetService;serviceList.append(fresh);}
+closeCredentials.onclick=()=>{credentialPanel.classList.add('hidden');resetService();};
+credentialsButton.onclick=async()=>{if(!admin){$('open-login').click();return;}resetService();credentialPanel.classList.remove('hidden');try{await loadServices();credentialStatus.textContent='秘密值不会被读取到页面。';}catch(e){credentialStatus.textContent=e.message;}};
+credentialForm.onsubmit=async e=>{e.preventDefault();save.disabled=true;try{const secrets={};for(const row of fields.children){if(Object.hasOwn(secrets,row.fieldName.value))throw Error('字段名称不能重复');secrets[row.fieldName.value]=row.fieldValue.value;}const data={id:editing||undefined,authType:auth.value,secrets};for(const name in inputs)data[name]=inputs[name].value;await api('/api/credentials',data);resetService();await loadServices();credentialStatus.textContent='已保存。秘密值已从输入框清除，尚未验证或调用。';}catch(e){credentialStatus.textContent='保存失败：'+e.message;}finally{save.disabled=false;}};
+const accessBeforeCredentials=applyAccess;applyAccess=()=>{accessBeforeCredentials();credentialsButton.classList.toggle('hidden',!admin);if(!admin){credentialPanel.classList.add('hidden');resetService();}};applyAccess();

@@ -52,6 +52,18 @@ def snapshot(engine):
                 lease_alerts.append({'severity':'warning' if remaining else 'critical','leaseId':lease.get('id'),
                     'message':'Driver 租约已到期，等待回收。' if not remaining else 'Driver 租约将在 15 分钟内到期，请确认是否继续保留。'})
     except (OSError,ValueError,KeyError):lease_error='租约记录暂时不可读取'
+    persistent=getattr(engine.backend,'persistent_status',lambda:None)()
+    nodes=[{'id':'navigator','role':'Navigator','kind':'persistent','state':'online',
+            'address':None,'currentTasks':[]}]
+    if persistent:
+        nodes.append({'id':'linux-driver','role':'Linux Driver','kind':'persistent',
+            'state':'ready' if persistent['workerReady'] else 'setup_needed' if persistent['reachable'] else 'unreachable',
+            'address':persistent['ip'],'checkedAt':persistent['checkedAt'],
+            'currentTasks':persistent['currentTasks']})
+    for lease in leases:
+        if lease['state']=='active':
+            nodes.append({'id':lease.get('id'),'role':'Temporary Driver','kind':'leased',
+                'state':'leased','address':None,'currentTasks':[]})
     host={'cpuCores':os.cpu_count(),'load1m':os.getloadavg()[0] if hasattr(os,'getloadavg') else None,'memoryUsedBytes':None,'memoryTotalBytes':None}
     try:
         fields={l.split(':')[0]:int(l.split()[1])*1024 for l in Path('/proc/meminfo').read_text().splitlines() if len(l.split())>=2}
@@ -60,11 +72,12 @@ def snapshot(engine):
     disk=shutil.disk_usage('.');host.update(diskUsedBytes=disk.used,diskTotalBytes=disk.total)
     return {'updatedAt':now.isoformat(),'tokens':totals,'models':list(models.values()),'tasks':per_task,
         'activeTasks':sum(t['status'] in ('running','queued','cancelling') for t in tasks),
-        'navigator':host,'leases':leases,'leaseAlerts':lease_alerts,'leaseError':lease_error,
-        'activeDrivers':sum(l['state']!='released' for l in leases),'serverEstimatedCNY':round(server_cost,4),
+        'navigator':host,'nodes':nodes,'leases':leases,'leaseAlerts':lease_alerts,'leaseError':lease_error,
+        'activeDrivers':sum(l['state']=='active' for l in leases)+int(bool(persistent and persistent['workerReady'])),
+        'serverEstimatedCNY':round(server_cost,4),
         'generationEstimate':engine.usage(),'modelActualCNY':None,'balanceCNY':None,
         'notes':['每 5 秒刷新；token 在模型调用返回后更新，未返回或失败调用可能尚未计入。',
-                 '云机费用按记录报价及整小时向上取整估算，不是云厂商账单；仅覆盖本平台租约。',
+                 '云机费用按记录报价及整小时向上取整估算，不是云厂商账单；不包含常驻 Navigator 和 Linux Driver。',
                  '生成调用费用为历史估算，尚未包含独立决策费用；模型实际费用、余额及 Navigator 固定费用尚未接入。',
-                 'Driver 状态来自本地租约记录，未实时查询云厂商；CPU 显示系统负载，不是使用率。',
+                 '常驻 Linux Driver 状态来自最近一次 SSH/Worker 检查；临时 Driver 来自租约记录；CPU 显示系统负载，不是使用率。',
                  '未由 Navigator 创建的云主机不会出现在托管租约中；此类资源需在云厂商控制台确认自动续费并手动停止或释放。']}

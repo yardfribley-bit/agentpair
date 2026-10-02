@@ -38,3 +38,30 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(context['evidence'],evidence)
         self.assertEqual(result['answer']['findings'][0]['evidenceRefs'],['G001'])
         self.assertNotIn('evidence',context['currentRound']['plan'])
+
+    def test_security_investigation_cites_system_packet_and_disables_external_tools(self):
+        from agentpair.interaction_audit import build_audit
+        from agentpair.security_investigation import semantic_packet
+        r={'id':'a'*64,'source':'workbuddy_network_context','body':json.dumps({'messages':[{'role':'user','content':'检查函数'}]})}
+        packet=semantic_packet(build_audit({'id':'dev','os':'macOS'},r))
+        envelope=self.envelope();envelope['task']['securityEvidence']=packet
+        with patch('agentpair.pair_worker.urllib.request.urlopen',return_value=response({'summary':'分析本地证据','tool':{'name':'github_repository','url':'https://github.com/o/r'}})), patch('agentpair.pair_worker.repository') as collect:
+            result=run(envelope,'fake-token')
+        collect.assert_not_called();self.assertEqual(result['answer']['tool']['name'],'none')
+        envelope['mode']='driver'
+        finding={'topic':'任务边界','claim':'只有检查函数要求','reason':'用户消息','evidenceRefs':['E001'],'status':'observation','alternative':'任务可能不完整','nextAction':'补充授权范围'}
+        with patch('agentpair.pair_worker.urllib.request.urlopen',return_value=response({'summary':'完成范围内调查','findings':[finding]})):
+            result=run(envelope,'fake-token')
+        self.assertTrue(result['answer']['securityEvidenceValidated'])
+        self.assertEqual(result['answer']['findings'][0]['evidenceRefs'],['E001'])
+
+    def test_security_format_repair_does_not_coerce_unsupported_claim(self):
+        from agentpair.interaction_audit import build_audit
+        from agentpair.security_investigation import semantic_packet
+        r={'id':'a'*64,'source':'workbuddy_network_context','body':json.dumps({'messages':[{'role':'user','content':'检查函数'}]})}
+        envelope=self.envelope('driver');envelope['task']['securityEvidence']=semantic_packet(build_audit({'id':'dev','os':'macOS'},r))
+        f={'topic':'任务边界','claim':'需核对','reason':'用户消息','evidenceRefs':['E001'],'status':'confirmed','alternative':'示例','nextAction':'核对'}
+        with patch('agentpair.pair_worker.urllib.request.urlopen',side_effect=[response({'summary':'first','findings':[f]}),response({'summary':'revised','findings':[{**f,'status':'hypothesis'}]})]) as http:
+            result=run(envelope,'fake-token')
+        self.assertEqual(http.call_count,2);self.assertEqual(result['usage']['total_tokens'],60)
+        self.assertEqual(result['answer']['findings'][0]['status'],'hypothesis')

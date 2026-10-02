@@ -1,0 +1,10 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>远程软件安装 · AgentPair</title><link rel="stylesheet" href="/devices.css"></head><body>
+<main><a href="/packages">← 软件包目录</a> · <a href="/">返回平台 / 登录</a><h1>远程软件安装</h1><p>管理员下发安装任务。下载、校验、安装、版本验证分别回传；应用启动与账号登录不冒充已完成。</p>
+<p id="notice" role="status"></p><form id="install"><label>执行设备 <select id="device" required></select></label><label>软件 <select id="software" required></select></label><button>下发安装任务</button></form>
+<section><h2>安装进度与日志</h2><div id="status">尚未下发任务</div><pre id="log"></pre></section>
+<details><summary>登记 Windows 安装方案（管理员）</summary><p>仅支持 Inno Setup 或 MSI。必须填写固定版本、精确安装记录名称和官方安装包 SHA256；不接收任意命令。</p><form id="register">
+<label>方案 ID <input name="id" required placeholder="workbuddy-windows"></label><label>软件名称 <input name="name" required></label>
+<label>安装器 <select name="installer"><option value="inno">Inno Setup</option><option value="msi">MSI</option></select></label>
+<label>官方 HTTPS 安装包地址 <input name="url" type="url" required></label><label>SHA256 <input name="sha256" pattern="[0-9a-f]{64}" required></label>
+<label>安装记录精确 DisplayName <input name="displayName" required></label><label>精确版本 <input name="version" required></label><button>保存方案</button></form></details>
+</main><script src="/software.js"></script></body></html>

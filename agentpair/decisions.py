@@ -56,6 +56,9 @@ def decide(answer, evidence=None, tool=None):
         checks.append({'id':'source_snapshot','question':'是否真正取得固定版本源码',
                        'value':'yes' if e.get('commit') and e.get('files') and not e.get('error') else 'unknown',
                        'reason':'需要 GitHub 提交和实际读取文件，不能用模型概述替代源码', 'source':'deterministic'})
+    if 'browserValidated' in answer:
+        checks.append({'id':'browser_execution','question':'浏览器执行是否取得真实结果并结束',
+                       'value':'yes' if answer['browserValidated'] else 'no','reason':'检查工具执行记录；还需模型复核是否满足需求','source':'deterministic'})
     if 'executionValidated' in answer:
         checks.append({'id':'isolated_execution','question':'云端构建与测试是否真实通过',
                        'value':'yes' if answer['executionValidated'] else 'no',

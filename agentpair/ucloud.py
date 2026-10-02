@@ -20,10 +20,11 @@ class UCloudClient:
             return json.load(response)
 
     def call(self, action, **extra):
-        if action not in {'DescribeUHostInstance','DescribeImage','GetUHostInstancePrice',
+        if action not in {'DescribeUHostInstance','DescribeImage','GetUHostInstancePrice','GetUHostInstanceVncInfo',
                          'GetEIPPrice','CreateUHostInstance','StopUHostInstance',
                          'TerminateUHostInstance','DescribeEIP','CreateFirewall',
-                         'DescribeFirewall','DeleteFirewall'}:
+                         'DescribeFirewall','DeleteFirewall','GrantFirewall','GetUHostUpgradePrice',
+                         'ResizeUHostInstance','StartUHostInstance','ReinstallUHostInstance','ResetUHostInstancePassword'}:
             raise ValueError('Cloud action not allowed')
         payload={'Action':action,'PublicKey':self.public_key,'ProjectId':self.project_id,
                  'Region':self.region,**extra}

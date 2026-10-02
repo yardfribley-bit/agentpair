@@ -16,6 +16,29 @@ class Conflict(ValueError): pass
 class Limit(ValueError): pass
 
 
+def _review_has_unresolved_gap(review):
+    """A passing prose review cannot override explicit missing-evidence claims."""
+    if not isinstance(review, dict):
+        return True
+    # Evidence boundaries are not automatically missing task requirements.
+    # A structured, complete acceptance decision takes precedence over words
+    # such as "missing DNS" appearing in a correctly scoped snapshot report.
+    if review.get('blockingGaps'):
+        return True
+    decision=review.get('decision',{})
+    checks=decision.get('checks',[]) if isinstance(decision,dict) else []
+    required={'goal_met','grounded','consistent','delivery','readable_answer'}
+    accepted={c.get('id') for c in checks if isinstance(c,dict) and c.get('value')=='yes'}
+    if (isinstance(decision,dict) and decision.get('action')=='deliver'
+            and required.issubset(accepted)
+            and all(isinstance(c,dict) and c.get('value')=='yes' for c in checks)):
+        return False
+    text = json.dumps(review, ensure_ascii=False)
+    gap_markers = ('缺少', '缺失', '证据不足', '无法判断', '不能判断', '尚未', '未采集',
+                   '未提供', '需要进一步', '待补', 'not enough evidence', 'cannot determine')
+    return any(marker in text for marker in gap_markers)
+
+
 def now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -79,7 +102,10 @@ class TaskEngine:
             db.execute('INSERT OR REPLACE INTO tasks VALUES (?,?)', (task['id'], json.dumps(task, ensure_ascii=False)))
 
     def get(self, tid):
-        with self.lock: return self._load(tid)
+        from .operations import project
+        with self.lock: task=self._load(tid)
+        task['operations']=project(task)
+        return task
 
     def list(self):
         with self.lock, self.connection() as db:
@@ -99,9 +125,9 @@ class TaskEngine:
             task['events'].append(dict(event,at=now(),round=task['round']))
             self._save(task)
 
-    def create(self, title, message, adapter='discussion', target='', engineering_method='local', execution_profile='none'):
+    def create(self, title, message, adapter='discussion', target='', engineering_method='local', execution_profile='none', billing_owner=None, owner=None, security_evidence=None):
         method(engineering_method)
-        if execution_profile not in ('none','python','node'): raise ValueError('Unknown execution profile')
+        if execution_profile not in ('none','python','node','browser','native'): raise ValueError('Unknown execution profile')
         if execution_profile!='none' and engineering_method!='pair':
             raise ValueError('Code execution requires an explicitly selected single cloud Driver')
         if adapter not in self.adapters: raise ValueError('Unknown task adapter')
@@ -114,12 +140,14 @@ class TaskEngine:
         with self.lock:
             if len(self.list())>=20: raise Limit('Experiment task limit reached')
             task = {'id': uuid.uuid4().hex, 'title': title.strip(), 'adapter': adapter, 'target': target,
-                    'engineeringMethod':engineering_method,
+                    'engineeringMethod':engineering_method, 'billingOwner':billing_owner, 'owner':owner or billing_owner,
                     'executionProfile':execution_profile,
                     'status': 'queued', 'round': 1, 'maxRounds': self.max_rounds,
                     'messages': [{'role':'user','text':message,'round':1,'at':now()}],
                     'events': [], 'results': [], 'createdAt': now(), 'updatedAt': now(),
                     'budgetMode': 'historical_estimate_not_hard_cap'}
+            if security_evidence is not None:
+                task['securityEvidence']=copy.deepcopy(security_evidence)
             self._save(task); self.jobs.put(task['id'])
             return copy.deepcopy(task)
 
@@ -184,14 +212,22 @@ class TaskEngine:
             attempts=0
             for stage, role in stages:
                 self._guard(tid, deadline)
+                job_id=uuid.uuid4().hex
                 with self.lock:
                     task = self._load(tid)
-                    task['events'].append({'at':now(),'round':task['round'],'kind':'stage_started','role':role,'stage':stage})
+                    task['events'].append({'at':now(),'round':task['round'],'kind':'stage_started','role':role,'stage':stage,'jobId':job_id})
                     self._save(task)
                 envelope = {'mode':stage, 'task':{k:task[k] for k in ('title','adapter','target','round')},
                             'history':task['messages'], 'outputs':outputs}
-                envelope['task'].update(id=tid,engineeringMethod=task.get('engineeringMethod','local'),executionProfile=task.get('executionProfile','none'))
+                envelope['task'].update(id=tid,jobId=job_id,engineeringMethod=task.get('engineeringMethod','local'),executionProfile=task.get('executionProfile','none'))
+                if task.get('securityEvidence'):
+                    envelope['task']['securityEvidence']=task['securityEvidence']
                 estimate = self.backend.estimate(envelope)
+                if task.get('billingOwner'):
+                    account_store=getattr(self,'accounts',None)
+                    if account_store is None:raise Limit('Account billing unavailable')
+                    try:account_store.reserve(task['billingOwner'],estimate)
+                    except ValueError as error:raise Limit(str(error)) from error
                 self._reserve(estimate)
                 with self.lock:
                     task = self._load(tid)
@@ -199,12 +235,15 @@ class TaskEngine:
                     source_text = (task['messages'][-1].get('text','') if stage=='plan'
                                    else outputs['plan' if stage=='driver' else 'driver']['answer'].get('summary',''))
                     packet=collaboration_message(source,role,'assignment',source_text,
-                        task_id=tid,round_number=task['round'],phase=stage)
+                        task_id=tid,round_number=task['round'],phase=stage,
+                        content=({'request':source_text} if stage=='plan' else
+                                 outputs['plan' if stage=='driver' else 'driver']['answer']))
                     task['events'].append({'at':now(),'round':task['round'],'kind':'handoff_requested',
-                        'from':source,'to':role,'stage':stage,'summary':source_text[:240],
+                        'from':source,'to':role,'stage':stage,'summary':source_text[:240],'jobId':job_id,
                         'message':packet,
                         'note':'Context passed to backend; not a network receipt confirmation.'})
                     self._save(task)
+                envelope['handoff']=packet
                 answer = self.backend.call(role, envelope, max(1,deadline-time.monotonic()))
                 if not isinstance(answer,dict) or not isinstance(answer.get('answer'),dict):
                     raise ValueError('Invalid worker response')
@@ -215,10 +254,10 @@ class TaskEngine:
                 outputs[stage] = answer
                 with self.lock:
                     task = self._load(tid)
-                    task['messages'].append({'role':role,'stage':stage,'round':task['round'],
+                    task['messages'].append({'role':role,'stage':stage,'round':task['round'],'jobId':job_id,
                                              'at':now(),'answer':answer['answer'], 'usage':answer.get('usage'),'model':answer.get('model')})
                     task['events'].append({'at':now(),'round':task['round'],'kind':'stage_completed','role':role,'stage':stage,
-                        'messageId':packet['id'],'summary':str(answer['answer'].get('summary',''))[:500]})
+                        'jobId':job_id,'messageId':packet['id'],'summary':str(answer['answer'].get('summary',''))[:500]})
                     if stage=='driver' and answer.get('resourceDecision'):
                         task['events'].append({'at':now(),'round':task['round'],'kind':'resource_decision',
                             'text':answer['resourceDecision'],'executionNode':answer.get('executionNode'),
@@ -230,11 +269,21 @@ class TaskEngine:
                             evidence_text=('源码读取失败，不能视为已验证' if evidence.get('error') else
                                 f"GitHub 源码：提交 {evidence.get('commit','')[:12]}，已读取 {len(evidence.get('files',[]))} 个文件，未读 {len(evidence.get('omitted',[]))} 个指定文件；GitIngest 已整理带行号上下文")
                         task['events'].append({'at':now(),'round':task['round'],'kind':'tool_result','stage':stage,
-                            'text':evidence_text,'evidence':evidence})
+                            'role':role,'jobId':job_id,'text':evidence_text,'evidence':evidence})
                     self._save(task)
                 if stage=='review':
                     review=answer['answer']
                     verdict=review.get('verdict')
+                    if verdict == 'pass' and _review_has_unresolved_gap(review):
+                        verdict = 'retry'
+                        review['verdict'] = 'retry'
+                        review.setdefault('nextSteps', []).append('补齐复核中明确指出的必需证据后再验收')
+                        answer['answer'] = review
+                        with self.lock:
+                            task=self._load(tid)
+                            task['events'].append({'at':now(),'round':task['round'],
+                                'kind':'acceptance_guard','text':'Negative 明确发现证据缺口，禁止将任务标记为 completed。'})
+                            self._save(task)
                     corrections=review.get('corrections',[])
                     next_steps=review.get('nextSteps',[])
                     if isinstance(corrections,str): corrections=[corrections]
@@ -264,7 +313,12 @@ class TaskEngine:
                 task = self._load(tid)
                 if task['status']=='cancelling': raise InterruptedError('Cancelled')
                 task['results'].append({'round':task['round'],'outputs':outputs})
-                task['status']='completed' if outputs['review']['answer'].get('verdict')=='pass' else 'blocked'
+                final_review=outputs['review']['answer']
+                if final_review.get('verdict') == 'pass' and _review_has_unresolved_gap(final_review):
+                    final_review['verdict']='retry'
+                final_verdict=final_review.get('verdict')
+                task['status']=('completed' if final_verdict=='pass' else
+                                'needs_more_evidence' if final_verdict=='retry' else 'blocked')
                 self._save(task)
         except Exception as error:
             with self.lock:

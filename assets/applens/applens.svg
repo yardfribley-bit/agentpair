@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <title>AppLens — 应用透镜</title>
+  <rect width="1024" height="1024" rx="224" fill="#2463eb"/>
+  <path d="M632 632L780 780" stroke="#fff" stroke-width="88" stroke-linecap="round"/>
+  <circle cx="470" cy="454" r="226" fill="none" stroke="#fff" stroke-width="68"/>
+  <rect x="336" y="436" width="56" height="112" rx="28" fill="#a5f3fc"/>
+  <rect x="444" y="348" width="56" height="200" rx="28" fill="#fff"/>
+  <rect x="552" y="392" width="56" height="156" rx="28" fill="#a5f3fc"/>
+</svg>

@@ -2,6 +2,8 @@
 # Foreground only. Ctrl+C stops collection. No admin, scheduled task or remote shell.
 param([Parameter(Mandatory=$true)][string]$Server,
       [string]$PairCode,
+      [string]$AnalyzeProcess,
+      [string]$Goal,
       [switch]$Once)
 $ErrorActionPreference = 'Stop'
 $uri = [Uri]$Server
@@ -32,7 +34,75 @@ if ($PairCode) {
     $plain = [Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBytes($identityPath),$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
     $identity = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
 } else { throw 'Generate a pairing code on the My Devices page, then pass -PairCode.' }
-Write-Host 'Connected. Collecting process names/IDs and installed application metadata only. Ctrl+C stops.'
+$connectionPath=Join-Path $folder 'connection-state.json'
+function Save-Connection($accepted,$message) {
+    $state=@{deviceId=$identity.deviceId;server=$Server;connected=$accepted;message=$message;updatedAt=(Get-Date).ToUniversalTime().ToString('o')}
+    [IO.File]::WriteAllText($connectionPath,($state|ConvertTo-Json -Compress),[Text.Encoding]::UTF8)
+}
+try {
+    Invoke-Api '/api/endpoint/heartbeat' @{os='Windows'} $identity.token | Out-Null
+    Save-Connection $true '平台已确认连接；心跳运行中'
+} catch {Save-Connection $false '平台连接失败，请检查设备绑定及网络';throw}
+$heartbeatJob=$null
+if(-not $Once) {
+    $heartbeatJob=Start-Job -ArgumentList $Server,$identity.token,$identity.deviceId,$connectionPath -ScriptBlock {
+        param($origin,$token,$deviceId,$path)
+        [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
+        while($true) {
+            try {
+                Invoke-RestMethod -Uri ($origin+'/api/endpoint/heartbeat') -Method Post -Headers @{Authorization=('Bearer '+$token)} -ContentType 'application/json' -Body '{"os":"Windows"}' -TimeoutSec 8 | Out-Null
+                $state=@{deviceId=$deviceId;server=$origin;connected=$true;message='平台已确认连接；心跳运行中';updatedAt=(Get-Date).ToUniversalTime().ToString('o')}
+            } catch {$state=@{deviceId=$deviceId;server=$origin;connected=$false;message='心跳失败，正在重试';updatedAt=(Get-Date).ToUniversalTime().ToString('o')}}
+            $tmp=$path+'.tmp';[IO.File]::WriteAllText($tmp,($state|ConvertTo-Json -Compress),[Text.Encoding]::UTF8);Move-Item $tmp $path -Force
+            Start-Sleep -Seconds 15
+        }
+    }
+}
+Write-Host 'Connected. Platform heartbeat confirmed; collection runs independently.'
+$contextScript=Join-Path $PSScriptRoot 'workbuddy-context.ps1'
+if(Test-Path $contextScript){. $contextScript}
+$activeAnalysis=$null
+function Invoke-CapabilityModule($module) {
+    if ($module.protocolVersion -ne 1 -or $module.runtime -ne 'powershell-5.1' -or
+        $module.timeoutSeconds -lt 1 -or $module.timeoutSeconds -gt 30 -or
+        $module.maxOutputBytes -lt 1 -or $module.maxOutputBytes -gt 524288 -or
+        @($module.permissions).Count -ne 1 -or $module.permissions[0] -ne 'target-process-read') {
+        throw 'Unsupported module manifest'
+    }
+    $source=[Convert]::FromBase64String([string]$module.sourceBase64)
+    if ($source.Length -gt 262144) { throw 'Module too large' }
+    $actual=([BitConverter]::ToString($hash.ComputeHash($source))).Replace('-','').ToLowerInvariant()
+    if ($actual -ne $module.sha256) { throw 'Module integrity check failed' }
+    $runFolder=Join-Path $folder ('module-'+[Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $runFolder | Out-Null
+    $child=$null
+    try {
+        $scriptPath=Join-Path $runFolder 'module.ps1'
+        $inputPath=Join-Path $runFolder 'input.json'
+        $outPath=Join-Path $runFolder 'output.json'
+        $errPath=Join-Path $runFolder 'error.txt'
+        [IO.File]::WriteAllBytes($scriptPath,$source)
+        [IO.File]::WriteAllText($inputPath,($module.parameters | ConvertTo-Json -Depth 8 -Compress),[Text.Encoding]::UTF8)
+        $exe=Join-Path $PSHOME 'powershell.exe'
+        $arguments='-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+$scriptPath+'" -InputPath "'+$inputPath+'"'
+        $child=Start-Process -FilePath $exe -ArgumentList $arguments -PassThru -WindowStyle Hidden -RedirectStandardOutput $outPath -RedirectStandardError $errPath
+        # Retain the process handle so PowerShell 5.1 can read ExitCode after exit.
+        $null=$child.Handle
+        if (-not $child.WaitForExit([int]$module.timeoutSeconds*1000)) {
+            $child.Kill(); $child.WaitForExit(); throw 'Module timed out'
+        }
+        $child.Refresh()
+        if ($child.ExitCode -ne 0) { throw 'Module failed; target may have exited or access was denied' }
+        if ((Get-Item -LiteralPath $outPath).Length -gt $module.maxOutputBytes) { throw 'Module output too large' }
+        $output=Get-Content -Raw -LiteralPath $outPath | ConvertFrom-Json
+        if ($output.schemaVersion -ne 1 -or $output.capability -ne $module.id -or
+            $output.target.pid -ne $module.parameters.pid -or $output.target.startedAt -ne $module.parameters.startedAt) { throw 'Invalid module evidence' }
+        return @{moduleId=$module.id;moduleVersion=$module.version;sha256=$actual;output=$output}
+    } finally {
+        if ($child -and -not $child.HasExited) { $child.Kill(); $child.WaitForExit() }
+        Remove-Item -LiteralPath $runFolder -Recurse -Force
+    }
+}
 function Invoke-DriverTask($task) {
     $taskId=[string]$task.taskId; $lease=[string]$task.lease
     try {
@@ -48,6 +118,28 @@ function Invoke-DriverTask($task) {
             result = $runningResult
         })
         Invoke-Api '/api/endpoint/tasks/result' $runningBody $identity.token | Out-Null
+        if ($task.payload.action -eq 'install_software') {
+            $script=Join-Path $PSScriptRoot 'software-install.ps1'
+            if(-not (Test-Path $script)) {throw 'Software installation capability not installed; upgrade endpoint'}
+            . $script
+            $report={param($progress) Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=$progress} $identity.token | Out-Null}
+            $installed=Invoke-SoftwareInstall $task.payload.software $report
+            Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=$installed} $identity.token | Out-Null
+            return
+        }
+        if ($task.payload.experienceRef) {
+            Write-Host ('Reusing validated collection method: '+$task.payload.experienceRef.id+'; collecting fresh evidence.')
+        }
+        if ($task.payload.action -eq 'run_module') {
+            try {
+                $moduleEvidence=Invoke-CapabilityModule $task.payload.module
+                $moduleResult=@{state='completed';summary='采集模块执行成功，已返回目标进程证据；分析结论仍需云端验收。';evidence=$moduleEvidence}
+            } catch {
+                $moduleResult=@{state='failed';summary=[string]$_.Exception.Message;moduleId=$task.payload.module.id}
+            }
+            Invoke-Api '/api/endpoint/tasks/result' @{taskId=$taskId;lease=$lease;result=$moduleResult} $identity.token | Out-Null
+            return
+        }
         # The first task protocol is intentionally allowlisted: no arbitrary shell or file execution.
         $raw=@(Get-CimInstance Win32_Process)
         $evidence = New-Object PSObject -Property ([ordered]@{ processCount = [Math]::Min($raw.Count,2000) })
@@ -75,7 +167,9 @@ do {
         $issues = @()
         $rawProcesses = @(Get-CimInstance Win32_Process)
         $processes = @($rawProcesses | Select-Object -First 2000 | ForEach-Object {
-            @{name=[string]$_.Name;pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId}
+            $startedAt=$null
+            if ($_.CreationDate) { $startedAt=$_.CreationDate.ToUniversalTime().ToString('o') }
+            @{name=[string]$_.Name;pid=[int]$_.ProcessId;parentPid=[int]$_.ParentProcessId;startedAt=$startedAt}
         })
         $apps = @()
         $roots = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
@@ -95,10 +189,36 @@ do {
         }
         $issues += 'Installed apps from uninstall registry only; Store/portable apps may be missing. Protected process paths may be unavailable.'
         $body = @{os='Windows';architecture=$env:PROCESSOR_ARCHITECTURE;processes=$processes;applications=$apps;errors=$issues}
+        $body.applens=@{product='AppLens';protocolVersion=1;capabilities=@{
+            process_inventory='available';application_inventory='available';process_details='available';process_tcp='available';
+            process_events='unsupported';network_events='unsupported';file_events='unsupported';cloud_requests='available'}}
+        $body.osVersion=[Environment]::OSVersion.Version.ToString()
+        $body.hostRuntimeVersion=$PSVersionTable.PSVersion.ToString()
         Invoke-Api '/api/endpoint/report' $body $identity.token | Out-Null
         Write-Host ('Inventory uploaded at ' + (Get-Date -Format T))
+        if(Test-Path $contextScript){
+            try {Sync-WorkBuddyContext $identity $folder}
+            catch {Write-Warning ('Model context sync failed; inventory already uploaded. Error: '+$_.Exception.GetType().Name)}
+        }
+        if ($AnalyzeProcess -and -not $activeAnalysis) {
+            if (-not $Goal) { throw 'Analysis goal required' }
+            $target=@($processes | Where-Object {$_.name -eq $AnalyzeProcess} | Sort-Object startedAt | Select-Object -First 1)
+            if ($target.Count -eq 0) { throw 'Requested application is not running' }
+            $request=@{title=('Analyze '+$AnalyzeProcess);message=$Goal;processTarget=@{pid=$target[0].pid;startedAt=$target[0].startedAt}}
+            $activeAnalysis=Invoke-Api '/api/endpoint/requests' $request $identity.token
+            Write-Host ('Application analysis submitted: '+$activeAnalysis.analysisId)
+        }
         $task=Invoke-Api '/api/endpoint/tasks' $null $identity.token 'GET'
         if ($task.task) { Invoke-DriverTask $task.task }
+        if ($activeAnalysis) {
+            $analysis=Invoke-Api ('/api/endpoint/analyses/'+$activeAnalysis.analysisId) $null $identity.token 'GET'
+            Write-Host ('Analysis state: '+$analysis.state+' / '+$analysis.cloudState)
+            if ($analysis.results) {
+                $last=@($analysis.results)[-1]
+                $answer=$last.outputs.review.answer
+                if ($answer.finalAnswer) { Write-Host $answer.finalAnswer } else { Write-Host $answer.summary }
+            }
+        }
     } catch {
         # Do not print response/request bodies or tokens.
         Write-Warning 'Inventory upload failed. Check connectivity, HTTPS certificate, or device binding.'
@@ -106,3 +226,4 @@ do {
     }
     if (-not $Once) { Start-Sleep -Seconds 30 }
 } while (-not $Once)
+if($heartbeatJob){Stop-Job $heartbeatJob;Remove-Job $heartbeatJob}

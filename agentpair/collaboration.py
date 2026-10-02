@@ -8,7 +8,7 @@ KINDS = {'assignment', 'finding', 'peer_review', 'revision_request', 'result'}
 
 
 def message(sender, recipient, kind, summary, *, task_id, round_number, phase,
-            evidence_refs=(), correlation_id=None):
+            evidence_refs=(), correlation_id=None, content=None):
     if kind not in KINDS or not sender or not recipient or sender == recipient:
         raise ValueError('Invalid collaboration handoff')
     return {
@@ -22,6 +22,7 @@ def message(sender, recipient, kind, summary, *, task_id, round_number, phase,
         'from': sender,
         'to': recipient,
         'summary': str(summary)[:500],
+        'content': content if content is not None else str(summary),
         'evidenceRefs': [str(ref)[:160] for ref in evidence_refs][:20],
         'createdAt': datetime.now(timezone.utc).isoformat(),
     }
