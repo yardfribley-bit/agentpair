@@ -3,7 +3,7 @@ function Write-CaptureEvent($folder,$call,$phase,$deviceId) {
     $record.preview=$call.body.Substring(0,[Math]::Min(1200,$call.body.Length))
     $record.bodyBytes=[Text.Encoding]::UTF8.GetByteCount($call.body)
     $record.receipt=($phase -eq 'received')
-    $event=@{server=$Server;deviceId=$deviceId;id=$call.id;phase=$phase;record=$record;updatedAt=(Get-Date).ToString('o')}
+    $event=@{server=$Server;deviceId=$deviceId;id=$call.id;bodySHA256=$call.bodySHA256;phase=$phase;record=$record;updatedAt=(Get-Date).ToString('o')}
     $path=Join-Path $folder 'capture-event.json';$temp=$path+'.tmp'
     [IO.File]::WriteAllText($temp,($event|ConvertTo-Json -Depth 6 -Compress),[Text.Encoding]::UTF8)
     Move-Item $temp $path -Force

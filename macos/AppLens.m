@@ -55,7 +55,7 @@
 - (void)showTelemetry:(id)sender{[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[self.server.stringValue stringByAppendingString:[NSString stringWithFormat:@"/model-data?device=%@",self.deviceId?:@""]]]];}
 - (NSString*)metadataSignature:(NSDictionary*)c {return [NSString stringWithFormat:@"%@|%@|%@|%@",c[@"model"]?:@"",c[@"recordStatus"]?:@"",c[@"sessionId"]?:@"",c[@"modelEvidence"]?:@""];}
 - (void)capturePhase:(NSString*)phase call:(NSDictionary*)call {
- dispatch_async(dispatch_get_main_queue(),^{self.captureEvent=@{@"id":call[@"id"]?:@"",@"phase":phase};[self publish:nil];});
+ dispatch_async(dispatch_get_main_queue(),^{self.captureEvent=@{@"id":call[@"id"]?:@"",@"bodySHA256":call[@"bodySHA256"]?:@"",@"phase":phase};[self publish:nil];});
 }
 - (void)telemetry:(id)sender {
  if(self.telemetryBusy)return;self.telemetryBusy=YES;self.telemetryActive=YES;
