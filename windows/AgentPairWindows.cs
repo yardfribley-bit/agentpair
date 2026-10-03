@@ -124,7 +124,7 @@ class AgentPairWindows : Form {
  static int VerifyCollectionView(){
   int result=3;using(var form=new Form {Text="AppLens 采集界面验收",Size=new Size(1000,1000)})using(var browser=new WebBrowser {Dock=DockStyle.Fill,ScriptErrorsSuppressed=true})using(var timeout=new Timer {Interval=15000}){
    form.Controls.Add(browser);timeout.Tick+=(s,e)=>{timeout.Stop();form.Close();};
-   browser.DocumentCompleted+=(s,e)=>{try{
+   browser.DocumentCompleted+=(s,e)=>{if(!e.Url.IsFile)return;try{
     string id=new string('a',64),digest=new string('b',64),body="{\"messages\":[{\"role\":\"user\",\"content\":\"fixture task\"}]}";
     var record=new Dictionary<string,object>{{"id",id},{"bodySHA256",digest},{"source","workbuddy_network_context"},{"timestamp",1700000000},{"bodyBytes",body.Length},{"receipt",false}};
     var state=new Dictionary<string,object>{{"calls",new object[]{record}},{"active",true},{"connected",true},{"appRunning",true},{"captureBody",body},{"captureBodyId",id},{"captureBodySHA256",digest},{"captureEvent",new Dictionary<string,object>{{"id",id},{"phase","failed"}}}};
