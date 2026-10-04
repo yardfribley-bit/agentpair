@@ -74,7 +74,7 @@ class Runtime:
                         for root in cfg['roots']:
                             p=Path(root).expanduser()
                             if p.is_dir():files.extend((source,f) for f in p.rglob('rollout*.jsonl' if source=='codex' else '*.jsonl'))
-                    files=list(dict.fromkeys(files));files.sort(key=lambda x:x[1].stat().st_mtime if x[1].exists() else 0,reverse=True);discover=time.monotonic()
+                    files=list(dict.fromkeys(files));self.update(files=len(files));files.sort(key=lambda x:x[1].stat().st_mtime if x[1].exists() else 0,reverse=True);discover=time.monotonic()
                 for source,p in files:
                     if self.stop.is_set():break
                     try:
@@ -82,21 +82,23 @@ class Runtime:
                         if seen.get(str(p))==signature:continue
                         self.update(reading=f'{source} · {p.name}')
                         c.scan(p,200,source)
+                        self.index(c)
                         offset=c.db.execute('SELECT offset FROM cursors WHERE path=?',(str(p.resolve()),)).fetchone()[0]
                         if offset>=st.st_size:seen[str(p)]=signature
                         errors.pop(str(p),None)
                     except (OSError,ValueError,sqlite3.Error) as exc:
                         errors[str(p)]=str(exc);seen[str(p)]=signature if 'signature' in locals() else None
-                # Index a bounded slice per cycle, including pre-existing databases.
-                rows=c.db.execute('SELECT id,event FROM events WHERE id NOT IN (SELECT id FROM display_index) ORDER BY rowid LIMIT 1000').fetchall()
-                with c.db:
-                    for identity,body in rows:
-                        e=json.loads(body);c.db.execute('INSERT OR IGNORE INTO display_index VALUES(?,?,?,?,?)',(identity,e['source'],category(e),summary(e),len(body.encode())))
+                self.index(c)
                 total=sum(p.stat().st_size for _,p in files if p.exists())
                 read=c.db.execute('SELECT COALESCE(sum(offset),0) FROM cursors').fetchone()[0]
                 self.update(files=len(files),bytes=total,read=read,errors=dict(errors),heartbeat=time.time())
                 self.stop.wait(.5)
         finally:c.db.close()
+    def index(self,c):
+        rows=c.db.execute('SELECT id,event FROM events WHERE id NOT IN (SELECT id FROM display_index) ORDER BY rowid LIMIT 1000').fetchall()
+        with c.db:
+            for identity,body in rows:
+                e=json.loads(body);c.db.execute('INSERT OR IGNORE INTO display_index VALUES(?,?,?,?,?)',(identity,e['source'],category(e),summary(e),len(body.encode())))
     def upload(self):
         c=Collector(self.path);delay=1
         try:
