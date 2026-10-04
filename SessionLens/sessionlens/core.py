@@ -8,7 +8,12 @@ import sqlite3
 def digest(value):
     return hashlib.sha256(value).hexdigest()
 
-def normalize(record):
+def normalize(record, source="codex"):
+    if source == "workbuddy":
+        typ=record.get("type")
+        kind={"message":"message","reasoning":"reasoning","function_call":"tool_call","function_call_result":"tool_result","ai-title":"session_metadata","file-history-snapshot":"file_snapshot"}.get(typ,"source_record")
+        return {"kind":kind,"callId":record.get("callId"),"role":record.get("role"),"name":record.get("name"),"timestamp":record.get("timestamp"),"payload":record,"sourceType":typ,"sourceSubtype":None}
+
     typ=record.get('type'); p=record.get('payload')
     p=p if isinstance(p,dict) else {}
     sub=p.get('type')
@@ -39,16 +44,17 @@ def normalize(record):
 class Collector:
     def __init__(self,path):
         path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-        self.db=sqlite3.connect(path)
+        self.db=sqlite3.connect(path,timeout=15)
         os.chmod(path,0o600)
         self.db.execute('PRAGMA journal_mode=WAL')
         self.db.executescript('''
         CREATE TABLE IF NOT EXISTS cursors(path TEXT PRIMARY KEY,identity TEXT,epoch INTEGER,offset INTEGER,session TEXT);
         CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,session TEXT,event TEXT);
+        CREATE INDEX IF NOT EXISTS event_upload_size ON events(length(CAST(event AS BLOB)));
         CREATE TABLE IF NOT EXISTS deliveries(destination TEXT,id TEXT,PRIMARY KEY(destination,id));
         ''')
 
-    def scan(self,path,max_records=1000):
+    def scan(self,path,max_records=1000,source="codex"):
         path=Path(path).resolve(); added=0
         with path.open('rb') as f, self.db:
             stat=os.fstat(f.fileno());identity=f'{stat.st_dev}:{stat.st_ino}'
@@ -67,15 +73,16 @@ class Collector:
                 try:
                     record=json.loads(raw)
                     if not isinstance(record,dict):raise ValueError('Object required')
-                    item=normalize(record)
+                    item=normalize(record,source)
                     if record.get('type')=='session_meta':session=item['payload'].get('id') or session
+                    if source=='workbuddy':session=record.get('sessionId') or session or path.stem
                     if not session:session='unidentified:'+digest(str(path).encode())[:24]
                 except (ValueError,UnicodeError):
                     item={'kind':'parse_error','rawBase64':__import__('base64').b64encode(raw).decode()}
                     session=session or 'unidentified:'+digest(str(path).encode())[:24]
                 event_id=digest((identity+':'+str(epoch)+':'+str(start)+':').encode()+raw)
-                event={'id':event_id,'sessionId':session,'source':'codex','schemaVersion':1,
-                       **item,'evidence':{'path':str(path),'fileIdentity':identity,'epoch':epoch,
+                event={'id':event_id,'sessionId':session,'source':source,'schemaVersion':1,
+                       **item,'sourceFields':{k:v for k,v in record.items() if k!='payload'} if source=='codex' and item['kind']!='parse_error' else None,'evidence':{'path':str(path),'fileIdentity':identity,'epoch':epoch,
                        'byteStart':start,'byteEnd':end,'sha256':digest(raw)}}
                 cur=self.db.execute('INSERT OR IGNORE INTO events VALUES(?,?,?)',(event_id,session,json.dumps(event,ensure_ascii=False)))
                 added+=cur.rowcount;offset=end
@@ -83,12 +90,12 @@ class Collector:
         return added
 
     def pending(self,destination,limit=30):
-        rows=self.db.execute('SELECT event FROM events WHERE id NOT IN (SELECT id FROM deliveries WHERE destination=?) ORDER BY rowid LIMIT ?',(destination,limit))
+        rows=self.db.execute('SELECT event FROM events WHERE length(CAST(event AS BLOB))<=2096000 AND id NOT IN (SELECT id FROM deliveries WHERE destination=?) ORDER BY rowid LIMIT ?',(destination,limit))
         result=[];size=0
         for row in rows:
             item=json.loads(row[0]);n=len(row[0].encode())
             if n>2*1024*1024:raise ValueError('Event too large for upload; retained locally')
-            if size+n>2*1024*1024:break
+            if size+n>2096000:break
             result.append(item);size+=n
         return result
 

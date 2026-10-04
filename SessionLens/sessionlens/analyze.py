@@ -10,7 +10,7 @@ import sys
 import urllib.request
 import subprocess
 import re
-sys.path.insert(0,str(Path(__file__).resolve().parents[2]/'AgentPair'))
+sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
 from agentpair.tasks import TaskEngine
 from agentpair.interaction_audit import redact
 

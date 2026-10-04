@@ -1,61 +1,57 @@
 # SessionLens
 
-独立于 AppLens 的 Codex 会话采集器。第一版采集用户消息、助手消息、源日志提供的 reasoning、工具调用与返回、用量和未知记录。完整请求上下文仍由 AppLens 负责。
+独立桌面会话日志采集器，支持 macOS、Windows 上的 Codex 和 WorkBuddy。与 AppLens 同级：SessionLens 读取会话日志，AppLens 负责请求上下文；最终由 AgentPair 处理分析。
 
-## 当前实现
+## 桌面版
 
-- 增量 JSONL 读取、尾行等待、重启游标、截断/文件替换代次。
-- 事件及证据来源本地持久化；未知类型保留，坏记录显式标记。
-- 上传确认与读取游标分离，按目标地址及令牌身份隔离确认记录。
-- 平台独立 SessionLens 接口、设备令牌认证、按所有者读取会话。
-- 平台处理层按 callId 关联工具往返，保留未知/不匹配计数。
-- `/api/sessionlens/analyze` 将有明确覆盖标记的证据摘录交给已有 TaskEngine；分析异步运行，不阻塞采集。当前每次摘录受已有任务长度限制，不代表全会话分析。
-
-## 启动采集
-
-Python 标准库，无第三方依赖。在本目录运行：
+在本目录执行：
 
 ```sh
-python3 -m sessionlens --source ~/.codex/sessions --state runtime/collector.db --once
+python -m pip install -r requirements-desktop.txt
+python desktop_main.py
 ```
 
-上传时设置 SESSIONLENS_TOKEN 为独立登记的设备令牌，并增加：
+点击“设置并开始采集”，选择 Codex、WorkBuddy 或同时采集；应用自动适配操作系统，不需要平台切换。界面分别展示两个来源的用户提问、Agent 回复、解题思路、工具调用、工具返回、会话背景、用量与状态、暂未识别记录。最近内容有可读摘要，双击查看完整原文、会话 ID、工具 callId、文件位置、字节范围和哈希。
+
+采集过程显示文件读取、历史回填字节进度、本地保存、未确认上报记录、发送状态和平台接收数量。所有数量来自本机数据库，未配置上报时明确显示仅本地采集。关闭应用停止采集；重新打开后通过设置启动，接着上次游标继续读取。
+
+默认读取所有历史文件，不设置时间或文件数量筛选：
+
+- Codex：`~/.codex/sessions`、`~/.codex/archived_sessions` 的 rollout JSONL。
+- WorkBuddy：`~/.workbuddy/projects` 的 JSONL；设置中可更改目录。
+
+只有源日志实际提供的 reasoning 才会被采集；这不是隐藏思维链、进程、网络或完整模型输入的拦截器。源文件不存在时文件计数为零，不生成模拟记录。日志格式未知时保留原文并归入暂未识别。
+
+## 存储与上报
+
+macOS：`~/Library/Application Support/SessionLens/collector.db`。
+Windows：`%LOCALAPPDATA%\SessionLens\collector.db`。
+配置在同目录 `settings.json`，不保存设备令牌。桌面单实例锁防止重复启动；SQLite WAL 保存记录、读取游标和按上报目的地/令牌身份隔离的回执。
+
+不配置接口和令牌，仅本地保存。启用上报需要 AgentPair 登记的设备令牌和 HTTPS 地址，例如：
+
+```text
+https://www.chuhaijian.com/api/sessionlens/events
+```
+
+启用后发送所选日志的完整记录，不自动脱敏；设置界面明确说明上传范围。采集与上报使用独立线程，失败自动退避；只有平台完整确认这一批事件 ID 后才标记接收。日志目录每 15 秒发现新文件，已发现文件约每 0.5 秒检查增量；每文件单轮读取 200 行，按修改时间优先处理。实际延迟还受日志落盘、历史积压和磁盘性能影响。
+
+单原始记录超过 16 MiB 时保留游标并显示错误；单事件超过上报配额时保留本地、显示数量，并继续上传其他记录，不伪造成功。尚未实现大事件分片上传。工具往返通过 callId 关联，不能仅凭会话日志证明真实系统行为。重复来源记录保留各自证据，不把记录数当作用户操作数。
+
+## 构建与验证
+
+GitHub Actions `.github/workflows/sessionlens-desktop.yml` 在 macOS、Windows 本机 runner 上测试并打包，产物为 macOS `.app` 与 Windows 便携目录（包含 `.exe` 及依赖）。桌面构建尚未签名或公证。
 
 ```sh
---endpoint https://你的平台域名/api/sessionlens/events
+python -m unittest discover -s tests -v
+python desktop_main.py --self-test
+python -m PyInstaller --noconfirm --windowed --name SessionLens desktop_main.py
 ```
 
-不加 `--once` 持续读取。默认每 3 秒检查限定目录；这不是模型输出流拦截，时效取决于源日志落盘。单轮每文件最多 1000 行、最多上传 20 批，单记录超过 16 MiB 阻止游标推进并报告错误；单事件超过 2 MiB 上传配额保留本地。
+原标准库命令 `python -m sessionlens --source 路径 --state runtime/collector.db` 保留用于 Codex 单目录采集；双来源桌面运行使用上面的入口。
 
-## 验证环境
+## 分析链路
 
-本机验证接收器复用平台的 SessionStore，绑定 127.0.0.1:18950，使用 runtime/local-token 中的本地令牌。原文存在 runtime/collector.db，接收后存在 runtime/engine.db。运行目录不提交 Git。
+`sessionlens.analyze`、`sessionlens.report_site` 保留已有分析和展示实现。AgentPair SessionStore 接收 Codex、WorkBuddy，校验设备身份、回执和重放一致性；按 callId 组织证据。模型分析仍是明确标记覆盖范围的摘录，不是全会话自动分析。会话洞察展示与原始日志上报接口分开授权。
 
-这是本机 HTTP 入库与处理验证，不等于已经部署到 www.chuhaijian.com。平台源代码已经添加接口，远端部署尚未完成；真实模型分析采用服务器现有 AgentPair 中转 DeepSeek，结果保存在本机报告目录。
-
-## 当前边界
-
-已有本机会话报告前端，尚无桌面应用和自动启动。原文采集未自动脱敏，模型分析使用脱敏且有长度限制的证据片段。原文仅在受令牌保护的本机验证环境传输；正式云端启用前需补齐脱敏及可见上传范围。不能恢复源日志未提供或被截断的内容，不能从会话声明推断真实进程/网络行为。
-
-重复的用户/助手记录保留来源版本，暂未合并；已验证单进程运行，尚无多实例锁与上传账号生命周期管理。不把该版本称为生产可部署版本。
-
-## 检查
-
-```sh
-python3 -m unittest discover -s tests -v
-```
-
-平台 HTTP 测试：在 AgentPair 目录运行 `python3 -m unittest test_sessionlens_api -v`。
-
-## 初步会话分析与展示
-
-`sessionlens.analyze` 复用 AgentPair TaskEngine 的规划、分析、复核三阶段；模型请求通过服务器已有中转，模型为 deepseek-v3.2，服务器令牌留在服务器。SSH 认证需要环境变量 SESSIONLENS_SSH_PASSWORD，勿写入配置或提交。
-
-```sh
-python3 -m sessionlens.analyze --store runtime/engine.db --session 会话ID --output runtime/reports/会话ID
-python3 -m sessionlens.report_site
-```
-
-展示地址 http://127.0.0.1:18951/ 。只绑定本机，展示实际模型输出，不提供原始数据库和报告 JSON 的下载。每份报告包含结论、用户需求、实际交付、关键发现及处理办法、执行故事、来源证据。引用可展开证据，保留事件 ID、源字节范围与截取标记。
-
-有工具记录的会话当前取最后一轮已结束任务；仅消息的来源分析已采集消息并明确缺少工具执行证据。局部分析不代表完整会话审计，模型复核也不等于独立验证。
+运行数据库、日志、令牌、虚拟环境和构建产物不提交 Git。

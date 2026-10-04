@@ -27,7 +27,7 @@ class SessionStore:
         if not isinstance(events,list) or not 0<len(events)<=30:raise ValueError('Invalid batch')
         for event in events:
             if not isinstance(event,dict) or not re.fullmatch('[a-f0-9]{64}',event.get('id','')):raise ValueError('Invalid event identity')
-            if event.get('source')!='codex' or event.get('schemaVersion')!=1:raise ValueError('Invalid source')
+            if event.get('source') not in ('codex','workbuddy') or event.get('schemaVersion')!=1:raise ValueError('Invalid source')
             if not isinstance(event.get('sessionId'),str) or not 0<len(event['sessionId'])<=200:raise ValueError('Invalid session')
             if not isinstance(event.get('evidence'),dict) or not isinstance(event.get('kind'),str):raise ValueError('Evidence required')
             if len(json.dumps(event,ensure_ascii=False).encode())>2097152:raise ValueError('Event too large')
