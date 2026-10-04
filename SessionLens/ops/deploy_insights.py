@@ -33,8 +33,6 @@ if __name__=='__main__':
         proxy_set_header Cookie $http_cookie;
     }
     location /session-insights/ {
-        auth_request /_session-insights-auth;
-        error_page 401 = @session_insights_login;
         alias /var/www/agentpair-insights/;
         index index.html;
         autoindex off;
