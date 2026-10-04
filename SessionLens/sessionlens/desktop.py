@@ -111,7 +111,7 @@ class Runtime:
                 if parsed.scheme!='https' or not parsed.netloc or parsed.username or parsed.password:
                     self.update(upload='上报地址必须使用 HTTPS');self.stop.wait(2);continue
                 try:
-                    items=c.pending(self.destination)
+                    items=c.pending(self.destination,sources=[s for s,cfg in self.config['sources'].items() if cfg['enabled']])
                     if not items:self.update(upload='等待新数据');self.stop.wait(1);continue
                     self.update(upload=f'正在发送 {len(items)} 份记录')
                     req=urllib.request.Request(endpoint,json.dumps({'schemaVersion':1,'events':items},ensure_ascii=False).encode(),{'Content-Type':'application/json','Authorization':'Bearer '+self.token},method='POST')

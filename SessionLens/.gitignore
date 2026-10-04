@@ -7,3 +7,4 @@ build/
 dist/
 *.spec
 desktop-preview.png
+release/

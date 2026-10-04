@@ -89,8 +89,11 @@ class Collector:
             self.db.execute('INSERT OR REPLACE INTO cursors VALUES(?,?,?,?,?)',(str(path),identity,epoch,offset,session))
         return added
 
-    def pending(self,destination,limit=30):
-        rows=self.db.execute('SELECT event FROM events WHERE length(CAST(event AS BLOB))<=2096000 AND id NOT IN (SELECT id FROM deliveries WHERE destination=?) ORDER BY rowid LIMIT ?',(destination,limit))
+    def pending(self,destination,limit=30,sources=None):
+        if sources is not None and not sources:return []
+        source_filter=" AND json_extract(event,'$.source') IN ("+','.join('?' for _ in sources)+')' if sources is not None else ''
+        query='SELECT event FROM events WHERE length(CAST(event AS BLOB))<=2096000 AND id NOT IN (SELECT id FROM deliveries WHERE destination=?)'+source_filter+' ORDER BY rowid LIMIT ?'
+        rows=self.db.execute(query,[destination]+(list(sources) if sources is not None else [])+[limit])
         result=[];size=0
         for row in rows:
             item=json.loads(row[0]);n=len(row[0].encode())

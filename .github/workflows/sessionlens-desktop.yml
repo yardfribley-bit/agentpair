@@ -22,8 +22,12 @@ jobs:
       - run: python -m unittest discover -s tests -v
       - run: python desktop_main.py --self-test
       - run: python -m PyInstaller --noconfirm --windowed --name SessionLens desktop_main.py
+      - name: Verify packaged application
+        run: python -c "import os,subprocess; exe='dist/SessionLens/SessionLens.exe' if os.name=='nt' else 'dist/SessionLens.app/Contents/MacOS/SessionLens'; subprocess.run([exe,'--self-test'],check=True,timeout=30)"
+      - name: Package distributable
+        run: python -c "import os,subprocess,shutil; os.makedirs('release',exist_ok=True); subprocess.run(['ditto','-c','-k','--sequesterRsrc','--keepParent','dist/SessionLens.app','release/SessionLens-macOS.zip'],check=True) if os.name!='nt' else shutil.make_archive('release/SessionLens-Windows','zip','dist','SessionLens')"
       - uses: actions/upload-artifact@v4
         with:
           name: SessionLens-${{ runner.os }}-${{ runner.arch }}
-          path: SessionLens/dist/
+          path: SessionLens/release/*.zip
           retention-days: 30

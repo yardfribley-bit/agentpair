@@ -52,6 +52,6 @@ python -m PyInstaller --noconfirm --windowed --name SessionLens desktop_main.py
 
 ## 分析链路
 
-`sessionlens.analyze`、`sessionlens.report_site` 保留已有分析和展示实现。AgentPair SessionStore 接收 Codex、WorkBuddy，校验设备身份、回执和重放一致性；按 callId 组织证据。模型分析仍是明确标记覆盖范围的摘录，不是全会话自动分析。会话洞察展示与原始日志上报接口分开授权。
+`sessionlens.analyze`、`sessionlens.report_site` 保留已有分析和展示实现。AgentPair SessionStore 接收 Codex、WorkBuddy，校验设备身份、回执和重放一致性；按 callId 组织证据。正式接收接口部署脚本为 `ops/deploy_receiver.py`，复用 AgentPair 设备认证、带备份与回滚。模型分析仍是明确标记覆盖范围的摘录，不是全会话自动分析。会话洞察展示与原始日志上报接口分开授权。
 
 运行数据库、日志、令牌、虚拟环境和构建产物不提交 Git。

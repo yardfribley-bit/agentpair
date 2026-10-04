@@ -14,7 +14,7 @@ class DesktopTests(unittest.TestCase):
                 {'type':'function_call','sessionId':'wb-session','callId':'c1','name':'web','arguments':{'query':'溧阳天气'}},
                 {'type':'function_call_result','sessionId':'wb-session','callId':'c1','output':'晴','providerData':{'trace':'test'}}])+'\n', encoding='utf-8')
             c=Collector(Path(tmp)/'db');self.assertEqual(c.scan(p,source='workbuddy'),3)
-            items=c.pending('d');self.assertEqual([category(e) for e in items],LABELS[:1]+LABELS[3:5]);self.assertEqual(items[-1]['payload']['providerData']['trace'],'test');self.assertEqual(items[-1]['source'],'workbuddy');self.assertEqual(items[-1]['callId'],'c1');self.assertIn('web',summary(items[1]));c.db.close()
+            items=c.pending('d');self.assertEqual([category(e) for e in items],LABELS[:1]+LABELS[3:5]);self.assertEqual(items[-1]['payload']['providerData']['trace'],'test');self.assertEqual(items[-1]['source'],'workbuddy');self.assertEqual(c.pending('d',sources=['codex']),[]);self.assertEqual(items[-1]['callId'],'c1');self.assertIn('web',summary(items[1]));c.db.close()
     def test_oversized_event_does_not_block_small_event(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'rollout.jsonl';p.write_text(json.dumps({'type':'session_meta','payload':{'id':'test','text':'x'*2200000}})+'\n'+json.dumps({'type':'response_item','payload':{'type':'reasoning','text':'small'}})+'\n', encoding='utf-8')
