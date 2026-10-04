@@ -96,7 +96,7 @@ class Runtime:
                 self.stop.wait(.5)
         finally:c.db.close()
     def index(self,c):
-        rows=c.db.execute('SELECT id,event FROM events WHERE id NOT IN (SELECT id FROM display_index) ORDER BY rowid LIMIT 1000').fetchall()
+        rows=c.db.execute('SELECT id,event FROM events WHERE id NOT IN (SELECT id FROM display_index) ORDER BY rowid LIMIT 1000')
         with c.db:
             for identity,body in rows:
                 e=json.loads(body);c.db.execute('INSERT OR IGNORE INTO display_index VALUES(?,?,?,?,?)',(identity,e['source'],category(e),summary(e),len(body.encode())))
@@ -115,7 +115,9 @@ class Runtime:
                     if not items:self.update(upload='等待新数据');self.stop.wait(1);continue
                     self.update(upload=f'正在发送 {len(items)} 份记录')
                     req=urllib.request.Request(endpoint,json.dumps({'schemaVersion':1,'events':items},ensure_ascii=False).encode(),{'Content-Type':'application/json','Authorization':'Bearer '+self.token},method='POST')
-                    with urllib.request.urlopen(req,timeout=15) as r:receipt=json.load(r)
+                    class NoRedirect(urllib.request.HTTPRedirectHandler):
+                        def redirect_request(self,*args,**kwargs):return None
+                    with urllib.request.build_opener(NoRedirect()).open(req,timeout=15) as r:receipt=json.load(r)
                     ids=[e['id'] for e in items]
                     if not isinstance(receipt.get('ids'),list) or sorted(receipt['ids'])!=sorted(ids):raise ValueError('平台回执不完整，保留队列重试')
                     c.acknowledge(self.destination,ids);delay=1;self.update(upload='平台已确认接收',receipt=time.time())
