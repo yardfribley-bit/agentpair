@@ -57,6 +57,12 @@ AgentPair 提供 Driver 执行、Navigator 规划与复核的协作机制；AppL
 
 完整模型响应、独立工具执行、文件读取与进程/网络因果链尚未作为统一安全证据接入。Android 源码保留在仓库中，不代表已具备 Android WorkBuddy 或豆包真实模型请求采集能力。
 
+## SessionLens 会话日志采集
+
+[SessionLens](SessionLens/README.md) 是独立于 AppLens 的 macOS、Windows 桌面采集器，支持 Codex 与 WorkBuddy 的历史回填和实时增量。界面按用户提问、回复、解题思路、工具调用与返回等分类，展示内容摘要及采集、保存、上报、平台确认过程；双击查看原文与证据来源。
+
+桌面版不需要切换操作系统，两个 Agent 可以分别启用并同时采集。默认只保存在本机；HTTPS 上报使用登记的设备令牌，完整回执后才标记接收。安装包由 [SessionLens desktop 构建](https://github.com/yardfribley-bit/agentpair/actions/workflows/sessionlens-desktop.yml) 生成。当前应用未签名或公证；来源日志未提供的数据不会被补造。
+
 ## Driver 与 Navigator
 
 | 角色 | 职责 |
