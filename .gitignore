@@ -11,3 +11,5 @@ private-data/
 reports/
 runs/
 android/build/
+
+.agentreins_v2-dev/

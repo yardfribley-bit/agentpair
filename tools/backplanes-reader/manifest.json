@@ -1,0 +1,1 @@
+{"manifest_version":3,"name":"Backplanes 三页导出","version":"0.2.0","description":"手动保存总览、会话列表和会话详情，导出正文与静态布局。","permissions":["activeTab","scripting","storage","downloads"],"action":{"default_popup":"popup.html"}}

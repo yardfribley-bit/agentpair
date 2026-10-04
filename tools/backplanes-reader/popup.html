@@ -1,0 +1,8 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Backplanes 三页导出</title>
+<style>body{font:14px/1.6 system-ui;width:340px;padding:16px;color:#172033}button{padding:9px 12px;margin:4px 0;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer}h3{margin:0 0 10px}.row{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #e5e7eb;padding:8px 0}.primary{background:#2459d9;color:white}#status{white-space:pre-wrap}small{color:#64748b}</style>
+<h3>Backplanes 三页导出</h3><p>进入对应页面，展开需要的详情，再点击“保存当前页”。三页齐全后统一下载。</p>
+<div class="row"><span>总览 <small id="dashboard">未保存</small></span><button data-slot="dashboard">保存当前页</button></div>
+<div class="row"><span>会话列表 <small id="list">未保存</small></span><button data-slot="list">保存当前页</button></div>
+<div class="row"><span>会话详情 <small id="detail">未保存</small></span><button data-slot="detail">保存当前页</button></div>
+<p><button id="download" class="primary">下载已保存页面</button> <button id="clear">清除暂存</button></p>
+<small>每页导出 TXT 正文和 HTML 静态快照。不会读取 Cookie 或自动上传。收起和未加载的内容需先展开。</small><p id="status" role="status"></p><script src="popup.js"></script></html>

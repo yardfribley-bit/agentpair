@@ -1,0 +1,4 @@
+#!/bin/sh
+# Runs from any working directory without installing or modifying the old agent.
+AGENTREINS_V2_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PYTHONPATH="$AGENTREINS_V2_ROOT${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m agentreins_v2 "$@"

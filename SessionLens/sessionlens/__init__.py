@@ -1,0 +1,1 @@
+"""Independent Codex session collector."""

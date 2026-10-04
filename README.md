@@ -105,3 +105,7 @@ python3 -m agentpair.demo
 | 部署及资源管理 | [PLATFORM.md](PLATFORM.md)、[RESOURCE_CONTROL.md](RESOURCE_CONTROL.md) |
 
 后续重点：建立新采集任务的分析队列，使用 AgentPair 提出和核查新威胁候选，加入人工确认及回归样本；再将真实分析事件接入动态视图。自动分析的数据范围、外发许可和预算需要明确配置，不能把单项复核许可扩大为全部原文自动发送。
+
+## AgentReins v2（macOS）
+
+新增独立命令 `bin/agentreins_v2`，增量接入 AppLens 网络日志和 WorkBuddy 执行记录，提供可恢复的本机证据存储与查看页面。使用方式与当前采集边界见 [采集器说明](agentreins_v2/README.md)。Windows 暂不开发。
