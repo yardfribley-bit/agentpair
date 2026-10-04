@@ -25,7 +25,7 @@ def tag(text,style=''):return f'<span class="pill {style}">{e(text)}</span>'
 def metric(label,value,note=''):return f'<div class="panel metric"><div class="label">{e(label)}</div><div class="value">{e(value)}</div><span class="muted">{e(note)}</span></div>'
 def refs(item):return ' '.join(f'<a class="pill blue" href="#{quote(str(ref))}">{e(ref)}</a>' for ref in item.get('evidenceRefs',[]))
 def shell(title,body,active='list'):
-    css=(Path(__file__).parent/'ui.css').read_text()
+    css=(Path(__file__).parent/'ui.css').read_text(encoding='utf-8')
     return f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)} · AgentPair</title><style>{css}</style></head><body><div id="bp-replica"><header><span class="brand">◩ AgentPair</span><span class="muted">SessionLens / 会话洞察</span></header><div class="shell"><nav aria-label="主导航"><a class="{'active' if active=='dashboard' else ''}" href="/" aria-label="总览">总览</a><a class="{'active' if active=='list' else ''}" href="/sessions.html" aria-label="会话">会话</a></nav><main>{body}<div class="foot">SessionLens → AgentPair → DeepSeek · 规划、分析与复核 · 时间：Asia/Shanghai · 当前展示已有分析结果</div></main></div></div><script>
 function reveal(){{const el=document.getElementById(decodeURIComponent(location.hash.slice(1)));if(el){{el.closest('[data-panel]')?.removeAttribute('hidden');if(el.tagName==='DETAILS')el.open=true;el.scrollIntoView({{block:'start'}})}}}}
 addEventListener('hashchange',reveal);reveal();
@@ -38,7 +38,7 @@ def load(root):
     sessions=[]
     for folder in root.iterdir():
         if not folder.is_dir() or not (folder/'analysis.json').exists() or not (folder/'evidence.json').exists():continue
-        task=json.loads((folder/'analysis.json').read_text());packet=json.loads((folder/'evidence.json').read_text())
+        task=json.loads((folder/'analysis.json').read_text(encoding='utf-8'));packet=json.loads((folder/'evidence.json').read_text(encoding='utf-8'))
         sessions.append((folder,packet,task,result(task)))
     return sorted(sessions,key=lambda s:s[1].get('end') or '',reverse=True)
 def build_pages(root):
@@ -59,13 +59,13 @@ def build_pages(root):
     body+='<div class="panel pad"><h3>下次可以更快</h3><p class="muted">当前分析尚未单独生成效率观察。</p></div><div class="panel pad"><h3>值得保留的做法</h3>'+''.join(f'<p>{e(x)}</p>' for _,x in practices[:2])+'</div></div><div class="row" style="justify-content:space-between;margin-top:24px"><h3>最近的会话</h3><a href="/sessions.html">查看全部 →</a></div>'
     for folder,p,t,r in sessions[:3]:body+=f'<div class="panel pad">{tag(severity(r).upper(),"high")}<h3><a href="{link(folder)}">{e(r.get("title","分析未完成"))}</a></h3><p>{e(r.get("summary"))}</p><span class="muted">{stamp(p.get("end"))} · {span(p)} · {e(p.get("coverage"))}</span></div>'
     if not sessions:body+='<div class="panel pad">暂无分析结果。SessionLens 上传后需先完成 AgentPair 分析。</div>'
-    (root/'index.html').write_text(shell('总览',body,'dashboard'))
+    (root/'index.html').write_text(shell('总览',body,'dashboard'), encoding='utf-8')
     body='<h1>会话</h1><div class="row"><label>严重程度 <select id="severity-filter"><option value="all">全部</option><option value="high">高风险及以上</option></select></label></div><div class="panel tablewrap"><table><thead><tr><th>会话 / 采集范围</th><th>严重程度</th><th>洞察</th><th>费用</th><th>记录</th><th>跨度</th><th>时间</th></tr></thead><tbody>'
     for folder,p,t,r in sessions:
         scope='一轮任务' if p.get('recordKinds',{}).get('tool_call') else '仅消息 / 审批记录'
         body+=f'<tr data-severity="{severity(r)}"><td><a href="{link(folder)}">{e(r.get("title","分析未完成"))}</a><p class="muted">{e(r.get("summary"))}</p><span class="pill">{scope}</span><p class="muted">{e(p.get("sessionId"))}</p></td><td>{tag(severity(r).upper(),"high")}<p>{len(r.get("findings",[]))} 个发现</p></td><td>{len(r.get("story",[]))} 个过程节点<br>{len(r.get("goodPractices",[]))} 个好做法</td><td>未采集</td><td>{p.get("recordCount",0)}</td><td>{span(p)}</td><td>{stamp(p.get("end"))}</td></tr>'
     body+='</tbody></table></div>'
-    (root/'sessions.html').write_text(shell('会话',body))
+    (root/'sessions.html').write_text(shell('会话',body), encoding='utf-8')
 def render(packet,task,path):
     report=result(task);findings=report.get('findings',[]);fragments=packet.get('fragments',[]);kinds=packet.get('recordKinds',{})
     body='<div class="label"><a href="/sessions.html">会话</a> › '+e(packet.get('sessionId'))+'</div><h1 style="margin-top:18px">'+e(report.get('goal') or report.get('title','分析未完成'))+'</h1>'
@@ -87,12 +87,12 @@ def render(packet,task,path):
     for f in fragments:
         source=f.get('source',{});body+=f'<details id="{e(f["evidenceId"])}"><summary>{e(f["evidenceId"])} · {e(f.get("kind"))} · {e(f.get("tool") or "消息")}</summary><p>{stamp(f.get("timestamp"))} · 原始事件 {e(f.get("eventId"))}</p><p>字节 {e(source.get("byteStart"))}–{e(source.get("byteEnd"))} · '+('片段已截取' if f.get('truncated') else '该记录片段完整')+'</p><pre>'+e(f.get('excerpt'))+'</pre></details>'
     body+='</section><section id="limits" data-panel hidden><h3>哪些内容还不能确定</h3><div class="panel pad">'+''.join('<p>'+e(x)+'</p>' for x in dict.fromkeys(packet.get('limitations',[])+report.get('limitations',[])))+'</div><h3>采集与分析链路</h3><div class="evidence">SessionLens → AgentPair 规划 → DeepSeek 分析 → AgentPair 复核 → 会话洞察</div><p>模型复核不等于独立验证。未记录的行为不显示为已通过安全检查。</p></section>'
-    path.write_text(shell('会话洞察',body))
+    path.write_text(shell('会话洞察',body), encoding='utf-8')
 
 def publish(root,base='/session-insights/'):
     build_pages(root)
     for path in [root/'index.html',root/'sessions.html',*root.glob('*/report.html')]:
-        text=path.read_text().replace('href="/"','href="'+base+'"').replace('href="/sessions.html"','href="'+base+'sessions.html"')
+        text=path.read_text(encoding='utf-8').replace('href="/"','href="'+base+'"').replace('href="/sessions.html"','href="'+base+'sessions.html"')
         for folder in root.iterdir():
             if folder.is_dir():text=text.replace('href="/'+quote(folder.name)+'/report.html','href="'+base+quote(folder.name)+'/report.html')
-        path.write_text(text)
+        path.write_text(text, encoding='utf-8')

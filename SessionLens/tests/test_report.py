@@ -7,5 +7,5 @@ class ReportTests(unittest.TestCase):
   report={'title':'<script>unsafe</script>','findings':[{'title':'test','severity':'high','status':'observed','fact':'fact','impact':'impact','remediation':'fix','evidenceRefs':['E001']}],'story':[]}
   task={'status':'completed','messages':[{'stage':'review','answer':{'report':report}}]}
   with tempfile.TemporaryDirectory() as d:
-   p=Path(d)/'report.html';render(packet,task,p);s=p.read_text()
+   p=Path(d)/'report.html';render(packet,task,p);s=p.read_text(encoding='utf-8')
    self.assertNotIn('<img src=x',s);self.assertIn('&lt;script&gt;unsafe',s);self.assertIn('href="#E001"',s);self.assertIn('10–20',s);self.assertIn('片段已截取',s)

@@ -11,7 +11,7 @@ from agentpair.session_lens import SessionStore
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--state',type=Path,required=True);p.add_argument('--token-file',type=Path,required=True);p.add_argument('--port',type=int,default=18950)
-    args=p.parse_args();token=args.token_file.read_text().strip();store=SessionStore(args.state)
+    args=p.parse_args();token=args.token_file.read_text(encoding='utf-8').strip();store=SessionStore(args.state)
     if len(token)<32:raise ValueError('Strong token required')
     identity={'id':'sessionlens-local','owner':'local-user'}
     class Handler(BaseHTTPRequestHandler):

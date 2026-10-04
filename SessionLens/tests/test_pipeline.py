@@ -11,7 +11,7 @@ class PipelineTests(unittest.TestCase):
     def test_large_unicode_event_kept_and_received(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source=root/'rollout-large.jsonl'
-            source.write_text(json.dumps({'type':'session_meta','payload':{'id':'large','content':'测'*450000}},ensure_ascii=False)+'\n')
+            source.write_text(json.dumps({'type':'session_meta','payload':{'id':'large','content':'测'*450000}},ensure_ascii=False)+'\n', encoding='utf-8')
             c=Collector(root/'local.db');c.scan(source);items=c.pending('receiver')
             self.assertEqual(len(items),1)
             store=SessionStore(root/'remote.db')
@@ -44,7 +44,7 @@ class PipelineTests(unittest.TestCase):
                   {'type':'response_item','payload':{'type':'function_call','call_id':'a','name':'exec_command','arguments':'{}'}},
                   {'type':'response_item','payload':{'type':'function_call_output','call_id':'a','output':'done'}},
                   {'type':'new_record','payload':{'unknown':True}}]
-            source.write_text(''.join(json.dumps(r)+'\n' for r in rows));c=Collector(root/'local.db');c.scan(source)
+            source.write_text(''.join(json.dumps(r)+'\n' for r in rows), encoding='utf-8');c=Collector(root/'local.db');c.scan(source)
             payload={'schemaVersion':1,'events':c.pending('platform')};store=SessionStore(root/'remote.db');who={'id':'device','owner':'alice'}
             store.ingest(who,payload);store.ingest(who,payload)
             report=store.report('alice','device','task')

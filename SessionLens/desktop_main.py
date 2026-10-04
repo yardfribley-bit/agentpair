@@ -29,7 +29,7 @@ class Window(QMainWindow):
         super().__init__();self.root=root;self.runtime=None;self.setWindowTitle('SessionLens');self.resize(1200,820)
         self.config=defaults();configfile=root/'settings.json'
         if configfile.exists():
-            try:self.config=json.loads(configfile.read_text())
+            try:self.config=json.loads(configfile.read_text(encoding='utf-8'))
             except (OSError,ValueError):pass
         body=QWidget();self.setCentralWidget(body);layout=QVBoxLayout(body);layout.setContentsMargins(28,20,28,20);layout.setSpacing(14)
         header=QHBoxLayout();title=QLabel('SessionLens');title.setObjectName('title');header.addWidget(title);header.addStretch();self.button=QPushButton('设置并开始采集');self.button.clicked.connect(self.configure);header.addWidget(self.button);layout.addLayout(header)
@@ -61,7 +61,7 @@ class Window(QMainWindow):
     def open_settings(self):
         dialog=Settings(self.config,self)
         if dialog.exec()!=QDialog.Accepted:return
-        self.config=dialog.result_config();(self.root/'settings.json').write_text(json.dumps(self.config,ensure_ascii=False,indent=2));os.chmod(self.root/'settings.json',0o600)
+        self.config=dialog.result_config();(self.root/'settings.json').write_text(json.dumps(self.config,ensure_ascii=False,indent=2),encoding='utf-8');os.chmod(self.root/'settings.json',0o600)
         self.runtime=Runtime(self.root,self.config,dialog.token.text());self.runtime.start();self.button.setText('停止 / 修改设置')
         for s,(group,_) in self.panels.items():group.setVisible(self.config['sources'][s]['enabled'])
     def refresh(self):
