@@ -28,14 +28,14 @@ def plain(v):
     if isinstance(v,str):return v
     if isinstance(v,list):return '\n'.join(filter(None,(plain(x) for x in v)))
     if isinstance(v,dict):
-        for key in ('text','content','message','summary','output','input','arguments'):
+        for key in ('text','content','message','summary','output','input','arguments','command','stdout','aiTitle'):
             if key in v:return plain(v[key])
         return json.dumps(v,ensure_ascii=False)
     return str(v) if v is not None else ''
 
 def summary(e):
     p=e.get('payload',{})
-    body=plain(p)
+    body=plain(p.get('item',p))
     if e.get('name'):body=e['name']+' · '+body
     return ' '.join(body.split())[:180] or e.get('sourceType') or e['kind']
 
@@ -74,7 +74,7 @@ class Runtime:
                         for root in cfg['roots']:
                             p=Path(root).expanduser()
                             if p.is_dir():files.extend((source,f) for f in p.rglob('rollout*.jsonl' if source=='codex' else '*.jsonl'))
-                    files=list(dict.fromkeys(files));self.update(files=len(files));files.sort(key=lambda x:x[1].stat().st_mtime if x[1].exists() else 0,reverse=True);discover=time.monotonic()
+                    files=list(dict.fromkeys(files));self.update(files=len(files),bytes=sum(p.stat().st_size for _,p in files if p.exists()));files.sort(key=lambda x:x[1].stat().st_mtime if x[1].exists() else 0,reverse=True);discover=time.monotonic()
                 for source,p in files:
                     if self.stop.is_set():break
                     try:
@@ -83,6 +83,7 @@ class Runtime:
                         self.update(reading=f'{source} · {p.name}')
                         c.scan(p,200,source)
                         self.index(c)
+                        self.update(read=c.db.execute('SELECT COALESCE(sum(offset),0) FROM cursors').fetchone()[0])
                         offset=c.db.execute('SELECT offset FROM cursors WHERE path=?',(str(p.resolve()),)).fetchone()[0]
                         if offset>=st.st_size:seen[str(p)]=signature
                         errors.pop(str(p),None)

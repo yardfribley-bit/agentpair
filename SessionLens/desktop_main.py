@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QTimer, QLockFile
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QTableWidget,QTableWidgetItem,QDialog,QFormLayout,QLineEdit,QCheckBox,QDialogButtonBox,QPlainTextEdit,QMessageBox,QProgressBar,QGroupBox)
 from sessionlens.desktop import Runtime,defaults,state_root,LABELS
 
-STYLE='''QWidget {font-family: Arial; font-size:14px; color:#233247; background:#f5f7fb;} QMainWindow {background:#f5f7fb;} QLabel#title {font-size:28px;font-weight:700;} QLabel#sub {color:#6a7a91;} QGroupBox {background:white;border:1px solid #dce3ee;border-radius:10px;margin-top:12px;padding:18px;} QGroupBox::title {subcontrol-origin:margin;left:16px;padding:0 5px;font-weight:600;} QPushButton {background:#245bdb;color:white;border:0;border-radius:6px;padding:10px 16px;} QPushButton:disabled {background:#9aaac3;} QLineEdit,QPlainTextEdit,QTableWidget {background:white;border:1px solid #dce3ee;border-radius:5px;padding:5px;} QHeaderView::section {background:#edf2fa;padding:9px;border:0;font-weight:600;} QProgressBar {border:0;background:#e4eaf5;height:8px;border-radius:4px;text-align:center;} QProgressBar::chunk {background:#245bdb;border-radius:4px;}'''
+STYLE='''QWidget {font-family: Arial; font-size:14px; color:#233247; background:#f5f7fb;} QMainWindow {background:#f5f7fb;} QLabel {background:transparent;} QLabel#title {font-size:28px;font-weight:700;} QLabel#sub {color:#6a7a91;} QGroupBox {background:white;border:1px solid #dce3ee;border-radius:10px;margin-top:12px;padding:18px;} QGroupBox::title {subcontrol-origin:margin;left:16px;padding:0 5px;font-weight:600;} QPushButton {background:#245bdb;color:white;border:0;border-radius:6px;padding:10px 16px;} QPushButton:disabled {background:#9aaac3;} QLineEdit,QPlainTextEdit,QTableWidget {background:white;border:1px solid #dce3ee;border-radius:5px;padding:5px;} QHeaderView::section {background:#edf2fa;padding:9px;border:0;font-weight:600;} QProgressBar {border:0;background:#e4eaf5;height:8px;border-radius:4px;text-align:center;} QProgressBar::chunk {background:#245bdb;border-radius:4px;}'''
 
 class Settings(QDialog):
     def __init__(self,config,parent):
@@ -37,7 +37,8 @@ class Window(QMainWindow):
         pipeline=QGroupBox('采集到平台接收');flow=QHBoxLayout(pipeline);self.stages=[]
         for i,name in enumerate(['发现与读取','本地保存','等待上报','正在发送','平台接收']):
             label=QLabel(name+'\n—');label.setAlignment(Qt.AlignCenter);flow.addWidget(label);self.stages.append(label)
-            if i<4:flow.addWidget(QLabel('→'))
+            if i<4:
+                arrow=QLabel('→');arrow.setFixedWidth(24);arrow.setAlignment(Qt.AlignCenter);flow.addWidget(arrow)
         layout.addWidget(pipeline);self.progress=QProgressBar();self.progress.setRange(0,100);layout.addWidget(self.progress)
         panels=QHBoxLayout();self.panels={}
         for source,title in [('codex','Codex'),('workbuddy','WorkBuddy')]:
