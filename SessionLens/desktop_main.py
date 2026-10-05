@@ -231,7 +231,8 @@ class Window(QMainWindow):
 def main():
     test='--self-test' in sys.argv
     query_test='--verify-assistant' in sys.argv
-    verify='--verify-ui' in sys.argv or query_test
+    conversation_test='--verify-conversation' in sys.argv
+    verify='--verify-ui' in sys.argv or query_test or conversation_test
     if test or verify:os.environ['QT_QPA_PLATFORM']='offscreen'
     app=QApplication(sys.argv);app.setStyleSheet(STYLE)
     root=Path(__import__('tempfile').mkdtemp(prefix='sessionlens-test-')) if test else state_root();root.mkdir(parents=True,exist_ok=True)
@@ -241,8 +242,32 @@ def main():
     from sessionlens.chat_window import ChatWindow
     chat=ChatWindow(window)
     if test:chat.close();print('SessionLens desktop self-test passed');return 0
+    if conversation_test:
+        from time import monotonic
+        from sessionlens import relay_model
+        fixture=json.loads(Path(sys.argv[sys.argv.index('--verify-conversation')+1]).read_text())
+        output=Path(sys.argv[sys.argv.index('--verify-conversation')+2])
+        original_answer=relay_model.answer
+        allowed={step['taskId'] for step in fixture}
+        def guarded_answer(root,config,q,packet,history):
+            if packet['taskId'] not in allowed:raise ValueError('测试选错任务，未发送其他任务数据')
+            return original_answer(root,config,q,packet,history)
+        relay_model.answer=guarded_answer
+        chat.messages=[];chat.source.setCurrentIndex(1);chat.show()
+        state={'index':0,'started':monotonic(),'results':[]};timer=QTimer(chat)
+        def submit():
+            state['started']=monotonic();chat.input.setPlainText(fixture[state['index']]['question']);chat.send()
+        def check_conversation():
+            if chat.busy and monotonic()-state['started']<240:return
+            step=fixture[state['index']];result=chat.messages[-1] if chat.messages else {}
+            success=not chat.busy and result.get('taskId')==step['taskId'] and chat.input.toPlainText()==step['question'] and chat.results.currentWidget()==chat.task_view
+            state['results'].append(result)
+            chat.grab().save(str(output.with_suffix(''))+'-'+str(state['index'])+'.png')
+            print('Conversation step '+str(state['index']+1)+(' passed' if success else ' failed'),flush=True)
+            if success and state['index']+1<len(fixture):state['index']+=1;submit();return
+            timer.stop();output.write_text(json.dumps(state['results'],ensure_ascii=False));chat.close();app.exit(0 if success else 1)
+        timer.timeout.connect(check_conversation);submit();timer.start(250);return app.exec()
     if query_test:
-        from PySide6.QtCore import QTimer
         from time import monotonic
         output=Path(sys.argv[sys.argv.index('--verify-assistant')+1]);question='那次 SSH 动画是怎么生成的，最后做成了吗？'
         from sessionlens import relay_model

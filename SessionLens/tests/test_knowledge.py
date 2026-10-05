@@ -19,3 +19,16 @@ class RetrievalTests(unittest.TestCase):
   db=sqlite3.connect(':memory:');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
   db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[('ops','SSH 登录服务器检查日志','workbuddy','a','2026','SSH 动画生成工具完成状态'),('video','帮我生成五秒动画，描述 ssh 协议','workbuddy','b','2026','VideoGen')])
   self.assertEqual(candidates(db,['SSH','动画生成'],question='那次 SSH 动画是怎么生成的，最后做成了吗？')[0][0],'video');db.close()
+ def test_named_weather_task_overrides_incorrect_followup_and_keeps_weather_followup(self):
+  from sessionlens.knowledge import select_task
+  db=sqlite3.connect(':memory:');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
+  db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[('ssh','生成 SSH 动画','workbuddy','a','2026','ToolSearch'),('weather','查上海天气','workbuddy','b','2026','curl https://weather.test')])
+  found=candidates(db,['上海','天气'],question='查上海天气的需求，调用哪些工具')
+  self.assertEqual(select_task(db,{'followup':True},'查上海天气的需求，调用哪些工具',[{'retrievedTaskIds':['ssh']}],found),('weather','new_task'))
+  self.assertEqual(select_task(db,{'followup':True},'它具体请求什么网址',[{'retrievedTaskIds':['weather']}],[]),('weather','same_task'))
+  self.assertEqual(select_task(db,{'followup':'false'},'调用了什么',[{'retrievedTaskIds':['ssh']}],[]),(None,'not_found'));db.close()
+
+ def test_direct_task_beats_quoted_conversation_with_incidental_tool_terms(self):
+  db=sqlite3.connect(':memory:');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
+  db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[('quoted','用户: 上海天气\n助手: 请查看天气 App','workbuddy','a','2026','上海天气 工具调用'),('lookup','上海天气','workbuddy','b','2026','curl')])
+  self.assertEqual(candidates(db,['上海天气','工具调用'],question='查上海天气的需求，调用哪些工具')[0][0],'lookup');db.close()
