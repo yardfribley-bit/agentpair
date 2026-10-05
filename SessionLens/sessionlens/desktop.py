@@ -142,7 +142,7 @@ class Runtime:
         store=TaskStore(self.path)
         try:
             for source in ('codex','workbuddy'):
-                records=store.recent_source(source)
+                records=store.recent_source(source,2000 if source=='workbuddy' else 500)
                 for start in range(0,len(records),50):
                     if self.stop.is_set():return
                     store.advance(realtime=True,records=records[start:start+50]);self.stop.wait(.1)

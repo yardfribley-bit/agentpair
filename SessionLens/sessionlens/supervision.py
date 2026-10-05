@@ -1,4 +1,5 @@
 """Incremental task projection. Raw evidence stays in collector.db."""
+from datetime import datetime,timezone
 import json
 import re
 import sqlite3
@@ -24,6 +25,12 @@ def readable(value,user=False):
             text=re.sub(r'<(system-reminder|in-app-browser-context)\b[^>]*>.*?</\1>','',text,flags=re.S)
             if re.match(r'\s*<(environment_context|permissions|instructions)\b',text):return ''
     return text.strip()[:16000]
+
+def timestamp(value):
+    try:
+        if str(value).isdigit():return datetime.fromtimestamp(int(value)/1000,timezone.utc).isoformat()
+        return datetime.fromisoformat(str(value).replace('Z','+00:00')).astimezone(timezone.utc).isoformat()
+    except (ValueError,OverflowError,OSError):return ''
 
 def search_terms(query):
     query=re.sub(r'^(请|帮我|帮忙|查一下|查询一下|查询|搜索一下|搜索|查)+','',query.strip())
@@ -51,12 +58,12 @@ class TaskStore:
         CREATE TABLE IF NOT EXISTS task_marks(event TEXT PRIMARY KEY);
         ''')
         version=self.db.execute("SELECT value FROM task_cursor WHERE name='version'").fetchone()
-        if not version or version[0]!=2:
+        if not version or version[0]!=3:
             with self.db:
                 # Rebuild derived data only, preserving raw evidence and marks.
                 for table in ('tasks','task_steps','task_heads','task_history_heads','task_cursor'):self.db.execute('DELETE FROM '+table)
                 boundary=self.db.execute('SELECT COALESCE(max(rowid),0) FROM events').fetchone()[0]
-                self.db.executemany('INSERT INTO task_cursor VALUES(?,?)',[('version',2),('boundary',boundary),('live',max(0,boundary-2000)),('rowid',0)])
+                self.db.executemany('INSERT INTO task_cursor VALUES(?,?)',[('version',3),('boundary',boundary),('live',max(0,boundary-2000)),('rowid',0)])
     def advance(self,limit=100,realtime=False,records=None):
         key='live' if realtime else 'rowid'
         row=self.db.execute('SELECT value FROM task_cursor WHERE name=?',(key,)).fetchone();cursor=row[0] if row else 0
@@ -76,12 +83,12 @@ class TaskStore:
                     duplicate=head and head[1]==body and last and last[0]=='用户提问'
                     if not duplicate:
                         head=(identity,body)
-                        self.db.execute('INSERT OR IGNORE INTO tasks VALUES(?,?,?,?,?,?,?,?)',(identity,source,session,body,e.get('timestamp') or '', '结束状态未记录',seq,body))
+                        self.db.execute('INSERT OR IGNORE INTO tasks VALUES(?,?,?,?,?,?,?,?)',(identity,source,session,body,timestamp(e.get('timestamp')), '结束状态未记录',seq,body))
                         self.db.execute('INSERT OR REPLACE INTO '+heads+' VALUES(?,?,?)',(stream,identity,body))
                 if head:
                     if kind=='用户提问' and not body:kind='会话背景'
                     task=head[0];k=e['kind'];state='已记录结束' if k=='turn_completed' else '已中止' if k=='turn_aborted' else '进行中 · 日志记录' if k=='turn_started' else None
-                    self.db.execute('UPDATE tasks SET updated=?,last_row=?,state=COALESCE(?,state) WHERE id=? AND last_row<=?',(str(e.get('timestamp') or ''),seq,state,task,seq))
+                    self.db.execute('UPDATE tasks SET updated=?,last_row=?,state=COALESCE(?,state) WHERE id=? AND last_row<=?',(timestamp(e.get('timestamp')),seq,state,task,seq))
                     current=self.db.execute('SELECT t.last_row FROM task_heads h JOIN tasks t ON h.task=t.id WHERE h.stream=?',(stream,)).fetchone()
                     if not current or seq>=current[0]:self.db.execute('INSERT OR REPLACE INTO task_heads VALUES(?,?,?)',(stream,task,head[1]))
                     if kind in ('用户提问','Agent 回复','解题思路','工具调用','工具返回') or k=='file_change':
@@ -96,14 +103,15 @@ class TaskStore:
         return len(records)
     def recent_source(self,source,limit=500):
         # Priority warm-up for both agents, so Codex history cannot starve WorkBuddy.
-        return self.db.execute('SELECT e.rowid,e.id,e.event FROM display_index i JOIN events e ON e.id=i.id WHERE i.source=? ORDER BY e.rowid DESC LIMIT ?',(source,limit)).fetchall()[::-1]
+        rows=self.db.execute("SELECT e.rowid,e.id,e.event FROM display_index i JOIN events e ON e.id=i.id WHERE i.source=? ORDER BY CASE WHEN typeof(json_extract(e.event,'$.timestamp'))='integer' THEN json_extract(e.event,'$.timestamp')/1000.0 ELSE strftime('%s',json_extract(e.event,'$.timestamp')) END DESC LIMIT ?",(source,limit)).fetchall()
+        return sorted(rows,key=lambda row:row[0])
     def tasks(self,query='',source='',live=False):
         clauses=[];args=[]
         if source:clauses.append('source=?');args.append(source)
         for word in search_terms(query):clauses.append('instr(lower(search),lower(?))>0');args.append(word)
         # Monitor lists latest task per session; it does not claim these agents are alive.
         if live:clauses.append('id IN (SELECT task FROM task_heads)')
-        sql='SELECT id,source,session,prompt,updated,state,last_row FROM tasks'+(' WHERE '+' AND '.join(clauses) if clauses else '')+' ORDER BY last_row DESC LIMIT 100'
+        sql='SELECT id,source,session,prompt,updated,state,last_row FROM tasks'+(' WHERE '+' AND '.join(clauses) if clauses else '')+' ORDER BY updated DESC,last_row DESC LIMIT 100'
         return self.db.execute(sql,args).fetchall()
     def steps(self,task,limit=300,latest=False):
         rows=self.db.execute('SELECT event,kind,excerpt,call_id FROM task_steps WHERE task=? ORDER BY seq '+('DESC' if latest else 'ASC')+' LIMIT ?',(task,limit)).fetchall()
