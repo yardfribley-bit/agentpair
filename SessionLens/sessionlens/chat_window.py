@@ -3,7 +3,7 @@ import html,json,sqlite3,threading,uuid
 from pathlib import Path
 from PySide6.QtCore import QObject,Signal,Qt,QUrl,QTimer
 from PySide6.QtWidgets import QMainWindow,QWidget,QHBoxLayout,QVBoxLayout,QLabel,QPushButton,QPlainTextEdit,QComboBox,QTextBrowser,QListWidget,QSplitter,QDialog,QStackedWidget,QScrollArea
-from .knowledge import ask
+from .knowledge import ask,answer_mismatch
 from .task_view import TaskView,task_title
 from .supervision import event_text
 
@@ -65,18 +65,42 @@ class ChatWindow(QMainWindow):
         self.chat_rows=self.cache.execute('SELECT id,title FROM chats ORDER BY updated DESC').fetchall();self.chats.blockSignals(True);self.chats.clear();self.chats.addItems([r[1] for r in self.chat_rows]);self.chats.blockSignals(False)
     def new_chat(self):
         if self.busy:return
-        self.chat_id=uuid.uuid4().hex;self.messages=[];self.current_task.setText('还没有选中任务');self.input.clear();self.proof_panel.hide();self.render()
+        self.chat_id=uuid.uuid4().hex;self.messages=[];self.current_task.setText('还没有选中任务');self.input.clear();self.proof_panel.hide();self.send_button.setText('查询');self.render()
     def open_chat(self,index):
         if self.busy or index<0:return
-        self.chat_id=self.chat_rows[index][0];self.messages=json.loads(self.cache.execute('SELECT content FROM chats WHERE id=?',(self.chat_id,)).fetchone()[0]);self.input.setPlainText(self.messages[-1]['question'] if self.messages else '');self.proof_panel.hide();self.render()
+        self.chat_id=self.chat_rows[index][0];self.messages=json.loads(self.cache.execute('SELECT content FROM chats WHERE id=?',(self.chat_id,)).fetchone()[0])
+        with sqlite3.connect(self.root/'collector.db',timeout=10) as db:
+            for result in self.messages:
+                mismatch=answer_mismatch(db,result)
+                if mismatch:result['selectionMismatch']=mismatch
+        self.input.setPlainText(self.messages[-1]['question'] if self.messages else '');self.proof_panel.hide();self.render()
     def render(self):
+        if self.busy:
+            self.task_view.stop();self.split.setMinimumHeight(150);self.results.setCurrentWidget(self.answer);self.current_task.setText('正在查找相关任务');self.proof_panel.hide()
+            self.answer.setHtml('<h3>正在查找这次问题的相关记录</h3><p>'+html.escape(self.pending)+'</p>');self.send_button.setText('查询中…');return
+        latest=self.messages[-1] if self.messages else {}
+        if latest.get('selectionMismatch'):
+            self.task_view.stop();self.split.setMinimumHeight(150);self.results.setCurrentWidget(self.answer);self.current_task.setText('任务需要重新核对');self.proof_panel.hide();self.send_button.setText('重新查询')
+            self.status.setText('此前的回答没有对应到你问的任务')
+            self.answer.setHtml('<h3>'+html.escape(latest['selectionMismatch'])+'</h3><p>问题已保留在上方。点击“重新查询”，根据这次问题重新寻找任务和证据。</p>');return
+        self.send_button.setText('查询')
+        if latest.get('selectionNeeded'):
+            self.task_view.stop();self.split.setMinimumHeight(300);self.results.setCurrentWidget(self.answer);self.current_task.setText('选择要查看的任务');self.status.setText('找到多个相近任务，请选择具体的一次')
+            content='<h3>你想了解哪一次任务？</h3><p>'+html.escape(latest['question'])+'</p>'
+            for option in latest['options']:
+                date=option['updated'][:16].replace('T',' ')
+                name={'workbuddy':'WorkBuddy','codex':'Codex'}.get(option['source'],option['source'])
+                content+='<p><a href="choose:'+html.escape(option['taskId'])+'"><b>'+html.escape(name+' · '+date)+'</b><br>'+html.escape(option['title'][:100])+'</a></p>'
+            self.answer.setHtml(content);return
         if self.messages and self.messages[-1].get('presentation') and not self.busy:
             self.current_task.setText(task_title(self.messages[-1]['presentation']['prompt']));self.task_view.load(self.messages[-1]);self.results.setCurrentWidget(self.task_view);QTimer.singleShot(0,self.fit_result);return
         self.task_view.stop();self.split.setMinimumHeight(150);self.results.setCurrentWidget(self.answer)
         esc=html.escape
         content='<style>body{color:#233247}p{line-height:150%}a{color:#3265a8;text-decoration:none}h3{font-size:16px}</style>'
         if not self.messages and not self.busy:content+='<h3>答案将在这里展开</h3><p style="color:#758397">相关任务、处理经过与原始依据，随提问显示。</p><p><a href="sample:weather">查上海天气时遇到了什么问题？</a></p>'
-        for n,r in enumerate(self.messages):
+        # Show only the latest question here. A failed/new query must not leave
+        # the previous task at the top of the visible answer panel.
+        for n,r in list(enumerate(self.messages))[-1:]:
             content+='<a name="answer-'+str(n)+'"></a><hr><h3>你</h3><p>'+esc(r['question'])+'</p><h3>SessionLens</h3>'
             if r.get('error'):content+='<p>'+esc(r['error'])+'</p>';continue
             value=r['understanding']
@@ -91,19 +115,23 @@ class ChatWindow(QMainWindow):
             content+='<p style="color:#758397">已参考 '+str(len(r.get('retrievedTaskIds',[])))+' 个任务 · 当前已整理知识库中的相关证据</p>'
         if self.busy:content+='<hr><h3>你</h3><p>'+esc(self.pending)+'</p><p style="color:#758397">正在查找与核对记录…</p>'
         self.answer.setHtml(content)
-    def send(self):
+    def send(self,selected_task=None):
+        if not isinstance(selected_task,str):selected_task=None
         q=self.input.toPlainText().strip()
         if len(q)>2000:self.status.setText('问题过长，请缩短到 2000 字以内。');return
         if not q or self.busy:return
-        self.busy=True;self.send_button.setEnabled(False);self.chats.setEnabled(False);self.pending=q;history=[r for r in self.messages if not r.get('error')];self.status.setText('正在查找相关工作记录…')
+        self.busy=True;self.send_button.setEnabled(False);self.chats.setEnabled(False);self.pending=q;history=[r for r in self.messages if not r.get('error') and not r.get('selectionMismatch') and not r.get('selectionNeeded')];self.status.setText('正在查找相关工作记录…')
         self.source.setEnabled(False);self.period.setEnabled(False)
         source=self.source.currentData();days=self.period.currentData()
         self.render()
         def work():
-            try:self.signals.ready.emit(ask(self.root,self.collector.config.get('model',{}),q,history,self.signals.progress.emit,source=source,days=days))
+            try:self.signals.ready.emit(ask(self.root,self.collector.config.get('model',{}),q,history,self.signals.progress.emit,source=source,days=days,selected_task=selected_task))
             except Exception as exc:self.signals.failed.emit(str(exc)[:300])
         threading.Thread(target=work,daemon=True).start()
-    def received(self,result):self.messages.append(result);self.finish('回答已完成 · 点击引用核对依据')
+    def received(self,result):
+        if result.get('question')!=self.pending:
+            self.failed('返回的回答与本次问题不一致，请重新查询');return
+        self.messages.append(result);self.finish('回答已完成 · 点击引用核对依据')
     def failed(self,error):self.messages.append({'question':self.pending,'error':error});self.finish('本次未能完成回答，可补充信息后重试')
     def finish(self,status):
         self.busy=False;self.source.setEnabled(True);self.period.setEnabled(True);self.send_button.setEnabled(True);self.chats.setEnabled(True);self.status.setText(status)
@@ -111,6 +139,11 @@ class ChatWindow(QMainWindow):
         self.answer.scrollToAnchor('answer-'+str(len(self.messages)-1))
     def evidence(self,url):
         if url.toString()=='sample:weather':self.prefill('之前 WorkBuddy 查上海天气遇到了什么问题，后来怎么解决的？');return
+        if url.toString().startswith('choose:'):
+            latest=self.messages[-1] if self.messages else {};identity=url.toString()[7:]
+            if latest.get('selectionNeeded') and identity in {option['taskId'] for option in latest['options']}:
+                self.input.setPlainText(latest['question']);self.send(selected_task=identity)
+            return
         _,n,ref=url.toString().split(':');r=self.messages[int(n)];f=next(x for x in r['packet']['fragments'] if x['evidenceId']==ref)
         with sqlite3.connect(self.root/'collector.db') as db:raw=db.execute('SELECT event FROM events WHERE id=?',(f['eventId'],)).fetchone()
         if not raw:self.status.setText('这条原始记录暂不可用；回答引用的摘录仍保存在本次对话中。');return

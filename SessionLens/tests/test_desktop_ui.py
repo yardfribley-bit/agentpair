@@ -59,3 +59,44 @@ class LiveUiTests(unittest.TestCase):
             chat.failed('测试失败');self.assertEqual(chat.input.toPlainText(),q)
             chat.new_chat();self.assertEqual(chat.input.toPlainText(),'')
             chat.open_chat(0);self.assertEqual(chat.input.toPlainText(),q);chat.close()
+
+    def test_new_question_hides_previous_answer_while_loading_and_after_failure(self):
+        from sessionlens.chat_window import ChatWindow
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));chat=ChatWindow(window)
+            old={'question':'生成 SSH 视频','error':'旧回答中的 SSH 视频内容'}
+            chat.messages=[old];chat.input.setPlainText('查上海天气')
+            with patch('sessionlens.chat_window.threading.Thread'):
+                chat.send()
+            self.assertIn('查上海天气',chat.answer.toPlainText())
+            self.assertNotIn('SSH',chat.answer.toPlainText())
+            self.assertEqual(chat.results.currentWidget(),chat.answer)
+            chat.failed('临时查询失败')
+            self.assertNotIn('SSH',chat.answer.toPlainText());chat.close()
+
+    def test_reopening_wrong_cached_answer_requires_requery(self):
+        from sessionlens.chat_window import ChatWindow
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));chat=ChatWindow(window)
+            log=Path(tmp)/'task.jsonl'
+            log.write_text(json.dumps({'type':'message','sessionId':'a','role':'user','content':'生成 SSH 视频'})+'\n'+json.dumps({'type':'message','sessionId':'b','role':'user','content':'上海天气'})+'\n')
+            collector=Collector(Path(tmp)/'collector.db');collector.scan(log,source='workbuddy');window.store.advance(realtime=True)
+            video=window.store.db.execute("SELECT id FROM tasks WHERE prompt='生成 SSH 视频'").fetchone()[0]
+            result={'question':'查上海天气调用哪些工具','taskId':video,'presentation':{'taskId':video,'prompt':'生成 SSH 视频'}}
+            chat.cache.execute('INSERT INTO chats VALUES(?,?,?,?)',('old','天气问题',json.dumps([result]),1));chat.cache.commit();chat.refresh_chats();chat.open_chat(0)
+            self.assertIn('选错了任务',chat.answer.toPlainText());self.assertNotIn('SSH',chat.answer.toPlainText());self.assertEqual(chat.send_button.text(),'重新查询')
+            self.assertEqual(chat.input.toPlainText(),result['question']);collector.db.close();chat.close()
+
+    def test_task_clarification_offers_source_and_date_then_uses_choice(self):
+        from sessionlens.chat_window import ChatWindow
+        from PySide6.QtCore import QUrl
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));chat=ChatWindow(window)
+            q='登录是怎么做的';chat.messages=[{'question':q,'selectionNeeded':True,'options':[{'taskId':'a','title':'实现登录','source':'workbuddy','updated':'2026-10-03T12:00:00'},{'taskId':'b','title':'实现登录','source':'codex','updated':'2026-10-04T12:00:00'}]}];chat.render()
+            self.assertIn('WorkBuddy',chat.answer.toPlainText());self.assertIn('Codex',chat.answer.toPlainText());self.assertIn('2026-10-03',chat.answer.toPlainText())
+            with patch.object(chat,'send') as send:
+                chat.evidence(QUrl('choose:not-offered'));send.assert_not_called()
+                chat.evidence(QUrl('choose:a'));send.assert_called_once_with(selected_task='a');self.assertEqual(chat.input.toPlainText(),q)
+            chat.close()

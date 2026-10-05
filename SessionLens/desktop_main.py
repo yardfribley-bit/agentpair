@@ -245,7 +245,8 @@ def main():
     if conversation_test:
         from time import monotonic
         from sessionlens import relay_model
-        fixture=json.loads(Path(sys.argv[sys.argv.index('--verify-conversation')+1]).read_text())
+        fixture_data=json.loads(Path(sys.argv[sys.argv.index('--verify-conversation')+1]).read_text())
+        fixture=fixture_data['steps'] if isinstance(fixture_data,dict) else fixture_data
         output=Path(sys.argv[sys.argv.index('--verify-conversation')+2])
         original_answer=relay_model.answer
         allowed={step['taskId'] for step in fixture}
@@ -253,14 +254,39 @@ def main():
             if packet['taskId'] not in allowed:raise ValueError('测试选错任务，未发送其他任务数据')
             return original_answer(root,config,q,packet,history)
         relay_model.answer=guarded_answer
-        chat.messages=[];chat.source.setCurrentIndex(1);chat.show()
+        # QA reads the real local task library, but never inserts synthetic chats
+        # into the user's recent-conversation list.
+        chat.cache.close();chat.cache=sqlite3.connect(':memory:');chat.cache.execute('CREATE TABLE chats(id TEXT PRIMARY KEY,title TEXT,content TEXT,updated INTEGER)')
+        chat.refresh_chats();chat.messages=[]
+        source=fixture_data.get('source') if isinstance(fixture_data,dict) else None
+        chat.source.setCurrentIndex(chat.source.findData(source));chat.show()
+        initial=fixture_data.get('initialMessages',[]) if isinstance(fixture_data,dict) else []
+        if initial:
+            chat.cache.execute('INSERT INTO chats VALUES(?,?,?,?)',('verification','历史问答',json.dumps(initial),1));chat.cache.commit();chat.refresh_chats();chat.open_chat(0)
+            assert chat.messages[-1].get('selectionMismatch')
+            assert chat.results.currentWidget()==chat.answer
+            assert '选错了任务' in chat.answer.toPlainText()
+            chat.grab().save(str(output.with_suffix(''))+'-cached.png')
+            print('Cached-answer mismatch detected',flush=True)
         state={'index':0,'started':monotonic(),'results':[]};timer=QTimer(chat)
         def submit():
+            if fixture[state['index']].get('fresh'):chat.new_chat()
             state['started']=monotonic();chat.input.setPlainText(fixture[state['index']]['question']);chat.send()
+            assert chat.results.currentWidget()==chat.answer
+            assert 'SSH' not in chat.answer.toPlainText() or 'SSH' in fixture[state['index']]['question']
         def check_conversation():
             if chat.busy and monotonic()-state['started']<240:return
             step=fixture[state['index']];result=chat.messages[-1] if chat.messages else {}
+            if not chat.busy and result.get('selectionNeeded') and step.get('chooseTask'):
+                assert chat.results.currentWidget()==chat.answer
+                chat.grab().save(str(output.with_suffix(''))+'-choices.png')
+                offered={option['taskId'] for option in result['options']}
+                assert step['taskId'] in offered
+                from PySide6.QtCore import QUrl
+                chat.evidence(QUrl('choose:'+step['taskId']));state['started']=monotonic();return
             success=not chat.busy and result.get('taskId')==step['taskId'] and chat.input.toPlainText()==step['question'] and chat.results.currentWidget()==chat.task_view
+            if success:
+                success=chat.task_view.data['taskId']==step['taskId'] and all(name in [c['name'] for c in chat.task_view.data['calls']] for name in step.get('tools',[]))
             state['results'].append(result)
             chat.grab().save(str(output.with_suffix(''))+'-'+str(state['index'])+'.png')
             print('Conversation step '+str(state['index']+1)+(' passed' if success else ' failed'),flush=True)
