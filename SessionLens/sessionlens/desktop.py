@@ -58,7 +58,7 @@ class Runtime:
     def update(self,**v):
         with self.lock:self.status.update(v)
     def start(self):
-        for fn in (self.collect,self.upload):
+        for fn in (self.collect,self.upload,self.project):
             t=threading.Thread(target=fn,daemon=True);t.start();self.threads.append(t)
     def close(self):
         self.stop.set()
@@ -136,6 +136,18 @@ class Runtime:
                 except Exception as exc:
                     self.update(upload=f'上报失败：{type(exc).__name__} · {str(exc)[:160]}');self.stop.wait(delay);delay=min(delay*2,30)
         finally:c.db.close()
+    def project(self):
+        from .supervision import TaskStore
+        store=TaskStore(self.path)
+        try:
+            while not self.stop.is_set():
+                try:
+                    count=store.advance()
+                    self.update(task_index='正在整理历史任务' if count else '历史索引已更新')
+                    self.stop.wait(.02 if count else .8)
+                except sqlite3.Error as exc:
+                    self.update(task_index='任务索引等待重试：'+str(exc));self.stop.wait(1)
+        finally:store.close()
     def snapshot(self):
         with self.lock:status=dict(self.status)
         with sqlite3.connect(self.path,timeout=1) as db:
