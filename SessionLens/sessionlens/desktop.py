@@ -83,7 +83,8 @@ class Runtime:
                         self.update(reading=f'{source} · {p.name}')
                         old_cursor=c.db.execute('SELECT offset FROM cursors WHERE path=?',(str(p.resolve()),)).fetchone()
                         previous=old_cursor[0] if old_cursor else -1
-                        c.scan(p,200,source)
+                        c.scan(p,100,source)
+                        self.stop.wait(.01)
                         self.index(c)
                         self.update(read=c.db.execute('SELECT COALESCE(sum(offset),0) FROM cursors').fetchone()[0])
                         offset=c.db.execute('SELECT offset FROM cursors WHERE path=?',(str(p.resolve()),)).fetchone()[0]
@@ -140,11 +141,19 @@ class Runtime:
         from .supervision import TaskStore
         store=TaskStore(self.path)
         try:
+            for source in ('codex','workbuddy'):
+                records=store.recent_source(source)
+                for start in range(0,len(records),50):
+                    if self.stop.is_set():return
+                    store.advance(realtime=True,records=records[start:start+50]);self.stop.wait(.1)
             while not self.stop.is_set():
                 try:
-                    count=store.advance()
-                    self.update(task_index='正在整理历史任务' if count else '历史索引已更新')
-                    self.stop.wait(.02 if count else .8)
+                    live=store.advance(100,realtime=True)
+                    count=store.advance(50)
+                    indexed=store.db.execute("SELECT value FROM task_cursor WHERE name='rowid'").fetchone()[0]
+                    boundary=store.db.execute("SELECT value FROM task_cursor WHERE name='boundary'").fetchone()[0]
+                    self.update(task_index=f'历史整理 {indexed}/{boundary} · 新任务优先' if count else '历史索引已更新')
+                    self.stop.wait(.5 if count else .8)
                 except sqlite3.Error as exc:
                     self.update(task_index='任务索引等待重试：'+str(exc));self.stop.wait(1)
         finally:store.close()
