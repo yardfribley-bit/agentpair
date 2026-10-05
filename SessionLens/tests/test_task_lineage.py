@@ -89,6 +89,7 @@ class LineageTests(unittest.TestCase):
         self.assertEqual(resolve(self.store.db,alias),task)
         self.assertIsNotNone(answer_mismatch(self.store.db,{'taskId':alias,'selection':{'version':3}}))
         self.assertIsNone(answer_mismatch(self.store.db,{'taskId':task,'packet':{'lineageVersion':1},'selection':{'version':3}}))
+        self.assertIsNotNone(answer_mismatch(self.store.db,{'taskId':task,'packet':{'version':5,'lineageVersion':1},'selection':{'version':3}}))
 
     def test_confirmation_keeps_proposed_plan_not_later_status_reply(self):
         self.ingest([self.user('做一个会员管理页面'),

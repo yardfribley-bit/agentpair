@@ -119,7 +119,7 @@ class TaskView(QWidget):
             if item.widget():item.widget().hide();item.widget().deleteLater()
         self.steps=[];self.step_buttons=[];self.step_titles=[]
         for i,c in enumerate(self.data['calls']):
-            frame=next((j for j,f in enumerate(self.data['frames']) if f['call']==c['id']),None)
+            frame=next((j for j,f in enumerate(self.data['frames']) if c['id'] in f.get('callIds',[f['call']])),None)
             if 'prompt' in c['arguments'].get('params',{}):self.steps.append({'call':i,'frame':frame,'phase':'prepare','title':'写提示词'})
             name=c['name'];title='找工具' if 'ToolSearch' in name else '生成视频' if 'VideoGen' in name else '交付文件' if 'present_files' in name else short(self.call_note(c).get('purpose') or name,12)
             self.steps.append({'call':i,'frame':frame,'phase':'execute','title':title})
@@ -152,7 +152,8 @@ class TaskView(QWidget):
         sentences=[x.strip() for x in re.split(r'[。\n]',text.strip()) if x.strip()]
         if step['phase']=='prepare':sentences=sorted(sentences,key=lambda x:0 if re.search(r'提示词|prompt|构造',x,re.I) else 1)
         self.excerpt=short(sentences[0],100) if sentences else '该步骤没有单独记录思路，下面展示工具输入与返回。'
-        self.stage.setText('历史思路摘录' if text else '工具记录');self.play.setEnabled(bool(text));self.reason.setText(self.excerpt[:self.position] if self.position else self.excerpt)
+        basis=(call.get('decisionLink') or {}).get('basis')
+        self.stage.setText(('历史思路 · 原始消息链关联' if basis=='source_parent_path' else '历史思路 · 按顺序关联，待核对') if text else '工具记录');self.play.setEnabled(bool(text));self.reason.setText(self.excerpt[:self.position] if self.position else self.excerpt)
         if step['phase']=='prepare':
             params=call['arguments'].get('params',{});specs=[]
             if isinstance(params,dict):

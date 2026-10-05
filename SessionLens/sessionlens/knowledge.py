@@ -61,6 +61,8 @@ def answer_mismatch(db,result):
     if result.get('error'):return None
     task_id=result.get('taskId');presentation=result.get('presentation',{});packet=result.get('packet',{})
     if task_id and exists(db):
+        if packet.get('version',6)<6:
+            return '消息与思路关联已更新，请重新查询执行过程'
         root=resolve(db,task_id)
         turns=db.execute('SELECT turn_count FROM task_groups WHERE id=?',(root,)).fetchone()
         if root!=task_id or (turns and turns[0]>1 and not packet.get('lineageVersion')):

@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from .supervision import event_text
 from .task_lineage import task_table,step_table,resolve,history,execution_map,exists,signature
 
-VERSION=5
+VERSION=6
 
 def packet_for_task(db,task_id):
     task_id=resolve(db,task_id);steps=step_table(db)
@@ -29,10 +29,10 @@ def packet_for_task(db,task_id):
         required.extend(x for x in (link.get('requirementEvent'),link.get('approvalEvent'),link.get('planEvent')) if x)
     wanted=list(dict.fromkeys(required+chosen))[:120]
     selected=sorted(((ident,) for ident in wanted),key=lambda r:db.execute('SELECT rowid FROM events WHERE id=?',r).fetchone()[0])
-    fragments=[];per_record=min(5000,90000//max(1,len(selected)))
+    fragments=[];records=[];per_record=min(5000,90000//max(1,len(selected)))
     for (identity,) in selected:
         raw=db.execute('SELECT event FROM events WHERE id=?',(identity,)).fetchone()[0]
-        e=json.loads(raw);text=event_text(e);cut=text[:per_record]
+        e=json.loads(raw);e['_seq']=db.execute('SELECT rowid FROM events WHERE id=?',(identity,)).fetchone()[0];records.append(e);text=event_text(e);cut=text[:per_record]
         if not cut:continue
         fragments.append({'evidenceId':'E'+str(len(fragments)+1).zfill(3),'eventId':identity,'kind':e['kind'],'role':e.get('role'),'tool':e.get('name'),'callId':e.get('callId'),'timestamp':e.get('timestamp'),'text':cut,'truncated':len(cut)<len(text)})
     if not fragments:raise ValueError('任务暂时没有可分析的文本证据')
@@ -42,11 +42,19 @@ def packet_for_task(db,task_id):
                      'requirementRef':refs.get(link['requirementEvent']),
                      'approvalRef':refs.get(link['approvalEvent']),
                      'planRef':refs.get(link['planEvent'])} for event,link in bindings.items() if event in refs]
+    from .message_graph import build,reasoning_bindings
+    graph=build(records)
+    message_relations=[{'fromRef':refs[e['from']],'toRef':refs[e['to']],'relation':e['relation'],'basis':e['basis']}
+                       for e in graph['edges'] if e['from'] in refs and e['to'] in refs]
+    reasoning_links=[{'callRef':refs[call],'reasoningRef':refs[link['reasoningEvent']],
+                      'pathRefs':[refs[x] for x in link['path']], 'basis':link['basis']}
+                     for call,link in reasoning_bindings(graph).items() if all(x in refs for x in link['path'])]
     return {'version':VERSION,'lineageVersion':1 if exists(db) else 0,'lineageSignature':signature(db,task_id),'taskId':task_id,'source':task[0],'sessionId':task[1],'prompt':task[2][:16000],
             'revision':task[3],'totalRecords':total,'includedRecords':len(fragments),
             'coverage':'selected_task_log_records','fragments':fragments,
             'requirementHistory':requirement_history,'totalRequirementTurns':len(requirements),
-            'executionLinks':execution_links}
+            'executionLinks':execution_links,'messageRelations':message_relations,'reasoningLinks':reasoning_links,
+            'messageRelationCoverage':'selected_records','messageRelationGaps':len(graph['gaps'])}
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
