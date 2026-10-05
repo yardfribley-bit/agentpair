@@ -32,10 +32,10 @@ def validate(result,turns):
     return sorted(result['links'],key=lambda link:order[link['turnId']])
 
 
-def context_for_task(db,task):
-    from .supervision import readable,event_text
-    from .message_graph import records_for_turn,build
-    task=resolve(db,task)
+def candidate_turns(db,task,turn_ids=None):
+    """Preview boundaries using compact user metadata, without opening tool bodies."""
+    from .supervision import readable
+    selected=task;task=resolve(db,task)
     row=db.execute('SELECT source,session FROM tasks WHERE id=?',(task,)).fetchone()
     if not row:return []
     turns=[r for r in db.execute('SELECT t.id,t.prompt,e.rowid FROM tasks t JOIN events e ON e.id=t.id WHERE t.source=? AND t.session=? ORDER BY e.rowid',row) if readable(r[1],user=True) and not r[1].startswith('The following is the Codex agent history')]
@@ -47,6 +47,19 @@ def context_for_task(db,task):
     # members would exclude differently phrased follow-ups we need to discover.
     chosen=turns[max(0,start-12):min(len(turns),start+20)]
     if end>=start+20:chosen+=turns[max(start+20,end-3):end+1]
+    if turn_ids is not None:
+        if not isinstance(turn_ids,(list,tuple)) or not 1<=len(turn_ids)<=36 or any(not isinstance(x,str) for x in turn_ids) or len(set(turn_ids))!=len(turn_ids):
+            raise ValueError('关联范围必须是 1 至 36 个不同的用户轮次')
+        allowed={r[0] for r in turns};scope=set(turn_ids)
+        if not scope<=allowed or not ({selected,task}&scope):raise ValueError('只能核对所选任务所在会话，并包含所选任务')
+        chosen=[r for r in turns if r[0] in scope]
+    return chosen
+
+
+def context_for_task(db,task,turn_ids=None):
+    from .supervision import event_text
+    from .message_graph import records_for_turn,build
+    chosen=candidate_turns(db,task,turn_ids)
     result=[];all_events=[];turn_events={}
     for ident,_,_ in chosen:
         selected,total=records_for_turn(db,ident)
@@ -76,9 +89,9 @@ def context_for_task(db,task):
     return result
 
 
-def refine(db,config,task,question,progress=lambda _:None):
+def refine(db,config,task,question,progress=lambda _:None,turn_ids=None):
     from .relay_model import call
-    turns=context_for_task(db,task)
+    turns=context_for_task(db,task,turn_ids)
     if not turns:return resolve(db,task)
     # Opaque 64-character event IDs are unnecessary model work and easy to
     # miscopy. Validate short labels first, then map to immutable source IDs.
@@ -106,7 +119,8 @@ def refine(db,config,task,question,progress=lambda _:None):
         with db:db.execute('INSERT OR REPLACE INTO task_semantic_cache VALUES(?,?)',(signature,json.dumps({'links':links},ensure_ascii=False)))
     row=db.execute('SELECT source,session FROM tasks WHERE id=?',(task,)).fetchone()
     with db:
+        if not db.in_transaction:db.execute('BEGIN IMMEDIATE')
         db.executemany('INSERT OR REPLACE INTO task_semantic_links VALUES(?,?,?,?,?,?)',[(r['turnId'],r['parentTurnId'],r['relation'],r['reason'],signature,json.dumps(r['evidenceTurnIds'])) for r in links])
-    rebuild_session(db,*row)
+        rebuild_session(db,*row)
     root=resolve(db,task)
     return root

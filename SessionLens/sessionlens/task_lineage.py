@@ -226,6 +226,20 @@ def execution_map(db, task):
             for e,turn,req,approval,plan in db.execute('SELECT event,turn_event,requirement_event,approval_event,plan_event FROM task_executions WHERE task=?', (resolve(db,task),))}
 
 
+def dialogues(db,task,limit=None):
+    """User rounds with original replies; never substitute reasoning for a reply."""
+    result=[];turns=history(db,task);indexed=list(enumerate(turns,1))
+    if limit and len(indexed)>limit:indexed=indexed[:1]+indexed[-(limit-1):] if limit>1 else indexed[:1]
+    for ordinal,turn in indexed:
+        replies=db.execute("SELECT event,substr(excerpt,1,600) FROM task_steps WHERE task=? AND kind='Agent 回复' ORDER BY seq LIMIT 1",(turn['eventId'],)).fetchall()
+        last=db.execute("SELECT event,substr(excerpt,1,600) FROM task_steps WHERE task=? AND kind='Agent 回复' ORDER BY seq DESC LIMIT 1",(turn['eventId'],)).fetchone()
+        if last and last not in replies:replies.append(last)
+        interrupted=db.execute("SELECT 1 FROM tasks WHERE id=? AND state='已中止' UNION ALL SELECT 1 FROM task_steps WHERE task=? AND kind='Agent 回复' AND lower(trim(excerpt))='interrupted by user' LIMIT 1",(turn['eventId'],turn['eventId'])).fetchone()
+        result.append({**turn,'ordinal':ordinal,'totalTurns':len(turns),'replies':[{'eventId':event,'text':text} for event,text in replies],
+                       'interrupted':bool(interrupted)})
+    return result
+
+
 def set_override(db,turn,target):
     current=db.execute('SELECT t.source,t.session,e.rowid FROM tasks t JOIN events e ON e.id=t.id WHERE t.id=?',(turn,)).fetchone()
     if not current:raise ValueError('原始提问不存在')

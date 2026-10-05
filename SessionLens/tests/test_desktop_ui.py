@@ -26,6 +26,33 @@ class LiveUiTests(unittest.TestCase):
             c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.refresh();self.assertIn('新的任务',window.middle.toPlainText());self.assertTrue(window.selected_event)
             window.close();c.db.close()
 
+    def test_history_review_is_explicit_and_preserves_selected_retry(self):
+        from sessionlens.task_lineage import resolve
+        from unittest.mock import patch
+        from PySide6.QtCore import QUrl
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);log=root/'task.jsonl'
+            rows=[{'type':'message','sessionId':'s','role':'user','content':'分析发布方案'},
+                  {'type':'message','sessionId':'s','role':'assistant','content':'已经分析了发布方案。'},
+                  {'type':'message','sessionId':'s','role':'user','content':'再分析一下'},
+                  {'type':'message','sessionId':'s','role':'assistant','content':'Interrupted by user'}]
+            log.write_text(''.join(json.dumps(r)+'\n' for r in rows));c=Collector(root/'collector.db');c.scan(log,source='workbuddy');c.db.close()
+            with patch('sessionlens.relay_model.call') as model:
+                window=Window(root);window.store.advance();window.set_mode('history');window.reload();model.assert_not_called()
+            ids=[r[0] for r in window.store.db.execute('SELECT t.id FROM tasks t JOIN events e ON e.id=t.id ORDER BY e.rowid')]
+            window.selected=ids[1];window.signature=None;window.reload()
+            output={'links':[{'turnId':'T001','parentTurnId':None,'relation':'request','status':'supported','reason':'独立目标','evidenceTurnIds':['T001']},
+                              {'turnId':'T002','parentTurnId':'T001','relation':'revision','status':'supported','reason':'继续发布方案分析','evidenceTurnIds':['T001','T002']}]}
+            window.config['model']={'name':'test','url':'https://example.com'}
+            class Immediate:
+                def __init__(self,target,**kwargs):self.target=target
+                def start(self):self.target()
+            with patch('desktop_main.threading.Thread',Immediate),patch('sessionlens.relay_model.call',return_value=output):window.start_association(ids[1],ids)
+            self.app.processEvents()
+            self.assertEqual(window.selected,ids[0]);self.assertEqual(resolve(window.store.db,ids[1]),ids[0]);self.assertEqual(window.task_list.count(),1)
+            self.assertIn('2 轮对话',window.task_list.item(0).text());self.assertIn('需求对话 · 2 轮',window.middle.toPlainText());self.assertIn('本轮中断',window.middle.toPlainText())
+            window.follow_link(QUrl('dialogue:'+ids[1]));self.assertIn('再分析一下',window.proof.toPlainText());self.assertTrue(window.associate.isEnabled());window.close()
+
     def test_chat_preserves_collection_window_and_restores_conversation(self):
         from sessionlens.chat_window import ChatWindow
         with tempfile.TemporaryDirectory() as tmp:

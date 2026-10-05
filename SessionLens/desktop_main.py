@@ -26,6 +26,11 @@ class AssistantSignals(QObject):
     result=Signal(object)
     failed=Signal(str)
 
+class AssociationSignals(QObject):
+    progress=Signal(str)
+    result=Signal(object)
+    failed=Signal(str)
+
 class Settings(QDialog):
     def __init__(self,config,parent):
         super().__init__(parent);self.setWindowTitle('采集与上报设置');self.resize(620,360);self.config=config
@@ -64,30 +69,76 @@ class Window(QMainWindow):
         self.toolbar=QWidget();tools=QHBoxLayout(self.toolbar);tools.setContentsMargins(0,0,0,0);self.search=QLineEdit();self.search.setPlaceholderText('搜索任务、文件或问题…');self.search.returnPressed.connect(self.reload);tools.addWidget(self.search);find=QPushButton('查找任务');find.clicked.connect(self.reload);tools.addWidget(find);self.source=QComboBox();self.source.addItems(['全部 Agent','Codex','WorkBuddy']);self.source.currentIndexChanged.connect(self.reload);tools.addWidget(self.source);layout.addWidget(self.toolbar)
         assistant_bar=QHBoxLayout();self.question=QLineEdit();self.question.setPlaceholderText('问当前任务：当时为什么这样做？用了什么参数？结果可靠吗？')
         self.question.returnPressed.connect(self.ask_assistant);assistant_bar.addWidget(self.question)
-        self.ask=QPushButton('理解这次任务');self.ask.clicked.connect(self.ask_assistant);assistant_bar.addWidget(self.ask);layout.addLayout(assistant_bar)
+        self.ask=QPushButton('理解这次任务');self.ask.clicked.connect(self.ask_assistant);assistant_bar.addWidget(self.ask)
+        self.associate=QPushButton('关联多轮对话');self.associate.clicked.connect(self.review_association);assistant_bar.addWidget(self.associate);layout.addLayout(assistant_bar)
         self.analysis_status=QLabel('选择任务后提问 · AgentPair · 仅发送当前任务证据');self.analysis_status.setWordWrap(True);layout.addWidget(self.analysis_status)
         self.assistant_signals=AssistantSignals(self);self.assistant_signals.progress.connect(self.analysis_status.setText);self.assistant_signals.result.connect(self.assistant_ready);self.assistant_signals.failed.connect(self.assistant_failed)
+        self.association_signals=AssociationSignals(self);self.association_signals.progress.connect(self.analysis_status.setText);self.association_signals.result.connect(self.association_ready);self.association_signals.failed.connect(self.association_failed)
         split=QSplitter(Qt.Horizontal);layout.addWidget(split,1)
         left=QWidget();lv=QVBoxLayout(left);lv.setContentsMargins(0,0,0,0);self.list_title=QLabel('当前任务');lv.addWidget(self.list_title);self.task_list=QListWidget();self.task_list.setWordWrap(True);self.task_list.currentRowChanged.connect(self.select_task);lv.addWidget(self.task_list);split.addWidget(left)
         self.middle=QTextBrowser();self.middle.setOpenLinks(False);self.middle.anchorClicked.connect(self.follow_link);split.addWidget(self.middle)
         right=QWidget();rv=QVBoxLayout(right);rv.setContentsMargins(0,0,0,0);rv.addWidget(QLabel('对应证据'));self.proof=QTextBrowser();rv.addWidget(self.proof,1);self.mark=QPushButton('标记待核实');self.mark.clicked.connect(self.mark_event);rv.addWidget(self.mark);raw=QPushButton('查看来源定位与原始片段');raw.clicked.connect(self.details);rv.addWidget(raw);split.addWidget(right);split.setSizes([230,640,330]);split.setChildrenCollapsible(False)
         self.foot=QLabel('只展示已记录的动作；待核实标记不会暂停 Agent。');self.foot.setWordWrap(True);layout.addWidget(self.foot)
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(1200);self.set_mode('live')
+    def review_association(self):
+        if not self.selected or not self.associate.isEnabled():return
+        from sessionlens.semantic_lineage import candidate_turns
+        task=self.selected;model=self.config.get('model',{})
+        if not model.get('url') or not model.get('credentialFile'):
+            self.analysis_status.setText('请先在设置中配置助手模型，再核对多轮对话。');return
+        turns=candidate_turns(self.store.db,task)
+        if not turns:return
+        dialog=QDialog(self);dialog.setWindowTitle('核对多轮对话的任务归属');dialog.resize(700,540);layout=QVBoxLayout(dialog)
+        from urllib.parse import urlparse
+        hint=QLabel(f'核对同一会话的 {len(turns)} 轮提问，结合回复、已记录思路和工具片段。\n发送至已配置模型：{urlparse(model["url"]).netloc}。歧义轮次保持独立，原文保留。');hint.setWordWrap(True);layout.addWidget(hint)
+        listing=QListWidget()
+        for ident,prompt,_ in turns:
+            item=QListWidgetItem(prompt[:220]);item.setFlags(item.flags()|Qt.ItemIsUserCheckable);item.setCheckState(Qt.Checked);item.setData(Qt.UserRole,ident);listing.addItem(item)
+        layout.addWidget(listing)
+        buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.button(QDialogButtonBox.Ok).setText('开始关联');buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons)
+        if dialog.exec()!=QDialog.Accepted:return
+        scope=[listing.item(i).data(Qt.UserRole) for i in range(listing.count()) if listing.item(i).checkState()==Qt.Checked]
+        if task not in scope:
+            self.analysis_status.setText('请保留所选任务，再核对它与其他轮次的关系。');return
+        self.start_association(task,scope)
+    def start_association(self,task,scope):
+        if not self.associate.isEnabled():return
+        self.associate.setEnabled(False);self.ask.setEnabled(False);self.follow.setChecked(False)
+        model=dict(self.config.get('model',{}));self.analysis_status.setText('正在核对多轮需求，采集继续运行…')
+        def work():
+            from sessionlens.semantic_lineage import refine
+            try:
+                with sqlite3.connect(self.root/'collector.db',timeout=10) as db:
+                    root=refine(db,model,task,'核对这些轮次是否延续同一用户目标，保留中断、重试和不同任务的边界。',self.association_signals.progress.emit,turn_ids=scope)
+                self.association_signals.result.emit({'task':task,'root':root,'scope':scope})
+            except Exception as exc:self.association_signals.failed.emit(str(exc)[:250])
+        threading.Thread(target=work,daemon=True).start()
+    def association_ready(self,result):
+        from sessionlens.task_lineage import history,resolve
+        self.associate.setEnabled(True);self.ask.setEnabled(True)
+        # Only follow the review if the user is still looking at its task.
+        if self.selected in result['scope'] or resolve(self.store.db,self.selected)==result['root']:
+            self.selected=result['root'];self.selected_event=None
+        self.answers.clear();self.signature=None;self.reload()
+        count=len(history(self.store.db,result['root']))
+        self.analysis_status.setText(f'关联已核对 · 这个需求包含 {count} 轮对话 · 可点击每轮原文检查归属')
+    def association_failed(self,error):
+        self.associate.setEnabled(True);self.ask.setEnabled(True);self.analysis_status.setText('关联未完成，原始对话仍保留：'+error)
     def ask_assistant(self):
         if not self.selected or not self.ask.isEnabled():return
         self.follow.blockSignals(True);self.follow.setChecked(False);self.follow.blockSignals(False)
         task=self.selected;question=self.question.text().strip() or '这次任务是怎么完成的？解释当时的依据、关键工具参数、返回、调整过程和最后结果。'
-        self.ask.setEnabled(False);self.analysis_status.setText('正在准备当前任务证据…')
+        self.ask.setEnabled(False);self.associate.setEnabled(False);self.analysis_status.setText('正在准备当前任务证据…')
         def work():
             try:result=run_assistant(self.root,self.config.get('assistant',{}),task,question,self.assistant_signals.progress.emit);self.assistant_signals.result.emit(result)
             except Exception as exc:self.assistant_signals.failed.emit(str(exc)[:250])
         threading.Thread(target=work,daemon=True).start()
     def assistant_ready(self,result):
-        self.ask.setEnabled(True);self.answers[result['taskId']]=result;self.show_records=False
+        self.ask.setEnabled(True);self.associate.setEnabled(True);self.answers[result['taskId']]=result;self.show_records=False
         self.analysis_status.setText('助手已回答 · AgentPair 已复核 · 点击证据核对原文')
         if self.selected==result['taskId']:self.select_task(self.task_list.currentRow())
     def assistant_failed(self,error):
-        self.ask.setEnabled(True);self.analysis_status.setText('分析未完成：'+error)
+        self.ask.setEnabled(True);self.associate.setEnabled(True);self.analysis_status.setText('分析未完成：'+error)
     def understanding_html(self,result):
         esc=html.escape;value=result['understanding'];packet=result['packet']
         text='<h3>任务助手</h3><p style="color:#67778b">'+esc(result.get('question',''))+'</p>'
@@ -128,16 +179,19 @@ class Window(QMainWindow):
             self.status.setText(s.get('task_index','正在读取日志')+' · '+s.get('upload','仅本地'))
         self.reload()
     def reload(self):
+        from sessionlens.task_lineage import resolve
         source=['','codex','workbuddy'][self.source.currentIndex()] if self.mode=='history' else ''
         try:rows=self.store.tasks(self.search.text() if self.mode=='history' else '',source,self.mode=='live')
         except sqlite3.Error:return
         sig=(self.mode,tuple(rows),self.search.text(),source)
         if sig==self.signature:return
-        self.signature=sig;old=None if self.mode=='live' and self.follow.isChecked() else self.selected;
+        self.signature=sig;old=None if self.mode=='live' and self.follow.isChecked() else resolve(self.store.db,self.selected);
         if self.mode=='live' and self.follow.isChecked():self.selected_event=None
         self.rows=rows;self.task_list.blockSignals(True);self.task_list.clear()
         for row in rows:
-            item=QListWidgetItem(row[1].title()+' · '+display_time(row[4])+'\n'+row[3].replace('\n',' ')[:100]);item.setSizeHint(QSize(210,90));self.task_list.addItem(item)
+            count=self.store.db.execute('SELECT turn_count FROM task_groups WHERE id=?',(row[0],)).fetchone()
+            rounds=f' · {count[0]} 轮对话' if count else ''
+            item=QListWidgetItem(row[1].title()+' · '+display_time(row[4])+rounds+'\n'+row[3].replace('\n',' ')[:100]);item.setSizeHint(QSize(210,90));self.task_list.addItem(item)
         self.task_list.blockSignals(False);index=next((i for i,r in enumerate(rows) if r[0]==old),0)
         self.list_title.setText(('当前任务' if self.mode=='live' else '相关任务')+f' · {len(rows)}')
         if rows:self.task_list.setCurrentRow(index);self.select_task(index)
@@ -151,14 +205,26 @@ class Window(QMainWindow):
         outcome=last[2][:450] if last else '尚未记录后续动作'
         title=row[3].splitlines()[0][:90]
         content='<style>a {color:#275eb2;text-decoration:none;} p {line-height:150%;} blockquote {color:#202d3d;}</style>'+f'<h2>{esc(title)}</h2><p style="color:#67778b">{esc(row[1])} · {esc(display_time(row[4]))} · {esc(row[5])}</p><div style="background:#edf2f8"><h3>{"现在记录到什么" if self.mode=="live" else "这次实际做了什么"}</h3><p>{esc(outcome)}</p></div><h3>你的原始要求</h3><blockquote>{esc(row[3]).replace(chr(10),"<br>")}</blockquote><hr><p style="color:#67778b">按记录顺序展示；较长任务分批展开，原文完整保留。</p><h3>{"已经看到的动作" if self.mode=="live" else "处理经过与依据"}</h3>'
+        from sessionlens.task_lineage import dialogues,signature
+        turns=dialogues(self.store.db,row[0],limit=12);total_turns=turns[0]['totalTurns'] if turns else 0;dialogue_html=f'<h3>需求对话 · {total_turns} 轮</h3>'
+        if len(turns)<total_turns:dialogue_html+='<p>显示最初要求和最近 11 轮；全部轮次保留在任务记录中。</p>'
+        for turn in turns:
+            number=turn['ordinal']
+            label={'semantic_inference':'模型判断','confirmed_by_user':'用户修正','provisional':'初步关联'}[turn['association']]
+            dialogue_html+=f'<p><b>{number} · {esc(turn["label"])}{ " · 本轮中断" if turn["interrupted"] else ""}</b> <span style="color:#67778b">{label}</span><br><a href="dialogue:{turn["eventId"]}">{esc(turn["text"][:220])}</a></p>'
+            for reply in turn['replies']:
+                dialogue_html+=f'<p style="color:#67778b">Agent：<a href="dialogue:{reply["eventId"]}">{esc(reply["text"][:150])}</a></p>'
+        content=dialogue_html+'<hr>'+content
         if row[0] not in self.answers and (self.root/'assistant.db').exists():
             try:
                 with sqlite3.connect(self.root/'assistant.db') as cache:saved=cache.execute('SELECT result FROM answers WHERE task=? ORDER BY rowid DESC LIMIT 1',(row[0],)).fetchone()
                 if saved:self.answers[row[0]]=json.loads(saved[0])
             except (sqlite3.Error,ValueError):pass
         answer=self.answers.get(row[0])
+        if answer and answer.get('packet',{}).get('lineageSignature')!=signature(self.store.db,row[0]):
+            answer=None;self.answers.pop(row[0],None)
         if answer:
-            content='<style>a {color:#275eb2;text-decoration:none;}</style><h2>'+esc(title)+'</h2>'+self.understanding_html(answer)+(content if self.show_records else '')
+            content='<style>a {color:#275eb2;text-decoration:none;}</style><h2>'+esc(title)+'</h2>'+self.understanding_html(answer)+(content if self.show_records else dialogue_html)
             if not self.show_records:
                 self.middle.setHtml(content);self.foot.setText('模型解释可以有误。点击每个结论下的证据核对当前任务记录。')
                 fragments=answer['packet']['fragments']
@@ -197,6 +263,10 @@ class Window(QMainWindow):
         elif target.startswith('e:'):
             self.follow.blockSignals(True);self.follow.setChecked(False);self.follow.blockSignals(False)
             self.select_evidence(int(target[2:]));self.select_task(self.task_list.currentRow())
+        elif target.startswith('dialogue:'):
+            identity=target[len('dialogue:'):]
+            if self.store.db.execute('SELECT 1 FROM linked_task_steps WHERE event=? AND task=?',(identity,self.selected)).fetchone():
+                self.follow.setChecked(False);self.show_evidence(identity,'对话原文')
         elif target.startswith('t:'):
             self.mode='history';self.toolbar.show();self.search.clear();self.selected=target[2:];self.signature=None;self.reload()
     def select_evidence(self,index):
