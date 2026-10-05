@@ -5,7 +5,7 @@ import sqlite3
 import sys
 
 from PySide6.QtCore import Qt, QTimer, QLockFile
-from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QTableWidget,QTableWidgetItem,QDialog,QFormLayout,QLineEdit,QCheckBox,QDialogButtonBox,QPlainTextEdit,QMessageBox,QProgressBar,QGroupBox)
+from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QTableWidget,QTableWidgetItem,QDialog,QFormLayout,QLineEdit,QCheckBox,QDialogButtonBox,QPlainTextEdit,QMessageBox,QProgressBar,QGroupBox,QFileDialog)
 from sessionlens.desktop import Runtime,defaults,state_root,LABELS
 
 STYLE='''QWidget {font-family: Arial; font-size:14px; color:#233247; background:#f5f7fb;} QMainWindow {background:#f5f7fb;} QLabel {background:transparent;} QLabel#title {font-size:28px;font-weight:700;} QLabel#sub {color:#6a7a91;} QGroupBox {background:white;border:1px solid #dce3ee;border-radius:10px;margin-top:12px;padding:18px;} QGroupBox::title {subcontrol-origin:margin;left:16px;padding:0 5px;font-weight:600;} QPushButton {background:#245bdb;color:white;border:0;border-radius:6px;padding:10px 16px;} QPushButton:disabled {background:#9aaac3;} QLineEdit,QPlainTextEdit,QTableWidget {background:white;border:1px solid #dce3ee;border-radius:5px;padding:5px;} QHeaderView::section {background:#edf2fa;padding:9px;border:0;font-weight:600;} QProgressBar {border:0;background:#e4eaf5;height:8px;border-radius:4px;text-align:center;} QProgressBar::chunk {background:#245bdb;border-radius:4px;}'''
@@ -83,10 +83,23 @@ class Window(QMainWindow):
             self.ids.append(identity)
             for col,text in enumerate((source,kind,excerpt,session)):self.table.setItem(r,col,QTableWidgetItem(text))
         errors=s.get('errors',{});error='；'.join(f'{Path(p).name}: {e}' for p,e in list(errors.items())[:2])
-        self.status.setText((f'读取进度 {s.get("read",0)/1048576:.1f} / {s.get("bytes",0)/1048576:.1f} MiB · '+s.get('reading','等待日志'))+f'\n超出上报大小限制：{s["oversize"]} 份（原文保留本地）'+(' · '+error if error else ''))
+        self.status.setText((f'读取进度 {s.get("read",0)/1048576:.1f} / {s.get("bytes",0)/1048576:.1f} MiB · '+s.get('reading','等待日志'))+f'\n大记录：{s["oversize"]} 份已保存本机，因单条上报限制暂未发送（不是存储已满）'+(' · '+error if error else ''))
     def details(self,row,_):
         with sqlite3.connect(self.root/'collector.db') as db:record=db.execute('SELECT event FROM events WHERE id=?',(self.ids[row],)).fetchone()
-        dialog=QDialog(self);dialog.setWindowTitle('采集原文与证据来源');dialog.resize(900,600);v=QVBoxLayout(dialog);text=QPlainTextEdit();text.setReadOnly(True);text.setPlainText(json.dumps(json.loads(record[0]),ensure_ascii=False,indent=2));v.addWidget(text);dialog.exec()
+        dialog=QDialog(self);dialog.setWindowTitle('采集原文与证据来源');dialog.resize(900,600);v=QVBoxLayout(dialog);text=QPlainTextEdit();text.setReadOnly(True)
+        raw=record[0]
+        if len(raw)>100000:
+            v.addWidget(QLabel('记录较大，先显示前 100,000 个字符。完整内容已保存本机，可导出查看。'))
+            text.setPlainText(raw[:100000])
+        else:text.setPlainText(json.dumps(json.loads(raw),ensure_ascii=False,indent=2))
+        v.addWidget(text)
+        export=QPushButton('导出完整记录');v.addWidget(export)
+        def save():
+            filename,_=QFileDialog.getSaveFileName(dialog,'导出完整采集记录','sessionlens-record.json','JSON (*.json)')
+            if filename:
+                try:Path(filename).write_text(raw,encoding='utf-8')
+                except OSError as exc:QMessageBox.warning(dialog,'导出失败',str(exc))
+        export.clicked.connect(save);dialog.exec()
     def closeEvent(self,event):
         if self.runtime:self.runtime.stop.set()
         event.accept()
@@ -100,6 +113,10 @@ def main():
     if not test and not lock.tryLock(0):QMessageBox.information(None,'SessionLens','SessionLens 已在运行。');return 1
     window=Window(root)
     if test:window.close();print('SessionLens desktop self-test passed');return 0
+    if '--resume-local' in sys.argv:
+        local=json.loads(json.dumps(window.config));local['endpoint']=''
+        window.runtime=Runtime(root,local);window.runtime.start();window.button.setText('停止 / 修改设置')
+        for source,(group,_) in window.panels.items():group.setVisible(local['sources'][source]['enabled'])
     window.show();return app.exec()
 
 if __name__=='__main__':sys.exit(main())

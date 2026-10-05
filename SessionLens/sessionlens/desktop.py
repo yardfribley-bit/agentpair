@@ -25,12 +25,12 @@ def category(e):
     return LABELS[7]
 
 def plain(v):
-    if isinstance(v,str):return v
-    if isinstance(v,list):return '\n'.join(filter(None,(plain(x) for x in v)))
+    if isinstance(v,str):return v[:2048]
+    if isinstance(v,list):return '\n'.join(filter(None,(plain(x) for x in v[:8])))[:2048]
     if isinstance(v,dict):
         for key in ('text','content','message','summary','output','input','arguments','command','stdout','aiTitle'):
             if key in v:return plain(v[key])
-        return json.dumps(v,ensure_ascii=False)
+        return '; '.join(str(k)+': '+plain(value)[:180] for k,value in list(v.items())[:8])[:2048]
     return str(v) if v is not None else ''
 
 def summary(e):
@@ -52,7 +52,7 @@ class Runtime:
         self.path=self.root/'collector.db';self.config=config;self.token=token
         self.stop=threading.Event();self.lock=threading.Lock();self.status={};self.threads=[]
         c=Collector(self.path)
-        c.db.executescript('CREATE TABLE IF NOT EXISTS display_index(id TEXT PRIMARY KEY,source TEXT,category TEXT,summary TEXT,bytes INTEGER); CREATE INDEX IF NOT EXISTS display_source ON display_index(source,category);')
+        c.db.executescript('CREATE TABLE IF NOT EXISTS display_index(id TEXT PRIMARY KEY,source TEXT,category TEXT,summary TEXT,bytes INTEGER); CREATE INDEX IF NOT EXISTS display_source ON display_index(source,category); CREATE TABLE IF NOT EXISTS display_state(name TEXT PRIMARY KEY,value INTEGER);')
         c.db.close()
         self.destination=hashlib.sha256((config.get('endpoint','')+'\0'+token).encode()).hexdigest()
     def update(self,**v):
@@ -81,11 +81,13 @@ class Runtime:
                         st=p.stat();signature=(st.st_ino,st.st_size,st.st_mtime_ns)
                         if seen.get(str(p))==signature:continue
                         self.update(reading=f'{source} · {p.name}')
+                        old_cursor=c.db.execute('SELECT offset FROM cursors WHERE path=?',(str(p.resolve()),)).fetchone()
+                        previous=old_cursor[0] if old_cursor else -1
                         c.scan(p,200,source)
                         self.index(c)
                         self.update(read=c.db.execute('SELECT COALESCE(sum(offset),0) FROM cursors').fetchone()[0])
                         offset=c.db.execute('SELECT offset FROM cursors WHERE path=?',(str(p.resolve()),)).fetchone()[0]
-                        if offset>=st.st_size:seen[str(p)]=signature
+                        if offset>=st.st_size or offset==previous:seen[str(p)]=signature
                         errors.pop(str(p),None)
                     except (OSError,ValueError,sqlite3.Error) as exc:
                         errors[str(p)]=str(exc);seen[str(p)]=signature if 'signature' in locals() else None
@@ -96,10 +98,20 @@ class Runtime:
                 self.stop.wait(.5)
         finally:c.db.close()
     def index(self,c):
-        rows=c.db.execute('SELECT id,event FROM events WHERE id NOT IN (SELECT id FROM display_index) ORDER BY rowid LIMIT 1000')
+        # Persistent rowid cursor: the idle query touches no historical payloads.
+        state=c.db.execute("SELECT value FROM display_state WHERE name='indexed_rowid'").fetchone()
+        if state is None:
+            # Upgrade the old index once. Resume before its earliest missing row.
+            missing=c.db.execute('SELECT e.rowid FROM events e WHERE NOT EXISTS (SELECT 1 FROM display_index i WHERE i.id=e.id) ORDER BY e.rowid LIMIT 1').fetchone()
+            cursor=missing[0]-1 if missing else c.db.execute('SELECT COALESCE(max(rowid),0) FROM events').fetchone()[0]
+        else:cursor=state[0]
+        rows=c.db.execute('SELECT rowid,id,event FROM events WHERE rowid>? ORDER BY rowid LIMIT 1000',(cursor,))
         with c.db:
-            for identity,body in rows:
+            for rowid,identity,body in rows:
                 e=json.loads(body);c.db.execute('INSERT OR IGNORE INTO display_index VALUES(?,?,?,?,?)',(identity,e['source'],category(e),summary(e),len(body.encode())))
+                cursor=rowid
+            if state is None or cursor!=state[0]:
+                c.db.execute("INSERT OR REPLACE INTO display_state VALUES('indexed_rowid',?)",(cursor,))
     def upload(self):
         c=Collector(self.path);delay=1
         try:

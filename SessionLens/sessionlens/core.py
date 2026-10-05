@@ -63,11 +63,11 @@ class Collector:
             if old and (old[0]!=identity or stat.st_size<offset):epoch+=1;offset=0;session=None
             f.seek(offset)
             for _ in range(max_records):
-                start=f.tell();raw=f.readline(16*1024*1024+1)
+                start=f.tell();raw=f.readline(64*1024*1024+1)
                 if not raw:break
-                if len(raw)>16*1024*1024:
+                if len(raw)>64*1024*1024:
                     # Never advance past an oversized record silently.
-                    raise ValueError('Source record exceeds 16 MiB; cursor retained')
+                    raise ValueError('Source record exceeds 64 MiB; cursor retained')
                 if not raw.endswith(b'\n'):break
                 end=f.tell()
                 try:
