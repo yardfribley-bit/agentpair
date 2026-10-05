@@ -134,3 +134,10 @@ class LineageTests(unittest.TestCase):
                      {'type':'reasoning','content':'先读取库存数据。'},self.user('增加导出功能'),self.tool()])
         view=project(self.store.db,self.store.tasks()[0][0])
         if view['frames']:self.assertIsNone(view['frames'][0]['call'])
+
+    def test_completed_history_is_not_replayed_on_startup(self):
+        from sessionlens.desktop import Runtime
+        from unittest.mock import patch
+        self.ingest([self.user('设计库存页面'),self.user('做'),self.tool()])
+        runtime=Runtime(self.root,{'endpoint':''});runtime.stop.set()
+        with patch.object(TaskStore,'recent_source') as warmup:runtime.project();warmup.assert_not_called()

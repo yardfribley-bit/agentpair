@@ -141,7 +141,13 @@ class Runtime:
         from .supervision import TaskStore
         store=TaskStore(self.path)
         try:
+            store.repair_links(2)
+            indexed=store.db.execute("SELECT value FROM task_cursor WHERE name='rowid'").fetchone()[0]
+            boundary=store.db.execute("SELECT value FROM task_cursor WHERE name='boundary'").fetchone()[0]
             for source in ('workbuddy','codex'):
+                # A completed historical index already has these records. Do
+                # not decode/write them again at every application startup.
+                if indexed>=boundary:break
                 self.update(task_index='正在准备 '+source+' 近期任务 · 历史低速整理')
                 records=store.recent_source(source,2000 if source=='workbuddy' else 500)
                 for start in range(0,len(records),50):
