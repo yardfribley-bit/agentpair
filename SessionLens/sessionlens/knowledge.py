@@ -23,33 +23,19 @@ def candidates(db,terms,limit=6,source=None,since=None):
     return result
 
 def ask(root,config,question,history,progress,source=None,days=0):
-    token=Path(config['tokenFile']).read_text().strip();endpoint=config['url'].rstrip('/')
-    progress('正在理解问题与前文')
-    followup=bool(history and question.startswith(('它','这次','刚才','具体','为什么又','那次')) and not any(w in question for w in ('重新查找','换一次','其他任务')))
-    plan={'terms':[],'followup':True} if followup else request_json(endpoint+'/retrieve',token,{'question':question,'history':[{'question':r['question'][:1000],'answer':r.get('understanding',{}).get('overview',{}).get('text','')[:500]} for r in history[-4:]]})
+    from .relay_model import call,answer
+    from .task_presentation import project
+    import datetime
+    if not config.get('enabled') or not config.get('credentialFile'):raise ValueError('请先在设置中配置智能助手的模型地址和凭据。')
+    progress('正在理解问题，检索本机任务库')
+    plan=call(config,'把问题转为本机历史任务检索词。输出 JSON {"terms":[最多六个有辨识度的短词],"followup":布尔}。不要回答问题。',{'question':question,'previousQuestion':history[-1]['question'] if history else ''},max_tokens=500)
     with sqlite3.connect(Path(root)/'collector.db',timeout=10) as db:
-        source=source or ('workbuddy' if 'workbuddy' in question.lower() else ('codex' if 'codex' in question.lower() else None))
-        import datetime
         since=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=days)).isoformat() if days else None
-        found=candidates(db,plan['terms'],source=source,since=since);packets=[]
-        if plan.get('followup') and history:
-            ids=history[-1].get('retrievedTaskIds',[])[:3]
-            ids=[tid for tid in ids if db.execute('SELECT 1 FROM tasks WHERE id=? AND (? IS NULL OR source=?) AND (? IS NULL OR updated>=?)',(tid,source,source,since,since)).fetchone()]
-        else:ids=[r[0] for r in found[:3]]
-        if not ids:raise ValueError('当前已整理的知识库没有找到相关记录。可补充项目、文件或时间；历史整理未完成时，稍后再试。')
-        progress('找到相关任务，正在读取原始要求、工具参数和返回')
-        for tid in ids:packets.append(packet_for_task(db,tid))
-    combined=dict(packets[0]);combined['taskId']='knowledge';combined['prompt']=question;combined['fragments']=[];combined['totalRecords']=sum(p['totalRecords'] for p in packets)
-    # Share the input budget across tasks instead of letting the first consume all.
-    quota=120//len(packets)
-    text_budget=min(2100,65000//max(1,sum(min(quota,len(p['fragments'])) for p in packets))-260)
-    for p in packets:
-        items=p['fragments'];items=items if len(items)<=quota else items[:quota//2]+items[-quota//2:]
-        for f in items:
-            f=dict(f);f['taskId']=p['taskId'];f['truncated']=f['truncated'] or len(f['text'])>text_budget;f['text']='任务要求：'+p['prompt'][:250]+'\n'+f['text'][:text_budget];f['evidenceId']=f'E{len(combined["fragments"])+1:03}';combined['fragments'].append(f)
-    combined['includedRecords']=len(combined['fragments']);combined['revision']=max(p['revision'] for p in packets)
-    contextual=question
-    if history:contextual+='\n对话背景（仅用于理解追问，不作事实证据）：'+json.dumps([{'question':r['question'],'answer':r.get('understanding',{}).get('overview',{}).get('text','')[:500]} for r in history[-2:]],ensure_ascii=False)
-    result=run(root,config,'knowledge',contextual[:2000],progress,packet=combined)
-    result['question']=question;result['retrievedTaskIds']=ids;result['retrieved']=[{'title':p['prompt'][:120],'source':p['source']} for p in packets]
-    return result
+        found=candidates(db,plan.get('terms',[]),source=source,since=since)
+        ids=history[-1].get('retrievedTaskIds',[])[:1] if plan.get('followup') and history else [r[0] for r in found[:1]]
+        if ids and not db.execute('SELECT 1 FROM tasks WHERE id=? AND (? IS NULL OR source=?) AND (? IS NULL OR updated>=?)',(ids[0],source,source,since,since)).fetchone():ids=[]
+        if not ids:raise ValueError('没有找到相关任务，请补充任务名称、文件或时间。')
+        packet=packet_for_task(db,ids[0]);presentation=project(db,ids[0])
+    progress('正在核对这一次任务的思路、工具参数与返回')
+    understanding=answer(root,config,question,packet,history)
+    return {'question':question,'taskId':ids[0],'retrievedTaskIds':ids,'retrieved':[{'title':packet['prompt'],'source':packet['source']}],'packet':packet,'presentation':presentation,'understanding':understanding}

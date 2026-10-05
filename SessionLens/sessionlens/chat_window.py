@@ -1,9 +1,10 @@
 """Conversation-first knowledge assistant; evidence stays one click away."""
 import html,json,sqlite3,threading,uuid
 from pathlib import Path
-from PySide6.QtCore import QObject,Signal,Qt
-from PySide6.QtWidgets import QMainWindow,QWidget,QHBoxLayout,QVBoxLayout,QLabel,QPushButton,QPlainTextEdit,QComboBox,QTextBrowser,QListWidget,QSplitter,QDialog
+from PySide6.QtCore import QObject,Signal,Qt,QUrl
+from PySide6.QtWidgets import QMainWindow,QWidget,QHBoxLayout,QVBoxLayout,QLabel,QPushButton,QPlainTextEdit,QComboBox,QTextBrowser,QListWidget,QSplitter,QDialog,QStackedWidget,QScrollArea
 from .knowledge import ask
+from .task_view import TaskView
 from .supervision import event_text
 
 class Signals(QObject):
@@ -14,7 +15,7 @@ class Signals(QObject):
 class ChatWindow(QMainWindow):
     def __init__(self,collector):
         super().__init__();self.collector=collector;self.root=collector.root;self.busy=False;self.messages=[];self.chat_id=None;collector.hide_on_close=True
-        self.setWindowTitle('SessionLens · 工作记忆助手');self.resize(1280,850)
+        self.setWindowTitle('SessionLens · 工作记忆助手');self.resize(1360,1000)
         self.cache=sqlite3.connect(self.root/'conversations.db');self.cache.execute('CREATE TABLE IF NOT EXISTS chats(id TEXT PRIMARY KEY,title TEXT,content TEXT,updated INTEGER)');self.cache.commit()
         body=QWidget();self.setCentralWidget(body);outer=QHBoxLayout(body);outer.setContentsMargins(0,0,0,0)
         side=QWidget();side.setFixedWidth(210);side.setStyleSheet('QPushButton{background:transparent;color:#233247;border:0;text-align:left;} QPushButton:checked{background:#e9f0fb;color:#275eb2;}');v=QVBoxLayout(side);v.setContentsMargins(18,24,18,20)
@@ -38,9 +39,9 @@ class ChatWindow(QMainWindow):
             button=QPushButton(label);button.setStyleSheet('background:white;color:#3265a8;border:1px solid #dce3ee;padding:6px 10px;');button.clicked.connect(lambda checked=False,q=question:self.prefill(q));shortcuts.addWidget(button)
         shortcuts.addStretch();m.addLayout(shortcuts)
         self.status=QLabel('从你的任务记录中寻找答案');self.status.setWordWrap(True);m.addWidget(self.status)
-        self.split=QSplitter(Qt.Horizontal);self.split.setChildrenCollapsible(False);self.answer=QTextBrowser();self.answer.setOpenLinks(False);self.answer.anchorClicked.connect(self.evidence);self.split.addWidget(self.answer)
+        self.split=QSplitter(Qt.Horizontal);self.split.setChildrenCollapsible(False);self.answer=QTextBrowser();self.answer.setOpenLinks(False);self.answer.anchorClicked.connect(self.evidence);self.results=QStackedWidget();self.results.addWidget(self.answer);self.task_view=TaskView();self.task_view.evidenceRequested.connect(lambda ref:self.evidence(QUrl("proof:"+str(len(self.messages)-1)+":"+ref)));self.results.addWidget(self.task_view);self.split.addWidget(self.results)
         proof_panel=QWidget();pv=QVBoxLayout(proof_panel);pv.setContentsMargins(0,0,0,0);pr=QHBoxLayout();pr.addWidget(QLabel('原始依据'));pr.addStretch();close=QPushButton('收起');close.clicked.connect(proof_panel.hide);pr.addWidget(close);pv.addLayout(pr);self.proof=QTextBrowser();self.proof.setMinimumWidth(240);pv.addWidget(self.proof);self.proof_panel=proof_panel;self.split.addWidget(proof_panel);proof_panel.hide();m.addWidget(self.split,1)
-        foot=QHBoxLayout();self.collection_status=QLabel('本地任务库 · 采集状态可查看');foot.addWidget(self.collection_status,1);view=QPushButton('查看采集进度');view.clicked.connect(self.open_collection);foot.addWidget(view);m.addLayout(foot);outer.addWidget(main,1)
+        foot=QHBoxLayout();self.collection_status=QLabel('本地任务库 · 采集状态可查看');foot.addWidget(self.collection_status,1);view=QPushButton('查看采集进度');view.clicked.connect(self.open_collection);foot.addWidget(view);m.addLayout(foot);main_scroll=QScrollArea();main_scroll.setWidgetResizable(True);main_scroll.setFrameShape(QScrollArea.NoFrame);main_scroll.setWidget(main);outer.addWidget(main_scroll,1)
         self.signals=Signals(self);self.signals.progress.connect(self.status.setText);self.signals.ready.connect(self.received);self.signals.failed.connect(self.failed)
         self.refresh_chats();self.new_chat()
     def open_collector(self):self.collector.show();self.collector.raise_()
@@ -68,6 +69,9 @@ class ChatWindow(QMainWindow):
         if self.busy or index<0:return
         self.chat_id=self.chat_rows[index][0];self.messages=json.loads(self.cache.execute('SELECT content FROM chats WHERE id=?',(self.chat_id,)).fetchone()[0]);self.proof_panel.hide();self.render()
     def render(self):
+        if self.messages and self.messages[-1].get('presentation') and not self.busy:
+            self.task_view.load(self.messages[-1]);self.results.setCurrentWidget(self.task_view);return
+        self.task_view.timer.stop();self.results.setCurrentWidget(self.answer)
         esc=html.escape
         content='<style>body{color:#233247}p{line-height:150%}a{color:#3265a8;text-decoration:none}h3{font-size:16px}</style>'
         if not self.messages and not self.busy:content+='<h3>答案将在这里展开</h3><p style="color:#758397">相关任务、处理经过与原始依据，随提问显示。</p><p><a href="sample:weather">查上海天气时遇到了什么问题？</a></p>'
@@ -95,7 +99,7 @@ class ChatWindow(QMainWindow):
         source=self.source.currentData();days=self.period.currentData()
         self.render()
         def work():
-            try:self.signals.ready.emit(ask(self.root,self.collector.config.get('assistant',{}),q,history,self.signals.progress.emit,source=source,days=days))
+            try:self.signals.ready.emit(ask(self.root,self.collector.config.get('model',{}),q,history,self.signals.progress.emit,source=source,days=days))
             except Exception as exc:self.signals.failed.emit(str(exc)[:300])
         threading.Thread(target=work,daemon=True).start()
     def received(self,result):self.messages.append(result);self.finish('回答已完成 · 点击引用核对依据')
@@ -112,5 +116,6 @@ class ChatWindow(QMainWindow):
         e=json.loads(raw[0]);esc=html.escape;loc=e.get('evidence',{})
         self.proof.setHtml('<h3>'+esc(ref)+' · 原始证据</h3><p>'+esc(str(e.get('name') or e['kind']))+'</p><pre style="white-space:pre-wrap">'+esc(event_text(e)[:20000])+'</pre><hr><p>'+esc(str(loc.get('path','')))+ '</p><p>字节 '+str(loc.get('byteStart'))+'–'+str(loc.get('byteEnd'))+'</p>');self.proof_panel.show();self.split.setSizes([650,350])
     def closeEvent(self,event):
+        self.task_view.timer.stop()
         if self.collector.runtime:self.collector.runtime.stop.set()
         self.collector.hide_on_close=False;self.collector.close();self.cache.close();event.accept()

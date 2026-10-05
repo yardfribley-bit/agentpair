@@ -37,10 +37,16 @@ class Settings(QDialog):
         self.token=QLineEdit();self.token.setEchoMode(QLineEdit.Password);form.addRow('设备令牌（仅本次运行）',self.token)
         self.assistant_url=QLineEdit(config.get('assistant',{}).get('url',''));form.addRow('AgentPair 分析接口',self.assistant_url)
         self.assistant_token=QLineEdit(config.get('assistant',{}).get('tokenFile',''));form.addRow('分析授权文件',self.assistant_token)
+        self.model_url=QLineEdit(config.get('model',{}).get('url',''));form.addRow('助手模型地址',self.model_url)
+        self.model_name=QLineEdit(config.get('model',{}).get('name',''));form.addRow('助手模型名称',self.model_name)
+        self.model_credential=QLineEdit(config.get('model',{}).get('credentialFile',''));form.addRow('模型密钥文件',self.model_credential)
         hint=QLabel('目录以分号分隔。开启上报后，会发送所选日志的完整记录。\n未配置接口和令牌时，仅保存在本机；关闭应用停止采集。');hint.setWordWrap(True);form.addRow(hint)
         buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);form.addRow(buttons)
     def result_config(self):
-        return {'sources':{s:{'enabled':c.isChecked(),'roots':[x.strip() for x in p.text().split(';') if x.strip()]} for s,(c,p) in self.sources.items()},'endpoint':self.endpoint.text().strip(),'assistant':{'url':self.assistant_url.text().strip(),'tokenFile':self.assistant_token.text().strip()}}
+        result=dict(self.config)
+        result.update({'sources':{s:{'enabled':c.isChecked(),'roots':[x.strip() for x in p.text().split(';') if x.strip()]} for s,(c,p) in self.sources.items()},'endpoint':self.endpoint.text().strip(),'assistant':{'url':self.assistant_url.text().strip(),'tokenFile':self.assistant_token.text().strip()}})
+        model=dict(self.config.get('model',{}));model.update(url=self.model_url.text().strip(),name=self.model_name.text().strip(),credentialFile=self.model_credential.text().strip());result['model']=model
+        return result
 
 class Window(QMainWindow):
     def __init__(self,root):
@@ -243,7 +249,13 @@ def main():
         reference=result['understanding']['steps'][0]['evidenceRefs'][0]
         chat.evidence(QUrl('proof:0:'+reference));app.processEvents();assert chat.proof_panel.isVisible()
         assert chat.proof.toPlainText().strip()
-        chat.grab().save('/private/tmp/sessionlens-installed-ui.png')
+        chat.proof_panel.hide()
+        if result.get('presentation'):
+            view=chat.task_view;assert len(view.data['calls'])==3;assert len(view.data['frames'])==3
+            view.select('calls');assert '1080P' in view.body.toPlainText();assert 'VideoGen' in view.body.toPlainText()
+            view.select('reasoning');view.toggle();view.tick();assert view.position>0;view.toggle();assert not view.timer.isActive();view.next();assert view.index==1
+            view.select('delivery');assert '验证' in view.body.toPlainText();view.select('overview')
+        app.processEvents();chat.grab().save('/private/tmp/sessionlens-installed-ui.png')
         print('Installed UI verification passed: large top input, answer rendering, original evidence')
         chat.close();return 0
     window.start_local()
