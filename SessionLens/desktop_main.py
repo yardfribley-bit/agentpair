@@ -58,8 +58,8 @@ class Window(QMainWindow):
         self.toolbar=QWidget();tools=QHBoxLayout(self.toolbar);tools.setContentsMargins(0,0,0,0);self.search=QLineEdit();self.search.setPlaceholderText('搜索任务、文件或问题…');self.search.returnPressed.connect(self.reload);tools.addWidget(self.search);find=QPushButton('查找任务');find.clicked.connect(self.reload);tools.addWidget(find);self.source=QComboBox();self.source.addItems(['全部 Agent','Codex','WorkBuddy']);self.source.currentIndexChanged.connect(self.reload);tools.addWidget(self.source);layout.addWidget(self.toolbar)
         assistant_bar=QHBoxLayout();self.question=QLineEdit();self.question.setPlaceholderText('问当前任务：当时为什么这样做？用了什么参数？结果可靠吗？')
         self.question.returnPressed.connect(self.ask_assistant);assistant_bar.addWidget(self.question)
-        self.ask=QPushButton('问 DeepSeek');self.ask.clicked.connect(self.ask_assistant);assistant_bar.addWidget(self.ask);layout.addLayout(assistant_bar)
-        self.analysis_status=QLabel('选择任务后提问 · AgentPair / DeepSeek · 仅发送当前任务证据');self.analysis_status.setWordWrap(True);layout.addWidget(self.analysis_status)
+        self.ask=QPushButton('理解这次任务');self.ask.clicked.connect(self.ask_assistant);assistant_bar.addWidget(self.ask);layout.addLayout(assistant_bar)
+        self.analysis_status=QLabel('选择任务后提问 · AgentPair · 仅发送当前任务证据');self.analysis_status.setWordWrap(True);layout.addWidget(self.analysis_status)
         self.assistant_signals=AssistantSignals(self);self.assistant_signals.progress.connect(self.analysis_status.setText);self.assistant_signals.result.connect(self.assistant_ready);self.assistant_signals.failed.connect(self.assistant_failed)
         split=QSplitter(Qt.Horizontal);layout.addWidget(split,1)
         left=QWidget();lv=QVBoxLayout(left);lv.setContentsMargins(0,0,0,0);self.list_title=QLabel('当前任务');lv.addWidget(self.list_title);self.task_list=QListWidget();self.task_list.setWordWrap(True);self.task_list.currentRowChanged.connect(self.select_task);lv.addWidget(self.task_list);split.addWidget(left)
@@ -78,7 +78,7 @@ class Window(QMainWindow):
         threading.Thread(target=work,daemon=True).start()
     def assistant_ready(self,result):
         self.ask.setEnabled(True);self.answers[result['taskId']]=result;self.show_records=False
-        self.analysis_status.setText('DeepSeek 已回答 · AgentPair 已复核 · 点击证据核对原文')
+        self.analysis_status.setText('助手已回答 · AgentPair 已复核 · 点击证据核对原文')
         if self.selected==result['taskId']:self.select_task(self.task_list.currentRow())
     def assistant_failed(self,error):
         self.ask.setEnabled(True);self.analysis_status.setText('分析未完成：'+error)
@@ -91,7 +91,7 @@ class Window(QMainWindow):
             text+='<p>'+esc(prefix+block['text']).replace('\n','<br>')+'</p><p>'
             text+=' · '.join('<a href="ai:'+esc(ref)+'">'+esc(ref)+' 查看依据</a>' for ref in block['evidenceRefs'])+'</p>'
         if value.get('gaps'):text+='<h3>还不能确定的地方</h3>'+''.join('<p>'+esc(str(x))+'</p>' for x in value['gaps'])
-        text+=f'<p style="color:#67778b">基于 {packet["includedRecords"]}/{packet["totalRecords"]} 条任务记录；部分长记录可能截取。模型：deepseek-v3.2。</p>'
+        text+=f'<p style="color:#67778b">基于 {packet["includedRecords"]}/{packet["totalRecords"]} 条任务记录；部分长记录可能截取。</p>'
         text+='<p><a href="records:">'+('收起逐条记录' if self.show_records else '展开逐条记录')+'</a></p>'
         return text
     def set_mode(self,mode):
@@ -218,20 +218,35 @@ class Window(QMainWindow):
                 except OSError as exc:QMessageBox.warning(dialog,'导出失败',str(exc))
         export.clicked.connect(save);dialog.exec()
     def closeEvent(self,event):
+        if getattr(self,'hide_on_close',False):self.hide();event.ignore();return
         if self.runtime:self.runtime.stop.set()
         self.store.close();event.accept()
 
 def main():
     test='--self-test' in sys.argv
-    if test:os.environ['QT_QPA_PLATFORM']='offscreen'
+    verify='--verify-ui' in sys.argv
+    if test or verify:os.environ['QT_QPA_PLATFORM']='offscreen'
     app=QApplication(sys.argv);app.setStyleSheet(STYLE)
     root=Path(__import__('tempfile').mkdtemp(prefix='sessionlens-test-')) if test else state_root();root.mkdir(parents=True,exist_ok=True)
     lock=QLockFile(str(root/'desktop.lock'));lock.setStaleLockTime(0)
-    if not test and not lock.tryLock(0):QMessageBox.information(None,'SessionLens','SessionLens 已在运行。');return 1
+    if not test and not verify and not lock.tryLock(0):QMessageBox.information(None,'SessionLens','SessionLens 已在运行。');return 1
     window=Window(root)
-    if test:window.close();print('SessionLens desktop self-test passed');return 0
+    from sessionlens.chat_window import ChatWindow
+    chat=ChatWindow(window)
+    if test:chat.close();print('SessionLens desktop self-test passed');return 0
+    if verify:
+        from PySide6.QtCore import QUrl
+        result_path=Path(sys.argv[sys.argv.index('--verify-ui')+1]);result=json.loads(result_path.read_text())
+        chat.messages=[result];chat.render();chat.show();app.processEvents()
+        assert chat.input.height()>=118
+        assert chat.composer.mapTo(chat,chat.composer.rect().topLeft()).y()<chat.answer.mapTo(chat,chat.answer.rect().topLeft()).y()
+        reference=result['understanding']['steps'][0]['evidenceRefs'][0]
+        chat.evidence(QUrl('proof:0:'+reference));app.processEvents();assert chat.proof_panel.isVisible()
+        assert chat.proof.toPlainText().strip()
+        chat.grab().save('/private/tmp/sessionlens-installed-ui.png')
+        print('Installed UI verification passed: large top input, answer rendering, original evidence')
+        chat.close();return 0
     window.start_local()
-
-    window.show();return app.exec()
+    chat.show();return app.exec()
 
 if __name__=='__main__':sys.exit(main())

@@ -8,7 +8,7 @@ import urllib.request
 from urllib.parse import urlparse
 from .supervision import event_text
 
-VERSION=2
+VERSION=4
 
 def packet_for_task(db,task_id):
     task=db.execute('SELECT source,session,prompt,last_row FROM tasks WHERE id=?',(task_id,)).fetchone()
@@ -42,11 +42,12 @@ def request_json(url,token,payload=None):
         if exc.code in (401,403):raise ValueError('分析服务授权失效，请重新配置') from None
         raise RuntimeError('分析服务暂不可用（HTTP '+str(exc.code)+'）') from None
 
-def run(root,config,task_id,question,progress=lambda text:None):
+def run(root,config,task_id,question,progress=lambda text:None,packet=None):
     endpoint=config.get('url','').rstrip('/');tokenfile=config.get('tokenFile','')
     if not endpoint or not tokenfile:raise ValueError('尚未配置 AgentPair 分析服务，请打开采集状态 / 设置')
     token=Path(tokenfile).read_text(encoding='utf-8').strip()
-    with sqlite3.connect(Path(root)/'collector.db',timeout=10) as db:packet=packet_for_task(db,task_id)
+    if packet is None:
+        with sqlite3.connect(Path(root)/'collector.db',timeout=10) as db:packet=packet_for_task(db,task_id)
     body={'question':question,'packet':packet}
     key=hashlib.sha256((endpoint+'\n'+json.dumps(body,ensure_ascii=False,sort_keys=True)).encode()).hexdigest()
     with sqlite3.connect(Path(root)/'assistant.db') as cache:
@@ -61,5 +62,5 @@ def run(root,config,task_id,question,progress=lambda text:None):
             with sqlite3.connect(Path(root)/'assistant.db') as cache:cache.execute('INSERT OR REPLACE INTO answers VALUES(?,?,?,?)',(key,task_id,question,json.dumps(result,ensure_ascii=False)))
             return result
         if result['status'] in ('failed','needs_attention','cancelled','interrupted'):raise RuntimeError(result.get('error','分析未通过复核，请稍后重试'))
-        progress(result.get('stage','正在分析'));time.sleep(1)
+        progress(result.get('stage','正在分析').replace('DeepSeek','助手'));time.sleep(1)
     raise TimeoutError('分析等待超时；服务器可能仍在处理，请稍后重试')

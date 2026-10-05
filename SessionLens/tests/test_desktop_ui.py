@@ -25,3 +25,26 @@ class LiveUiTests(unittest.TestCase):
             with log.open('a') as f:f.write(json.dumps({'type':'message','sessionId':'s','role':'user','content':'新的任务'})+'\n')
             c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.refresh();self.assertIn('新的任务',window.middle.toPlainText());self.assertTrue(window.selected_event)
             window.close();c.db.close()
+
+    def test_chat_preserves_collection_window_and_restores_conversation(self):
+        from sessionlens.chat_window import ChatWindow
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));chat=ChatWindow(window)
+            window.show();window.close()
+            self.assertFalse(window.isVisible())
+            self.assertIsNotNone(window.store.db.execute('SELECT 1').fetchone())
+            chat.pending='为什么重试';chat.failed('记录暂不可用')
+            chat.new_chat();chat.open_chat(0)
+            self.assertIn('为什么重试',chat.answer.toPlainText())
+            chat.close()
+    def test_large_composer_above_answers_and_evidence_close(self):
+        from sessionlens.chat_window import ChatWindow
+        from PySide6.QtCore import QUrl
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));chat=ChatWindow(window);chat.show();self.app.processEvents()
+            self.assertLess(chat.composer.mapTo(chat,chat.composer.rect().topLeft()).y(),chat.answer.mapTo(chat,chat.answer.rect().topLeft()).y())
+            self.assertGreaterEqual(chat.input.height(),118)
+            chat.evidence(QUrl('sample:weather'));self.assertIn('上海天气',chat.input.toPlainText())
+            chat.input.setPlainText('多行问题\n具体参数');self.assertIn('\n',chat.input.toPlainText())
+            self.assertIsNone(chat.source.currentData());chat.source.setCurrentIndex(1);self.assertEqual(chat.source.currentData(),'workbuddy')
+            chat.grab().save('/private/tmp/sessionlens-input-prototype-implemented.png');chat.close()

@@ -26,3 +26,10 @@ class AssistantTests(unittest.TestCase):
  def test_native_reasoning_uses_summary_when_content_empty(self):
   e={'kind':'reasoning','payload':{'content':[],'summary':[{'text':'需要先检查返回结构'}]}}
   self.assertEqual(event_text(e),'需要先检查返回结构')
+ def test_missing_verdict_requires_every_acceptance_check(self):
+  from agentpair.session_assistant import normalize_verdict
+  def decision():return {'decision':{'action':'deliver','checks':[{'id':k,'value':'yes'} for k in ['goal_met','grounded','consistent','delivery','readable_answer']]}}
+  good=decision();normalize_verdict(good);self.assertEqual(good['verdict'],'pass')
+  missing=decision();missing['decision']['checks'].pop();normalize_verdict(missing);self.assertEqual(missing['verdict'],'blocked')
+  rejected=decision();rejected['verdict']='blocked';normalize_verdict(rejected);self.assertEqual(rejected['verdict'],'blocked')
+  uncertain=decision();uncertain['decision']['checks'][0]['value']='unknown';normalize_verdict(uncertain);self.assertEqual(uncertain['verdict'],'blocked')
