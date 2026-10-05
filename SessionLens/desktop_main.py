@@ -249,7 +249,7 @@ def main():
         fixture=fixture_data['steps'] if isinstance(fixture_data,dict) else fixture_data
         output=Path(sys.argv[sys.argv.index('--verify-conversation')+2])
         original_answer=relay_model.answer
-        allowed={step['taskId'] for step in fixture}
+        allowed={step['taskId'] for step in fixture if step.get('taskId')}
         def guarded_answer(root,config,q,packet,history):
             if packet['taskId'] not in allowed:raise ValueError('测试选错任务，未发送其他任务数据')
             return original_answer(root,config,q,packet,history)
@@ -284,8 +284,12 @@ def main():
                 assert step['taskId'] in offered
                 from PySide6.QtCore import QUrl
                 chat.evidence(QUrl('choose:'+step['taskId']));state['started']=monotonic();return
-            success=not chat.busy and result.get('taskId')==step['taskId'] and chat.input.toPlainText()==step['question'] and chat.results.currentWidget()==chat.task_view
-            if success:
+            clarification=bool(step.get('selectionMode'))
+            if clarification:
+                success=not chat.busy and result.get('selectionNeeded') and result.get('selection',{}).get('mode')==step['selectionMode'] and chat.input.toPlainText()==step['question'] and chat.results.currentWidget()==chat.answer
+            else:
+                success=not chat.busy and result.get('taskId')==step['taskId'] and chat.input.toPlainText()==step['question'] and chat.results.currentWidget()==chat.task_view
+            if success and not clarification:
                 success=chat.task_view.data['taskId']==step['taskId'] and all(name in [c['name'] for c in chat.task_view.data['calls']] for name in step.get('tools',[]))
             state['results'].append(result)
             chat.grab().save(str(output.with_suffix(''))+'-'+str(state['index'])+'.png')

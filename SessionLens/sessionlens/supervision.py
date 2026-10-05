@@ -18,7 +18,7 @@ def readable(value,user=False):
     text=text_content(value)
     if user:
         # Context wrappers are data, not fresh user requests. Explicit queries win.
-        if re.match(r'\s*<(cb_summary|conversation_history_summary)\b',text):return ''
+        if re.match(r'\s*(?:#+\s*对话历史摘要\s*)?<(cb_summary|conversation_history_summary|task-notification)\b',text):return ''
         queries=re.findall(r'<user_query\b[^>]*>(.*?)</user_query>',text,re.S)
         if queries:text=queries[-1]
         else:
@@ -137,7 +137,9 @@ class TaskStore:
         rows=self.db.execute("SELECT e.rowid,e.id,e.event FROM display_index i JOIN events e ON e.id=i.id WHERE i.source=? ORDER BY CASE WHEN typeof(json_extract(e.event,'$.timestamp'))='integer' THEN json_extract(e.event,'$.timestamp')/1000.0 ELSE strftime('%s',json_extract(e.event,'$.timestamp')) END DESC LIMIT ?",(source,limit)).fetchall()
         return sorted(rows,key=lambda row:row[0])
     def tasks(self,query='',source='',live=False):
-        clauses=[];args=[]
+        # Old projections remain recoverable, but context envelopes aren't user
+        # tasks. Apply the same boundary rule to already indexed history.
+        clauses=["prompt NOT LIKE '<task-notification>%'", "prompt NOT LIKE '<cb_summary>%'", "prompt NOT LIKE '<conversation_history_summary>%'", "prompt NOT LIKE '# 对话历史摘要%'", "prompt NOT LIKE 'The following is the Codex agent history%'"];args=[]
         if source:clauses.append('source=?');args.append(source)
         for word in search_terms(query):clauses.append('instr(lower(search),lower(?))>0');args.append(word)
         # Monitor lists latest task per session; it does not claim these agents are alive.

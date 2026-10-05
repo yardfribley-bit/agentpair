@@ -41,3 +41,15 @@ class SupervisionTests(unittest.TestCase):
             with log.open('a') as f:
                 for record in [{'type':'message','sessionId':'new','role':'user','content':'新任务'},{'type':'function_call','sessionId':'new','callId':'c','name':'Read','arguments':'a.txt'},{'type':'function_call_result','sessionId':'new','callId':'c','output':'文件内容'}]:f.write(json.dumps(record)+'\n')
             c.scan(log,source='workbuddy');store.advance(realtime=True);self.assertEqual(store.tasks(live=True)[0][3],'新任务');new=store.tasks(live=True)[0][0];self.assertEqual(store.steps(new,1,latest=True)[0][1],'工具返回');store.advance();self.assertEqual(store.tasks(live=True)[0][3],'新任务');store.close();c.db.close()
+    def test_notifications_and_markdown_summary_stay_background(self):
+        from sessionlens.supervision import readable
+        for value in ('<task-notification>后台完成</task-notification>', '# 对话历史摘要\n\n<conversation_history_summary>以前的要求</conversation_history_summary>'):
+            self.assertEqual(readable(value,user=True),'')
+        self.assertEqual(readable('以下是文章，帮我写发布脚本',user=True),'以下是文章，帮我写发布脚本')
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'db';log=Path(tmp)/'task.jsonl'
+            records=[{'type':'message','role':'user','sessionId':'s','content':v} for v in ('创建文件','<task-notification>后台完成</task-notification>','# 对话历史摘要\n<conversation_history_summary>以前的要求</conversation_history_summary>')]
+            log.write_text(''.join(json.dumps(r)+'\n' for r in records));c=Collector(path);c.scan(log,source='workbuddy');c.db.close();store=TaskStore(path);store.advance()
+            self.assertEqual(len(store.tasks()),1)
+            # Raw evidence remains intact, including the two background records.
+            self.assertEqual(store.db.execute('SELECT count(*) FROM events').fetchone()[0],3);store.close()

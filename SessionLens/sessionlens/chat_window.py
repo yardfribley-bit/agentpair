@@ -86,7 +86,9 @@ class ChatWindow(QMainWindow):
         self.send_button.setText('查询')
         if latest.get('selectionNeeded'):
             self.task_view.stop();self.split.setMinimumHeight(300);self.results.setCurrentWidget(self.answer);self.current_task.setText('选择要查看的任务');self.status.setText('找到多个相近任务，请选择具体的一次')
-            content='<h3>你想了解哪一次任务？</h3><p>'+html.escape(latest['question'])+'</p>'
+            message=latest.get('selectionMessage')
+            if message:self.current_task.setText('等待补充任务信息');self.status.setText('尚未确认对应任务')
+            content='<h3>'+html.escape(message or '你想了解哪一次任务？')+'</h3><p>'+html.escape(latest['question'])+'</p>'
             for option in latest['options']:
                 date=option['updated'][:16].replace('T',' ')
                 name={'workbuddy':'WorkBuddy','codex':'Codex'}.get(option['source'],option['source'])
@@ -120,7 +122,11 @@ class ChatWindow(QMainWindow):
         q=self.input.toPlainText().strip()
         if len(q)>2000:self.status.setText('问题过长，请缩短到 2000 字以内。');return
         if not q or self.busy:return
-        self.busy=True;self.send_button.setEnabled(False);self.chats.setEnabled(False);self.pending=q;history=[r for r in self.messages if not r.get('error') and not r.get('selectionMismatch') and not r.get('selectionNeeded')];self.status.setText('正在查找相关工作记录…')
+        history=[]
+        for r in self.messages:
+            if r.get('error') or r.get('selectionMismatch') or r.get('selectionNeeded'):history=[]
+            else:history.append(r)
+        self.busy=True;self.send_button.setEnabled(False);self.chats.setEnabled(False);self.pending=q;self.status.setText('正在查找相关工作记录…')
         self.source.setEnabled(False);self.period.setEnabled(False)
         source=self.source.currentData();days=self.period.currentData()
         self.render()

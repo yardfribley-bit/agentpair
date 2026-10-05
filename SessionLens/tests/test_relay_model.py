@@ -22,3 +22,28 @@ class RelayTests(unittest.TestCase):
    with self.assertRaises(ValueError):validate({'overview':{'text':'结论','basis':'recorded','evidenceRefs':refs},'steps':[]},{'E001'})
  def test_valid_citations_accepted(self):
   validate({'overview':{'text':'结论','basis':'recorded','evidenceRefs':['E001']},'steps':[]},{'E001'})
+ def test_claim_review_corrects_unproved_global_absence_before_caching(self):
+  from sessionlens.relay_model import answer
+  with tempfile.TemporaryDirectory() as tmp:
+   config={'url':'https://example.com/v1/chat/completions','name':'deepseek-v4-flash'}
+   packet={'taskId':'test','fragments':[{'evidenceId':'E001','text':'写入脚本成功'}]}
+   original={'overview':{'text':'脚本从未运行，发布没有成功','basis':'recorded','evidenceRefs':['E001']},'steps':[],'gaps':[],'toolExplanations':[]}
+   corrected={'overview':{'text':'本段记录证明脚本已写入，但没有发布执行或成功返回的记录。','basis':'recorded','evidenceRefs':['E001']},'steps':[],'gaps':[],'toolExplanations':[]}
+   with patch('sessionlens.relay_model.call',side_effect=[original,{'issues':['日志缺失不能证明从未执行'],'corrected':corrected}]) as call_model:
+    result=answer(tmp,config,'真的发布了吗？',packet,[])
+    self.assertEqual(result['overview']['text'],corrected['overview']['text']);self.assertTrue(result['qualityAudit']['reviewed']);self.assertEqual(call_model.call_count,2)
+    self.assertEqual(answer(tmp,config,'真的发布了吗？',packet,[]),result);self.assertEqual(call_model.call_count,2)
+ def test_review_cannot_replace_answer_with_unknown_citations(self):
+  from sessionlens.relay_model import answer
+  with tempfile.TemporaryDirectory() as tmp:
+   result={'overview':{'text':'已写入','basis':'recorded','evidenceRefs':['E001']},'steps':[]}
+   invalid={'overview':{'text':'已完成','basis':'recorded','evidenceRefs':['E999']},'steps':[]}
+   with patch('sessionlens.relay_model.call',side_effect=[result,{'issues':['过度断言'],'corrected':invalid},invalid]):
+    with self.assertRaises(ValueError):answer(tmp,{'url':'https://example.com','name':'test'},'结果？',{'fragments':[{'evidenceId':'E001'}]},[])
+ def test_review_with_malformed_structure_gets_one_bounded_repair(self):
+  from sessionlens.relay_model import answer
+  with tempfile.TemporaryDirectory() as tmp:
+   valid={'overview':{'text':'本段未显示执行','basis':'recorded','evidenceRefs':['E001']},'steps':[]}
+   with patch('sessionlens.relay_model.call',side_effect=[valid,{'issues':['限定证据范围'],'corrected':{'overview':'本段未显示执行','steps':[]}},valid]) as call_model:
+    result=answer(tmp,{'url':'https://example.com','name':'test'},'运行了吗？',{'fragments':[{'evidenceId':'E001'}]},[])
+    self.assertEqual(result['overview']['text'],valid['overview']['text']);self.assertEqual(call_model.call_count,3)

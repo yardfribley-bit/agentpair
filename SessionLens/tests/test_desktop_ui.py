@@ -100,3 +100,25 @@ class LiveUiTests(unittest.TestCase):
                 chat.evidence(QUrl('choose:not-offered'));send.assert_not_called()
                 chat.evidence(QUrl('choose:a'));send.assert_called_once_with(selected_task='a');self.assertEqual(chat.input.toPlainText(),q)
             chat.close()
+
+    def test_unmatched_question_explains_missing_task_and_keeps_input(self):
+        from sessionlens.chat_window import ChatWindow
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));chat=ChatWindow(window)
+            q='回顾那次科考日报';chat.pending=q;chat.input.setPlainText(q)
+            chat.received({'question':q,'selectionNeeded':True,'options':[],'selectionMessage':'没有找到对应的历史任务，请补充任务名。'})
+            self.assertIn('没有找到对应',chat.answer.toPlainText());self.assertNotIn('未能完成回答',chat.status.text());self.assertEqual(chat.input.toPlainText(),q);chat.close()
+
+    def test_failed_selection_breaks_followup_context(self):
+        from sessionlens.chat_window import ChatWindow
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));chat=ChatWindow(window)
+            chat.messages=[{'question':'旧任务','taskId':'old'},{'question':'查另一个任务','selectionNeeded':True,'options':[]}]
+            chat.input.setPlainText('它用了什么工具？')
+            class Immediate:
+                def __init__(self,target,**kwargs):self.target=target
+                def start(self):self.target()
+            with patch('sessionlens.chat_window.ask',return_value={'question':'它用了什么工具？','selectionNeeded':True,'options':[]}) as ask,patch('sessionlens.chat_window.threading.Thread',Immediate):
+                chat.send();self.assertEqual(ask.call_args.args[3],[])
+            self.app.processEvents();chat.close()

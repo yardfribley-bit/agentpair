@@ -91,3 +91,59 @@ class RetrievalTests(unittest.TestCase):
    with patch('sessionlens.relay_model.call',return_value={'terms':['天气'],'followup':True}),patch('sessionlens.knowledge.packet_for_task',return_value=packet),patch('sessionlens.task_presentation.project',return_value={'taskId':'weather'}),patch('sessionlens.relay_model.answer',return_value={}) as answer:
     result=ask(tmp,{'enabled':True,'credentialFile':'configured'},'它具体请求了什么网址？',[video,weather],lambda _:None)
     self.assertEqual(result['taskId'],'weather');self.assertEqual(answer.call_args.args[-1],[weather])
+
+ def test_named_artifact_does_not_match_similar_filename_or_context_wrapper(self):
+  from sessionlens.knowledge import retrieve_candidates,select_task
+  db=sqlite3.connect(':memory:');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
+  db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[
+   ('write','请新建 ledger.py，只创建，不运行','workbuddy','a','2026','Write ledger.py'),
+   ('read','请阅读 ledger.py，不要修改','workbuddy','b','2026','Read ledger.py'),
+   ('similar','请新建 ledger_test.py','workbuddy','c','2026','Write ledger_test.py'),
+   ('summary','# 对话历史摘要\n<conversation_history_summary>ledger.py 创建 运行 网络 修改 文件</conversation_history_summary>','workbuddy','d','2027','ledger.py')])
+  for q,expected,action in [('WorkBuddy 创建ledger.py 后有没有运行？','write','create'),('WorkBuddy 读 ledger.py 后解释了什么？','read','read')]:
+   found=retrieve_candidates(db,{'terms':['ledger.py'],'taskAction':action},q)
+   self.assertEqual(select_task(db,{},q,[],found)[0],expected)
+   self.assertNotIn('summary',[r[0] for r in found]);self.assertNotIn('similar',[r[0] for r in found])
+  db.close()
+
+ def test_pronoun_followup_cannot_be_stolen_by_memory_or_status_topic(self):
+  from sessionlens.knowledge import retrieve_candidates,select_task
+  db=sqlite3.connect(':memory:');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
+  db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[('current','写发布脚本','workbuddy','s','2026','Edit memory.md'),('other','研究记忆文件修改方案','codex','x','2027','记忆文件')])
+  q='它修改了哪些记忆文件？';plan={'terms':['记忆文件'],'followup':True};found=retrieve_candidates(db,plan,q)
+  self.assertEqual(select_task(db,plan,q,[{'retrievedTaskIds':['current']}],found),('current','same_task'));db.close()
+
+ def test_absent_subject_and_ambiguous_question_do_not_guess_shortest_task(self):
+  from sessionlens.knowledge import retrieve_candidates,select_task
+  db=sqlite3.connect(':memory:');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
+  db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[('short','看一下','workbuddy','s','2026','工具'),('other','制作销售日报','workbuddy','x','2027','日报工具')])
+  q='上次制作北极科考日报用了什么工具？';plan={'terms':['日报'],'subjects':['北极科考']}
+  self.assertEqual(select_task(db,plan,q,[],retrieve_candidates(db,plan,q)),(None,'not_found'))
+  self.assertEqual(select_task(db,{},'回顾那个任务',[],retrieve_candidates(db,{},'回顾那个任务')),(None,'not_found'));db.close()
+
+ def test_close_matches_request_confirmation_instead_of_guessing(self):
+  from sessionlens.knowledge import retrieve_candidates,select_task
+  db=sqlite3.connect(':memory:');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
+  db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[('a','atlas 动画下载下来','workbuddy','s','2026','校验时长'),('b','atlas 动画怎么做的','workbuddy','x','2027','校验时长')])
+  q='atlas 动画有没有校验？';found=retrieve_candidates(db,{},q)
+  self.assertEqual(select_task(db,{},q,[],found),(None,'choose_task'));db.close()
+
+ def test_topic_switch_prefers_established_agent_before_global_ranking(self):
+  import tempfile
+  from pathlib import Path
+  from unittest.mock import patch
+  from sessionlens.knowledge import ask
+  with tempfile.TemporaryDirectory() as tmp:
+   db=sqlite3.connect(Path(tmp)/'collector.db');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
+   db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[('old','查北京天气','workbuddy','s','2026','weather'),('exec','生成 MQTT 动画','workbuddy','s','2026','VideoGen'),('dev','生成 MQTT 动画的界面原型','codex','c','2027','MQTT 动画生成完成')]);db.commit();db.close()
+   history=[{'question':'北京天气','taskId':'old','retrievedTaskIds':['old'],'selection':{'version':3},'retrieved':[{'title':'查北京天气','source':'workbuddy'}]}]
+   packet={'taskId':'exec','prompt':'生成 MQTT 动画','source':'workbuddy'}
+   plan={'terms':['MQTT','动画'],'subjects':['MQTT 动画'],'taskAction':'create','followup':False}
+   with patch('sessionlens.relay_model.call',return_value=plan),patch('sessionlens.knowledge.packet_for_task',return_value=packet),patch('sessionlens.task_presentation.project',return_value={'taskId':'exec'}),patch('sessionlens.relay_model.answer',return_value={}):
+    result=ask(tmp,{'enabled':True,'credentialFile':'configured'},'那次 MQTT 动画怎么做的？',history,lambda _:None)
+    self.assertEqual(result['taskId'],'exec')
+   db=sqlite3.connect(Path(tmp)/'collector.db');db.execute("DELETE FROM tasks WHERE id='exec'");db.commit();db.close()
+   packet={'taskId':'dev','prompt':'生成 MQTT 动画的界面原型','source':'codex'}
+   with patch('sessionlens.relay_model.call',return_value=plan),patch('sessionlens.knowledge.packet_for_task',return_value=packet),patch('sessionlens.task_presentation.project',return_value={'taskId':'dev'}),patch('sessionlens.relay_model.answer',return_value={}):
+    result=ask(tmp,{'enabled':True,'credentialFile':'configured'},'那次 MQTT 动画怎么做的？',history,lambda _:None)
+    self.assertEqual(result['taskId'],'dev')
