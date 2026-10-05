@@ -5,10 +5,12 @@ import os
 from pathlib import Path
 import sqlite3
 import sys
+import threading
 
-from PySide6.QtCore import Qt, QTimer, QLockFile, QSize
+from PySide6.QtCore import Qt, QTimer, QLockFile, QSize, QObject, Signal
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QTableWidget,QTableWidgetItem,QDialog,QFormLayout,QLineEdit,QCheckBox,QDialogButtonBox,QPlainTextEdit,QMessageBox,QProgressBar,QGroupBox,QFileDialog,QComboBox,QSplitter,QListWidget,QListWidgetItem,QTextBrowser)
-from sessionlens.supervision import TaskStore,describe
+from sessionlens.supervision import TaskStore,describe,event_text
+from sessionlens.assistant import run as run_assistant
 from sessionlens.desktop import Runtime,defaults,state_root,LABELS
 
 STYLE='''QWidget {font-family: Arial; font-size:14px; color:#233247; background:#f5f7fb;} QMainWindow {background:#f5f7fb;} QLabel {background:transparent;} QLabel#title {font-size:28px;font-weight:700;} QLabel#sub {color:#6a7a91;} QGroupBox {background:white;border:1px solid #dce3ee;border-radius:10px;margin-top:12px;padding:18px;} QGroupBox::title {subcontrol-origin:margin;left:16px;padding:0 5px;font-weight:600;} QPushButton {background:#245bdb;color:white;border:0;border-radius:6px;padding:10px 16px;} QPushButton:checked {background:#e9f0fb;color:#275eb2;border:1px solid #275eb2;} QPushButton:disabled {background:#9aaac3;} QTextBrowser,QListWidget,QLineEdit,QPlainTextEdit,QTableWidget {background:white;border:1px solid #dce3ee;border-radius:5px;padding:5px;} QListWidget::item:selected {background:#e9f0fb;color:#202d3d;} QTextBrowser {padding:14px;} QHeaderView::section {background:#edf2fa;padding:9px;border:0;font-weight:600;} QProgressBar {border:0;background:#e4eaf5;height:8px;border-radius:4px;text-align:center;} QProgressBar::chunk {background:#245bdb;border-radius:4px;}'''
@@ -19,6 +21,11 @@ def display_time(value):
         return datetime.fromisoformat(str(value).replace('Z','+00:00')).astimezone().strftime('%m-%d %H:%M')
     except (ValueError,OSError,OverflowError):return '时间未记录'
 
+class AssistantSignals(QObject):
+    progress=Signal(str)
+    result=Signal(object)
+    failed=Signal(str)
+
 class Settings(QDialog):
     def __init__(self,config,parent):
         super().__init__(parent);self.setWindowTitle('采集与上报设置');self.resize(620,360);self.config=config
@@ -28,14 +35,16 @@ class Settings(QDialog):
             paths=QLineEdit(';'.join(config['sources'][source]['roots']));form.addRow(check,paths);self.sources[source]=(check,paths)
         self.endpoint=QLineEdit(config.get('endpoint',''));self.endpoint.setPlaceholderText('https://www.chuhaijian.com/api/sessionlens/events');form.addRow('上报接口',self.endpoint)
         self.token=QLineEdit();self.token.setEchoMode(QLineEdit.Password);form.addRow('设备令牌（仅本次运行）',self.token)
+        self.assistant_url=QLineEdit(config.get('assistant',{}).get('url',''));form.addRow('AgentPair 分析接口',self.assistant_url)
+        self.assistant_token=QLineEdit(config.get('assistant',{}).get('tokenFile',''));form.addRow('分析授权文件',self.assistant_token)
         hint=QLabel('目录以分号分隔。开启上报后，会发送所选日志的完整记录。\n未配置接口和令牌时，仅保存在本机；关闭应用停止采集。');hint.setWordWrap(True);form.addRow(hint)
         buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);form.addRow(buttons)
     def result_config(self):
-        return {'sources':{s:{'enabled':c.isChecked(),'roots':[x.strip() for x in p.text().split(';') if x.strip()]} for s,(c,p) in self.sources.items()},'endpoint':self.endpoint.text().strip()}
+        return {'sources':{s:{'enabled':c.isChecked(),'roots':[x.strip() for x in p.text().split(';') if x.strip()]} for s,(c,p) in self.sources.items()},'endpoint':self.endpoint.text().strip(),'assistant':{'url':self.assistant_url.text().strip(),'tokenFile':self.assistant_token.text().strip()}}
 
 class Window(QMainWindow):
     def __init__(self,root):
-        super().__init__();self.root=root;self.runtime=None;self.mode='live';self.selected=None;self.selected_event=None;self.signature=None;self.step_limit=300
+        super().__init__();self.root=root;self.runtime=None;self.mode='live';self.selected=None;self.selected_event=None;self.signature=None;self.step_limit=300;self.answers={};self.show_records=False
         self.setWindowTitle('SessionLens · 任务监督与历史追溯');self.resize(1280,850)
         self.config=defaults()
         try:self.config=json.loads((root/'settings.json').read_text(encoding='utf-8'))
@@ -47,12 +56,44 @@ class Window(QMainWindow):
         header=QHBoxLayout();title=QLabel('SessionLens');title.setObjectName('title');header.addWidget(title);header.addWidget(QLabel('任务监督与历史追溯'));header.addStretch();self.button=QPushButton('采集状态 / 设置');self.button.clicked.connect(self.configure);header.addWidget(self.button);layout.addLayout(header)
         nav=QHBoxLayout();self.live=QPushButton('监工模式');self.history=QPushButton('历史追溯');self.live.setCheckable(True);self.history.setCheckable(True);self.live.clicked.connect(lambda:self.set_mode('live'));self.history.clicked.connect(lambda:self.set_mode('history'));nav.addWidget(self.live);nav.addWidget(self.history);nav.addStretch();self.follow=QCheckBox('跟随最新动作');self.follow.setChecked(True);self.follow.toggled.connect(self.follow_changed);nav.addWidget(self.follow);self.status=QLabel('尚未开始采集');nav.addWidget(self.status);layout.addLayout(nav)
         self.toolbar=QWidget();tools=QHBoxLayout(self.toolbar);tools.setContentsMargins(0,0,0,0);self.search=QLineEdit();self.search.setPlaceholderText('搜索任务、文件或问题…');self.search.returnPressed.connect(self.reload);tools.addWidget(self.search);find=QPushButton('查找任务');find.clicked.connect(self.reload);tools.addWidget(find);self.source=QComboBox();self.source.addItems(['全部 Agent','Codex','WorkBuddy']);self.source.currentIndexChanged.connect(self.reload);tools.addWidget(self.source);layout.addWidget(self.toolbar)
+        assistant_bar=QHBoxLayout();self.question=QLineEdit();self.question.setPlaceholderText('问当前任务：当时为什么这样做？用了什么参数？结果可靠吗？')
+        self.question.returnPressed.connect(self.ask_assistant);assistant_bar.addWidget(self.question)
+        self.ask=QPushButton('问 DeepSeek');self.ask.clicked.connect(self.ask_assistant);assistant_bar.addWidget(self.ask);layout.addLayout(assistant_bar)
+        self.analysis_status=QLabel('选择任务后提问 · AgentPair / DeepSeek · 仅发送当前任务证据');self.analysis_status.setWordWrap(True);layout.addWidget(self.analysis_status)
+        self.assistant_signals=AssistantSignals(self);self.assistant_signals.progress.connect(self.analysis_status.setText);self.assistant_signals.result.connect(self.assistant_ready);self.assistant_signals.failed.connect(self.assistant_failed)
         split=QSplitter(Qt.Horizontal);layout.addWidget(split,1)
         left=QWidget();lv=QVBoxLayout(left);lv.setContentsMargins(0,0,0,0);self.list_title=QLabel('当前任务');lv.addWidget(self.list_title);self.task_list=QListWidget();self.task_list.setWordWrap(True);self.task_list.currentRowChanged.connect(self.select_task);lv.addWidget(self.task_list);split.addWidget(left)
         self.middle=QTextBrowser();self.middle.setOpenLinks(False);self.middle.anchorClicked.connect(self.follow_link);split.addWidget(self.middle)
         right=QWidget();rv=QVBoxLayout(right);rv.setContentsMargins(0,0,0,0);rv.addWidget(QLabel('对应证据'));self.proof=QTextBrowser();rv.addWidget(self.proof,1);self.mark=QPushButton('标记待核实');self.mark.clicked.connect(self.mark_event);rv.addWidget(self.mark);raw=QPushButton('查看来源定位与原始片段');raw.clicked.connect(self.details);rv.addWidget(raw);split.addWidget(right);split.setSizes([230,640,330]);split.setChildrenCollapsible(False)
         self.foot=QLabel('只展示已记录的动作；待核实标记不会暂停 Agent。');self.foot.setWordWrap(True);layout.addWidget(self.foot)
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(1200);self.set_mode('live')
+    def ask_assistant(self):
+        if not self.selected or not self.ask.isEnabled():return
+        self.follow.blockSignals(True);self.follow.setChecked(False);self.follow.blockSignals(False)
+        task=self.selected;question=self.question.text().strip() or '这次任务是怎么完成的？解释当时的依据、关键工具参数、返回、调整过程和最后结果。'
+        self.ask.setEnabled(False);self.analysis_status.setText('正在准备当前任务证据…')
+        def work():
+            try:result=run_assistant(self.root,self.config.get('assistant',{}),task,question,self.assistant_signals.progress.emit);self.assistant_signals.result.emit(result)
+            except Exception as exc:self.assistant_signals.failed.emit(str(exc)[:250])
+        threading.Thread(target=work,daemon=True).start()
+    def assistant_ready(self,result):
+        self.ask.setEnabled(True);self.answers[result['taskId']]=result;self.show_records=False
+        self.analysis_status.setText('DeepSeek 已回答 · AgentPair 已复核 · 点击证据核对原文')
+        if self.selected==result['taskId']:self.select_task(self.task_list.currentRow())
+    def assistant_failed(self,error):
+        self.ask.setEnabled(True);self.analysis_status.setText('分析未完成：'+error)
+    def understanding_html(self,result):
+        esc=html.escape;value=result['understanding'];packet=result['packet']
+        text='<h3>任务助手</h3><p style="color:#67778b">'+esc(result.get('question',''))+'</p>'
+        for block in [value['overview']]+value['steps']:
+            if block.get('title'):text+='<h3>'+esc(block['title'])+'</h3>'
+            prefix={'inferred':'推断：','unknown':'尚不能确定：','recorded':''}.get(block['basis'],'')
+            text+='<p>'+esc(prefix+block['text']).replace('\n','<br>')+'</p><p>'
+            text+=' · '.join('<a href="ai:'+esc(ref)+'">'+esc(ref)+' 查看依据</a>' for ref in block['evidenceRefs'])+'</p>'
+        if value.get('gaps'):text+='<h3>还不能确定的地方</h3>'+''.join('<p>'+esc(str(x))+'</p>' for x in value['gaps'])
+        text+=f'<p style="color:#67778b">基于 {packet["includedRecords"]}/{packet["totalRecords"]} 条任务记录；部分长记录可能截取。模型：deepseek-v3.2。</p>'
+        text+='<p><a href="records:">'+('收起逐条记录' if self.show_records else '展开逐条记录')+'</a></p>'
+        return text
     def set_mode(self,mode):
         self.mode=mode;self.toolbar.setVisible(mode=='history');self.live.setChecked(mode=='live');self.history.setChecked(mode=='history');self.follow.setVisible(mode=='live');self.signature=None;self.reload()
     def follow_changed(self):
@@ -104,6 +145,21 @@ class Window(QMainWindow):
         outcome=last[2][:450] if last else '尚未记录后续动作'
         title=row[3].splitlines()[0][:90]
         content='<style>a {color:#275eb2;text-decoration:none;} p {line-height:150%;} blockquote {color:#202d3d;}</style>'+f'<h2>{esc(title)}</h2><p style="color:#67778b">{esc(row[1])} · {esc(display_time(row[4]))} · {esc(row[5])}</p><div style="background:#edf2f8"><h3>{"现在记录到什么" if self.mode=="live" else "这次实际做了什么"}</h3><p>{esc(outcome)}</p></div><h3>你的原始要求</h3><blockquote>{esc(row[3]).replace(chr(10),"<br>")}</blockquote><hr><p style="color:#67778b">按记录顺序展示；较长任务分批展开，原文完整保留。</p><h3>{"已经看到的动作" if self.mode=="live" else "处理经过与依据"}</h3>'
+        if row[0] not in self.answers and (self.root/'assistant.db').exists():
+            try:
+                with sqlite3.connect(self.root/'assistant.db') as cache:saved=cache.execute('SELECT result FROM answers WHERE task=? ORDER BY rowid DESC LIMIT 1',(row[0],)).fetchone()
+                if saved:self.answers[row[0]]=json.loads(saved[0])
+            except (sqlite3.Error,ValueError):pass
+        answer=self.answers.get(row[0])
+        if answer:
+            content='<style>a {color:#275eb2;text-decoration:none;}</style><h2>'+esc(title)+'</h2>'+self.understanding_html(answer)+(content if self.show_records else '')
+            if not self.show_records:
+                self.middle.setHtml(content);self.foot.setText('模型解释可以有误。点击每个结论下的证据核对当前任务记录。')
+                fragments=answer['packet']['fragments']
+                if self.selected_event not in {f['eventId'] for f in fragments}:
+                    first=next((f for f in fragments if f['evidenceId']==answer['understanding']['overview']['evidenceRefs'][0]),fragments[0]);self.show_evidence(first['eventId'],first['evidenceId'])
+                if row[6]>answer['packet']['revision']:self.analysis_status.setText('这是此前记录的分析；任务有新记录，可再次提问更新解释。')
+                return
         calls={s[3] for s in self.steps if s[1]=='工具调用' and s[3]};results={s[3] for s in self.steps if s[1]=='工具返回' and s[3]}
         for i,s in enumerate(self.steps):
             focused=s[0]==self.selected_event
@@ -126,21 +182,28 @@ class Window(QMainWindow):
             chosen=next((i for i,s in enumerate(self.steps) if s[0]==self.selected_event),len(self.steps)-1);self.select_evidence(chosen)
     def follow_link(self,url):
         target=url.toString()
-        if target=='more:':self.step_limit+=300;self.select_task(self.task_list.currentRow())
+        if target=='records:':self.show_records=not self.show_records;self.select_task(self.task_list.currentRow())
+        elif target.startswith('ai:'):
+            result=self.answers.get(self.selected,{})
+            fragment=next((f for f in result.get('packet',{}).get('fragments',[]) if f['evidenceId']==target[3:]),None)
+            if fragment:self.show_evidence(fragment['eventId'],fragment['evidenceId'])
+        elif target=='more:':self.step_limit+=300;self.select_task(self.task_list.currentRow())
         elif target.startswith('e:'):
             self.follow.blockSignals(True);self.follow.setChecked(False);self.follow.blockSignals(False)
             self.select_evidence(int(target[2:]));self.select_task(self.task_list.currentRow())
         elif target.startswith('t:'):
             self.mode='history';self.toolbar.show();self.search.clear();self.selected=target[2:];self.signature=None;self.reload()
     def select_evidence(self,index):
-        s=self.steps[index];self.selected_event=s[0];e=self.store.evidence(s[0]);esc=html.escape
-        loc=e.get('evidence',{});quote=s[2]
-        linked=''
-        if s[3]:
-            peers=self.store.db.execute('SELECT kind,excerpt FROM task_steps WHERE task=? AND call_id=? ORDER BY seq',(self.selected,s[3])).fetchall()
-            linked='<hr><h3>这次工具往返</h3>'+''.join('<p><b>'+esc(kind)+'</b></p><pre>'+esc(excerpt[:4000])+'</pre>' for kind,excerpt in peers)
-        self.proof.setHtml(f'<h3>E{index+1:03} · {esc(s[1])}</h3><p>{esc(str(e.get("timestamp") or "时间未记录"))}</p><pre style="white-space:pre-wrap">{esc(quote[:12000])}</pre>{linked}<hr><p>来源：{esc(str(loc.get("path","未记录")))}</p><p>字节 {loc.get("byteStart","?")}–{loc.get("byteEnd","?")}</p><p>原始记录保存在本机。此处最多预览 12,000 字符；完整内容可导出。</p>')
-        self.mark.setText('取消待核实标记' if self.store.marked(s[0]) else '标记待核实')
+        self.show_evidence(self.steps[index][0],f'E{index+1:03}')
+    def show_evidence(self,identity,ref):
+        self.selected_event=identity;e=self.store.evidence(identity);esc=html.escape
+        if not e:return
+        loc=e.get('evidence',{});quote=event_text(e);call=e.get('callId');linked=''
+        if call:
+            peers=self.store.db.execute('SELECT e.event FROM task_steps s JOIN events e ON e.id=s.event WHERE s.task=? AND s.call_id=? ORDER BY s.seq',(self.selected,call)).fetchall()
+            linked='<hr><h3>这次工具往返</h3>'+''.join('<p><b>'+esc(json.loads(raw)['kind'])+'</b></p><pre style="white-space:pre-wrap">'+esc(event_text(json.loads(raw))[:6000])+'</pre>' for (raw,) in peers)
+        self.proof.setHtml(f'<h3>{esc(ref)} · {esc(e.get("name") or e["kind"])}</h3><p>{esc(display_time(e.get("timestamp")))}</p><pre style="white-space:pre-wrap">{esc(quote[:12000])}</pre>{linked}<hr><p>来源：{esc(str(loc.get("path","未记录")))}</p><p>字节 {loc.get("byteStart","?")}–{loc.get("byteEnd","?")}</p><p>完整原文保存在本机，可导出核对。</p>')
+        self.mark.setText('取消待核实标记' if self.store.marked(identity) else '标记待核实')
     def mark_event(self):
         if self.selected_event:self.store.mark(self.selected_event);self.mark.setText('取消待核实标记' if self.store.marked(self.selected_event) else '标记待核实')
     def details(self):

@@ -26,6 +26,20 @@ def readable(value,user=False):
             if re.match(r'\s*<(environment_context|permissions|instructions)\b',text):return ''
     return text.strip()[:16000]
 
+def event_text(event):
+    """Select semantic fields before generic metadata (usage is not a command)."""
+    p=event.get('payload',{});item=p.get('item',p);kind=category(event)
+    if kind=='工具调用':
+        value=item.get('arguments',item.get('input',item.get('command',item)))
+        if isinstance(value,str):
+            try:value=json.loads(value)
+            except ValueError:pass
+        if isinstance(value,dict):return '\n\n'.join(str(key)+':\n'+(v if isinstance(v,str) else json.dumps(v,ensure_ascii=False)) for key,v in value.items())
+        return text_content(value)
+    if kind=='解题思路':return text_content(item.get('content') or item.get('rawContent') or item.get('summary') or item.get('text') or '')
+    if kind=='工具返回':return text_content(item.get('output',item))
+    return readable(item,user=kind=='用户提问')
+
 def timestamp(value):
     try:
         if str(value).isdigit():return datetime.fromtimestamp(int(value)/1000,timezone.utc).isoformat()
@@ -52,8 +66,10 @@ class TaskStore:
         CREATE TABLE IF NOT EXISTS task_heads(stream TEXT PRIMARY KEY,task TEXT,prompt TEXT);
         CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,source TEXT,session TEXT,prompt TEXT,updated TEXT,state TEXT,last_row INTEGER,search TEXT);
         CREATE INDEX IF NOT EXISTS tasks_recent ON tasks(last_row DESC);
+        CREATE INDEX IF NOT EXISTS tasks_updated ON tasks(updated DESC,last_row DESC);
         CREATE TABLE IF NOT EXISTS task_steps(event TEXT PRIMARY KEY,task TEXT,seq INTEGER,kind TEXT,excerpt TEXT,call_id TEXT);
         CREATE INDEX IF NOT EXISTS task_step_order ON task_steps(task,seq);
+        CREATE INDEX IF NOT EXISTS task_step_seq ON task_steps(seq);
         CREATE TABLE IF NOT EXISTS task_history_heads(stream TEXT PRIMARY KEY,task TEXT,prompt TEXT);
         CREATE TABLE IF NOT EXISTS task_marks(event TEXT PRIMARY KEY);
         ''')
@@ -75,7 +91,7 @@ class TaskStore:
         with self.db:
             for seq,identity,raw in records:
                 e=json.loads(raw);source=e.get('source','codex');session=e['sessionId'];stream=source+':'+session
-                kind=category(e);p=e.get('payload',{});item=p.get('item',p);body=readable(item,user=kind=='用户提问')
+                kind=category(e);p=e.get('payload',{});item=p.get('item',p);body=event_text(e)
                 head=self.db.execute('SELECT task,prompt FROM '+heads+' WHERE stream=?',(stream,)).fetchone()
                 # Mirrored user events share a task, until another meaningful action.
                 if kind=='用户提问' and body:
@@ -101,6 +117,17 @@ class TaskStore:
                 cursor=seq
             if records and not custom:self.db.execute('INSERT OR REPLACE INTO task_cursor VALUES(?,?)',(key,cursor))
         return len(records)
+    def repair_excerpts(self,limit=50):
+        row=self.db.execute("SELECT value FROM task_cursor WHERE name='semantic_fields_v1'").fetchone()
+        cursor=row[0] if row else 0
+        rows=self.db.execute('SELECT s.seq,s.event,e.event FROM task_steps s JOIN events e ON e.id=s.event WHERE s.seq>? ORDER BY s.seq LIMIT ?',(cursor,limit)).fetchall()
+        with self.db:
+            for seq,identity,raw in rows:
+                event=json.loads(raw);body=event_text(event);name=event.get('name')
+                self.db.execute('UPDATE task_steps SET excerpt=? WHERE event=?',((name+' · ' if name else '')+body[:16000],identity))
+                cursor=seq
+            if rows:self.db.execute("INSERT OR REPLACE INTO task_cursor VALUES('semantic_fields_v1',?)",(cursor,))
+        return len(rows)
     def recent_source(self,source,limit=500):
         # Priority warm-up for both agents, so Codex history cannot starve WorkBuddy.
         if source=='codex':
@@ -118,7 +145,12 @@ class TaskStore:
         sql='SELECT id,source,session,prompt,updated,state,last_row FROM tasks'+(' WHERE '+' AND '.join(clauses) if clauses else '')+' ORDER BY updated DESC,last_row DESC LIMIT 100'
         return self.db.execute(sql,args).fetchall()
     def steps(self,task,limit=300,latest=False):
-        rows=self.db.execute('SELECT event,kind,excerpt,call_id FROM task_steps WHERE task=? ORDER BY seq '+('DESC' if latest else 'ASC')+' LIMIT ?',(task,limit)).fetchall()
+        rows=self.db.execute('SELECT s.event,s.kind,s.excerpt,s.call_id,e.event FROM task_steps s JOIN events e ON e.id=s.event WHERE s.task=? ORDER BY s.seq '+('DESC' if latest else 'ASC')+' LIMIT ?',(task,limit)).fetchall()
+        projected=[]
+        for identity,kind,excerpt,call,raw in rows:
+            event=json.loads(raw);name=event.get('name')
+            projected.append((identity,kind,(name+' · ' if name else '')+event_text(event)[:16000],call))
+        rows=projected
         return rows[::-1] if latest else rows
     def evidence(self,event):
         row=self.db.execute('SELECT event FROM events WHERE id=?',(event,)).fetchone()

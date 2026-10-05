@@ -151,6 +151,7 @@ class Runtime:
                 try:
                     live=store.advance(100,realtime=True)
                     count=store.advance(50)
+                    store.repair_excerpts(30)
                     indexed=store.db.execute("SELECT value FROM task_cursor WHERE name='rowid'").fetchone()[0]
                     boundary=store.db.execute("SELECT value FROM task_cursor WHERE name='boundary'").fetchone()[0]
                     self.update(task_index=f'历史整理 {indexed}/{boundary} · 新任务优先' if count else '历史索引已更新')
