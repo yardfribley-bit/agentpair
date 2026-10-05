@@ -103,6 +103,10 @@ class TaskStore:
         return len(records)
     def recent_source(self,source,limit=500):
         # Priority warm-up for both agents, so Codex history cannot starve WorkBuddy.
+        if source=='codex':
+            candidates=self.db.execute('SELECT e.rowid,e.id,e.event FROM display_index i JOIN events e ON e.id=i.id WHERE i.source=? ORDER BY e.rowid DESC LIMIT 2000',(source,)).fetchall()
+            chosen=sorted(candidates,key=lambda row:timestamp(json.loads(row[2]).get('timestamp')),reverse=True)[:limit]
+            return sorted(chosen,key=lambda row:row[0])
         rows=self.db.execute("SELECT e.rowid,e.id,e.event FROM display_index i JOIN events e ON e.id=i.id WHERE i.source=? ORDER BY CASE WHEN typeof(json_extract(e.event,'$.timestamp'))='integer' THEN json_extract(e.event,'$.timestamp')/1000.0 ELSE strftime('%s',json_extract(e.event,'$.timestamp')) END DESC LIMIT ?",(source,limit)).fetchall()
         return sorted(rows,key=lambda row:row[0])
     def tasks(self,query='',source='',live=False):
