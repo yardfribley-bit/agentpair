@@ -122,3 +122,27 @@ class LiveUiTests(unittest.TestCase):
             with patch('sessionlens.chat_window.ask',return_value={'question':'它用了什么工具？','selectionNeeded':True,'options':[]}) as ask,patch('sessionlens.chat_window.threading.Thread',Immediate):
                 chat.send();self.assertEqual(ask.call_args.args[3],[])
             self.app.processEvents();chat.close()
+
+    def test_multi_turn_requirements_and_manual_association_are_accessible(self):
+        from sessionlens.chat_window import ChatWindow
+        from sessionlens.task_presentation import project
+        from sessionlens.assistant import packet_for_task
+        from sessionlens.task_lineage import history
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QDialog,QComboBox,QPushButton
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);window=Window(root);chat=ChatWindow(window);log=root/'task.jsonl'
+            records=[{'type':'message','role':'user','content':s,'sessionId':'s'} for s in ('设计会员管理页面','手机号登录，会员表格','做')]
+            log.write_text(''.join(json.dumps(r)+'\n' for r in records));c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True)
+            task=window.store.db.execute("SELECT id FROM task_groups WHERE prompt='手机号登录，会员表格'").fetchone()[0]
+            q='会员登录为什么这样做';chat.input.setPlainText(q)
+            chat.messages=[{'question':q,'taskId':task,'presentation':project(window.store.db,task),'packet':packet_for_task(window.store.db,task),'understanding':{'overview':{'text':'需求讨论之后开始执行。','evidenceRefs':[]},'steps':[]}}]
+            chat.render();self.assertFalse(chat.task_view.requirement_button.isHidden());self.assertIn('2 轮',chat.task_view.requirement_button.text())
+            def save():
+                dialog=next(w for w in self.app.topLevelWidgets() if isinstance(w,QDialog) and w.windowTitle()=='修正任务关联')
+                combos=dialog.findChildren(QComboBox);combos[1].setCurrentIndex(1)
+                next(b for b in dialog.findChildren(QPushButton) if b.text()=='保存关联').click()
+            QTimer.singleShot(0,save);chat.correct_association()
+            self.assertEqual(len(window.store.tasks()),1);self.assertIn('重新查询',chat.answer.toPlainText())
+            self.assertEqual(chat.input.toPlainText(),q);self.assertEqual(history(window.store.db,task)[0]['text'],'设计会员管理页面')
+            c.db.close();chat.close()

@@ -32,6 +32,7 @@ class Brain(QWidget):
 
 class TaskView(QWidget):
     evidenceRequested=Signal(str)
+    associationRequested=Signal()
     contentChanged=Signal()
     def __init__(self,parent=None):
         super().__init__(parent);self.data={};self.index=0;self.position=0;self.key='overview'
@@ -39,6 +40,9 @@ class TaskView(QWidget):
         v=QVBoxLayout(self);v.setAlignment(Qt.AlignTop);v.setContentsMargins(0,0,0,0);v.setSpacing(14)
         self.heading=label('', 'font-size:15px;font-weight:600;');v.addWidget(self.heading)
         self.original_task=label('');self.original_task.hide();self.meta=label('','font-size:12px;color:#61748c;');meta_row=QHBoxLayout();meta_row.addWidget(self.meta,1);self.delivered=label('');self.trust=label('');meta_row.addWidget(self.delivered);meta_row.addWidget(self.trust);v.addLayout(meta_row)
+        self.requirement_toolbar=QWidget();requirement_row=QHBoxLayout(self.requirement_toolbar);requirement_row.setContentsMargins(0,0,0,0)
+        self.requirement_button=QPushButton('查看需求与确认过程');self.requirement_button.clicked.connect(self.requirement_original);requirement_row.addWidget(self.requirement_button);self.requirement_button.hide()
+        self.association_button=QPushButton('修正任务关联');self.association_button.clicked.connect(lambda:self.associationRequested.emit());requirement_row.addWidget(self.association_button);self.association_button.hide();requirement_row.addStretch();v.addWidget(self.requirement_toolbar);self.requirement_toolbar.hide()
         self.summary=label('','font-size:17px;color:#203044;');v.addWidget(self.summary)
         tabs=QHBoxLayout();self.tabs={}
         for title,key in [('怎么做的 / 做成了吗','overview'),('当时怎么想','reasoning'),('调用了什么','calls'),('用到什么上下文','context'),('交付与验证','delivery')]:
@@ -62,10 +66,28 @@ class TaskView(QWidget):
         self.stop();self.result=result;self.data=result['presentation'];self.index=0;self.position=0
         d=self.data;self.heading.hide();self.heading.setText('对应任务 · '+short(d['prompt'],55));self.original_task.setText('用户原话：“'+short(d['prompt'],180)+'”');self.meta.setText({'workbuddy':'WorkBuddy','codex':'Codex'}.get(d['source'],d['source'])+' · '+task_title(d['prompt'])+' · '+str(d.get('updated',''))[:10]+' · 目标：'+short(d['prompt'],24))
         self.meta.setToolTip(d['prompt']);self.make_steps();self.selected_step=0;self.set_status()
+        history=d.get('requirements',[]);changes=sum(r['kind']=='revision' for r in history)
+        self.requirement_button.setVisible(len(history)>1)
+        self.association_button.setVisible(bool(history))
+        self.requirement_toolbar.setVisible(bool(history))
+        self.requirement_button.setText('需求讨论 '+str(len(history))+' 轮 · 调整 '+str(changes)+' 次 · 查看依据')
         q=result['question'];self.select('context' if any(w in q for w in ('上下文','记忆')) else 'calls' if any(w in q for w in ('工具','调用','参数')) else 'reasoning' if any(w in q for w in ('思路','思考','reasoning')) else 'delivery' if any(w in q for w in ('交付','时长')) else 'overview')
     def stop(self):
         self.timer.stop();self.brain.active=False;self.brain.update();self.play.setText('播放回放')
         for frame,_ in self.nodes:frame.setStyleSheet('')
+    def requirement_original(self,call=None):
+        rows=self.data.get('requirements',[])
+        link=call.get('requirement') if isinstance(call,dict) else None
+        if link:
+            endpoint=next((r['seq'] for r in rows if r['eventId']==link['turnEvent']),None)
+            if endpoint is not None:rows=[r for r in rows if r['seq']<=endpoint]
+        text=[]
+        for i,row in enumerate(rows,1):
+            mark=' · 此次执行前的确认' if link and row['eventId']==link.get('approvalEvent') else ' · 此次执行所依据的需求版本' if link and row['eventId']==link.get('requirementEvent') else ''
+            text.append(str(i)+' · '+row['label']+mark+'\n'+row['text'])
+        if link and link.get('planEvent'):
+            text.append('确认前 Agent 最近提出的内容（根据顺序关联）\n'+self.data.get('plans',{}).get(link['planEvent'],'本次没有读取该原文'))
+        self.show_raw('执行依据' if link else '需求与确认过程','\n\n'.join(text)+'\n\n关联依据：前后需求、方案与确认记录。自动关联属于推断，可以在本机修正。')
     def select(self,key):
         self.stop();self.key=key
         for k,b in self.tabs.items():b.setChecked(k==key)
@@ -157,6 +179,8 @@ class TaskView(QWidget):
             for i in ([self.steps[self.selected_step]['call']] if self.steps else []):
                 c=d['calls'][i]
                 note=self.call_note(c);v=self.card(str(i+1)+' · '+c['name'],note.get('purpose',''))
+                if c.get('requirement'):
+                    b=QPushButton('查看这次执行依据的需求 / 确认');b.clicked.connect(lambda checked=False,call=c:self.requirement_original(call));v.addWidget(b,0,Qt.AlignLeft)
                 if note.get('inputSummary'):self.field(v,'输入内容',short(note['inputSummary'],190))
                 for f in c['fields']:
                     if f['key'] in ('prompt','command','description','explanation','toolName'):continue
@@ -177,6 +201,7 @@ class TaskView(QWidget):
                 b=QPushButton('查看完整参数 / 原始返回');b.clicked.connect(lambda checked=False,n=i:self.tool_original(n));v.addWidget(b,0,Qt.AlignLeft)
         elif self.key=='context':
             v=self.card('信息从哪里来','区分用户要求、工具返回和 Agent 自己准备的内容。');self.field(v,'用户明确要求',short(d['prompt'],160))
+            if len(d.get('requirements',[]))>1:self.field(v,'后续讨论','还有 '+str(len(d['requirements'])-1)+' 轮确认或调整，可在“查看依据”中核对原话')
             for c in d['calls']:
                 if 'prompt' in c['arguments'].get('params',{}):self.field(v,'Agent 准备的内容',short(self.call_note(c).get('inputSummary','提示词内容见工具参数'),180))
             backgrounds=[x for x in d['context'] if x['kind']=='会话背景'];self.field(v,'背景与记忆','有 '+str(len(backgrounds))+' 份背景记录，可查看原文' if backgrounds else '当前任务片段没有单独记录，不能确认完整模型上下文')
@@ -191,7 +216,7 @@ class TaskView(QWidget):
         if refs and self.key in ('calls','context','delivery'):
             proof=QPushButton('核对原始证据');proof.clicked.connect(lambda:self.evidenceRequested.emit(refs[0]));self.detail_layout.addWidget(proof,0,Qt.AlignLeft)
         self.details.setVisible(bool(self.detail_layout.count()))
-        self.note.setText('历史回放 · 工具返回已按调用编号关联'+(' · 部分记录未读取' if d['included']<d['total'] else ''))
+        self.note.setText('历史回放 · 工具返回已按调用编号关联'+(' · 部分记录未读取' if d['included']<d['total'] else '')+(' · 前置需求未确认，可修正任务关联' if any(r['kind']=='unresolved' for r in d.get('requirements',[])) else ''))
     def toggle(self):
         if self.timer.isActive():self.stop();self.play.setText('继续回放');return
         if not self.data.get('frames'):return

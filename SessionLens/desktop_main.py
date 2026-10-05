@@ -147,7 +147,7 @@ class Window(QMainWindow):
         row=self.rows[index]
         if self.selected!=row[0]:self.step_limit=300
         self.selected=row[0];self.steps=self.store.steps(row[0],self.step_limit,latest=self.mode=='live');esc=html.escape
-        last=self.store.db.execute('SELECT event,kind,excerpt,call_id FROM task_steps WHERE task=? ORDER BY seq DESC LIMIT 1',(row[0],)).fetchone()
+        last=self.store.db.execute('SELECT event,kind,excerpt,call_id FROM linked_task_steps WHERE task=? ORDER BY seq DESC LIMIT 1',(row[0],)).fetchone()
         outcome=last[2][:450] if last else '尚未记录后续动作'
         title=row[3].splitlines()[0][:90]
         content='<style>a {color:#275eb2;text-decoration:none;} p {line-height:150%;} blockquote {color:#202d3d;}</style>'+f'<h2>{esc(title)}</h2><p style="color:#67778b">{esc(row[1])} · {esc(display_time(row[4]))} · {esc(row[5])}</p><div style="background:#edf2f8"><h3>{"现在记录到什么" if self.mode=="live" else "这次实际做了什么"}</h3><p>{esc(outcome)}</p></div><h3>你的原始要求</h3><blockquote>{esc(row[3]).replace(chr(10),"<br>")}</blockquote><hr><p style="color:#67778b">按记录顺序展示；较长任务分批展开，原文完整保留。</p><h3>{"已经看到的动作" if self.mode=="live" else "处理经过与依据"}</h3>'
@@ -171,14 +171,14 @@ class Window(QMainWindow):
             focused=s[0]==self.selected_event
             step_title,step_body=describe(s[1],s[2])
             content+=f'<div style="background:{"#e9f0fb" if focused else "#ffffff"};margin:8px;padding:8px"><a href="e:{i}"><b>{i+1} · {esc(step_title)}</b>　E{i+1:03}</a><p>{esc(step_body[:300]).replace(chr(10),"<br>")}</p></div>'
-        total=self.store.db.execute('SELECT count(*) FROM task_steps WHERE task=?',(row[0],)).fetchone()[0]
+        total=self.store.db.execute('SELECT count(*) FROM linked_task_steps WHERE task=?',(row[0],)).fetchone()[0]
         if self.mode=='history' and total>len(self.steps):content+=f'<p><a href="more:">继续展开 · 已显示 {len(self.steps)} / {total} 个步骤</a></p>'
         gaps=[]
         if total==len(self.steps) and calls-results:gaps.append(f'{len(calls-results)} 个工具调用尚未找到对应返回。')
         if total==len(self.steps) and not any(s[1]=='解题思路' for s in self.steps):gaps.append('这段日志没有记录处理思路，无法据此说明为什么这样做。')
         if row[5]=='结束状态未记录':gaps.append('没有明确的任务结束记录。')
         if gaps:content+='<div style="background:#fff5e7;color:#875820"><h3>这次还有什么没说明白</h3><p>'+ '<br>'.join(gaps)+'</p></div>'
-        related=self.store.db.execute('SELECT id,prompt FROM tasks WHERE source=? AND session=? AND id<>? ORDER BY last_row DESC LIMIT 4',(row[1],row[2],row[0])).fetchall()
+        related=self.store.db.execute('SELECT id,prompt FROM task_groups WHERE source=? AND session=? AND id<>? ORDER BY last_row DESC LIMIT 4',(row[1],row[2],row[0])).fetchall()
         if related:
             content+='<hr><h3>同一会话 · 继续追溯前后任务</h3>'
             for identity,prompt in related:content+=f'<p><a href="t:{identity}">{esc(prompt[:100])}</a></p>'
@@ -206,7 +206,7 @@ class Window(QMainWindow):
         if not e:return
         loc=e.get('evidence',{});quote=event_text(e);call=e.get('callId');linked=''
         if call:
-            peers=self.store.db.execute('SELECT e.event FROM task_steps s JOIN events e ON e.id=s.event WHERE s.task=? AND s.call_id=? ORDER BY s.seq',(self.selected,call)).fetchall()
+            peers=self.store.db.execute('SELECT e.event FROM linked_task_steps s JOIN events e ON e.id=s.event WHERE s.task=? AND s.call_id=? ORDER BY s.seq',(self.selected,call)).fetchall()
             linked='<hr><h3>这次工具往返</h3>'+''.join('<p><b>'+esc(json.loads(raw)['kind'])+'</b></p><pre style="white-space:pre-wrap">'+esc(event_text(json.loads(raw))[:6000])+'</pre>' for (raw,) in peers)
         self.proof.setHtml(f'<h3>{esc(ref)} · {esc(e.get("name") or e["kind"])}</h3><p>{esc(display_time(e.get("timestamp")))}</p><pre style="white-space:pre-wrap">{esc(quote[:12000])}</pre>{linked}<hr><p>来源：{esc(str(loc.get("path","未记录")))}</p><p>字节 {loc.get("byteStart","?")}–{loc.get("byteEnd","?")}</p><p>完整原文保存在本机，可导出核对。</p>')
         self.mark.setText('取消待核实标记' if self.store.marked(identity) else '标记待核实')

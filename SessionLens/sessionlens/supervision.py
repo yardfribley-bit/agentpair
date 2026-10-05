@@ -80,7 +80,10 @@ class TaskStore:
                 for table in ('tasks','task_steps','task_heads','task_history_heads','task_cursor'):self.db.execute('DELETE FROM '+table)
                 boundary=self.db.execute('SELECT COALESCE(max(rowid),0) FROM events').fetchone()[0]
                 self.db.executemany('INSERT INTO task_cursor VALUES(?,?)',[('version',3),('boundary',boundary),('live',max(0,boundary-2000)),('rowid',0)])
+        from .task_lineage import initialize
+        initialize(self.db)
     def advance(self,limit=100,realtime=False,records=None):
+        from .task_lineage import enqueue,repair
         key='live' if realtime else 'rowid'
         row=self.db.execute('SELECT value FROM task_cursor WHERE name=?',(key,)).fetchone();cursor=row[0] if row else 0
         boundary=self.db.execute("SELECT value FROM task_cursor WHERE name='boundary'").fetchone()[0]
@@ -112,11 +115,19 @@ class TaskStore:
                         excerpt=(str(name)+' · ' if name else '')+body
                         call=e.get('callId') or (item.get('call_id') if isinstance(item,dict) else None)
                         self.db.execute('INSERT OR IGNORE INTO task_steps VALUES(?,?,?,?,?,?)',(identity,task,seq,'文件修改' if k=='file_change' else kind,excerpt,call))
+                        self.db.execute('INSERT OR IGNORE INTO task_step_owners VALUES(?,?,?)',(identity,task,task))
                         # Bound search text per task; all full evidence remains addressable.
                         self.db.execute('UPDATE tasks SET search=substr(search || char(10) || ?,1,100000) WHERE id=?',(excerpt,task))
+                    enqueue(self.db,source,session,seq)
                 cursor=seq
             if records and not custom:self.db.execute('INSERT OR REPLACE INTO task_cursor VALUES(?,?)',(key,cursor))
+        # Warm-up batches queue work; normal new records get priority. Repair is
+        # bounded by sessions and reads only the compact derived projection.
+        if records and not custom:repair(self.db,2)
         return len(records)
+    def repair_links(self,limit=1):
+        from .task_lineage import repair
+        return repair(self.db,limit)
     def repair_excerpts(self,limit=50):
         row=self.db.execute("SELECT value FROM task_cursor WHERE name='semantic_fields_v1'").fetchone()
         cursor=row[0] if row else 0
@@ -137,17 +148,20 @@ class TaskStore:
         rows=self.db.execute("SELECT e.rowid,e.id,e.event FROM display_index i JOIN events e ON e.id=i.id WHERE i.source=? ORDER BY CASE WHEN typeof(json_extract(e.event,'$.timestamp'))='integer' THEN json_extract(e.event,'$.timestamp')/1000.0 ELSE strftime('%s',json_extract(e.event,'$.timestamp')) END DESC LIMIT ?",(source,limit)).fetchall()
         return sorted(rows,key=lambda row:row[0])
     def tasks(self,query='',source='',live=False):
+        from .task_lineage import task_table
         # Old projections remain recoverable, but context envelopes aren't user
         # tasks. Apply the same boundary rule to already indexed history.
         clauses=["prompt NOT LIKE '<task-notification>%'", "prompt NOT LIKE '<cb_summary>%'", "prompt NOT LIKE '<conversation_history_summary>%'", "prompt NOT LIKE '# 对话历史摘要%'", "prompt NOT LIKE 'The following is the Codex agent history%'"];args=[]
         if source:clauses.append('source=?');args.append(source)
-        for word in search_terms(query):clauses.append('instr(lower(search),lower(?))>0');args.append(word)
+        for word in search_terms(query):
+            clauses.append('(instr(lower(search),lower(?))>0 OR EXISTS (SELECT 1 FROM task_links l JOIN tasks t ON t.id=l.turn_task WHERE l.root=task_groups.id AND instr(lower(t.search),lower(?))>0))');args.extend((word,word))
         # Monitor lists latest task per session; it does not claim these agents are alive.
-        if live:clauses.append('id IN (SELECT task FROM task_heads)')
-        sql='SELECT id,source,session,prompt,updated,state,last_row FROM tasks'+(' WHERE '+' AND '.join(clauses) if clauses else '')+' ORDER BY updated DESC,last_row DESC LIMIT 100'
+        if live:clauses.append('id IN (SELECT COALESCE(l.root,h.task) FROM task_heads h LEFT JOIN task_links l ON l.turn_task=h.task)')
+        sql='SELECT id,source,session,prompt,updated,state,last_row FROM '+task_table(self.db)+(' WHERE '+' AND '.join(clauses) if clauses else '')+' ORDER BY updated DESC,last_row DESC LIMIT 100'
         return self.db.execute(sql,args).fetchall()
     def steps(self,task,limit=300,latest=False):
-        rows=self.db.execute('SELECT s.event,s.kind,s.excerpt,s.call_id,e.event FROM task_steps s JOIN events e ON e.id=s.event WHERE s.task=? ORDER BY s.seq '+('DESC' if latest else 'ASC')+' LIMIT ?',(task,limit)).fetchall()
+        from .task_lineage import step_table,resolve
+        rows=self.db.execute('SELECT s.event,s.kind,s.excerpt,s.call_id,e.event FROM '+step_table(self.db)+' s JOIN events e ON e.id=s.event WHERE s.task=? ORDER BY s.seq '+('DESC' if latest else 'ASC')+' LIMIT ?',(resolve(self.db,task),limit)).fetchall()
         projected=[]
         for identity,kind,excerpt,call,raw in rows:
             event=json.loads(raw);name=event.get('name')

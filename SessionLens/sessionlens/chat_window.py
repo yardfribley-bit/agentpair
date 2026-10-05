@@ -36,6 +36,7 @@ class ChatWindow(QMainWindow):
         row=QHBoxLayout();hint=QLabel('发送相关证据给已配置的模型分析');hint.setWordWrap(True);hint.setStyleSheet('color:#667589;font-size:12px');row.addWidget(hint,1);self.send_button=QPushButton('查询');self.send_button.setMinimumWidth(88);self.send_button.clicked.connect(self.send);row.insertWidget(0,self.send_button);cv.addLayout(row);m.addWidget(self.composer)
         self.status=QLabel('从你的任务记录中寻找答案');self.status.setWordWrap(True);m.addWidget(self.status)
         self.split=QSplitter(Qt.Horizontal);self.split.setChildrenCollapsible(False);self.answer=QTextBrowser();self.answer.setOpenLinks(False);self.answer.anchorClicked.connect(self.evidence);self.results=QStackedWidget();self.results.addWidget(self.answer);self.task_view=TaskView();self.task_view.contentChanged.connect(lambda:QTimer.singleShot(0,self.fit_result));self.task_view.evidenceRequested.connect(lambda ref:self.evidence(QUrl("proof:"+str(len(self.messages)-1)+":"+ref)));self.results.addWidget(self.task_view);self.split.addWidget(self.results)
+        self.task_view.associationRequested.connect(self.correct_association)
         proof_panel=QWidget();pv=QVBoxLayout(proof_panel);pv.setContentsMargins(0,0,0,0);pr=QHBoxLayout();pr.addWidget(QLabel('原始依据'));pr.addStretch();close=QPushButton('收起');close.clicked.connect(proof_panel.hide);pr.addWidget(close);pv.addLayout(pr);self.proof=QTextBrowser();self.proof.setMinimumWidth(240);pv.addWidget(self.proof);self.proof_panel=proof_panel;self.split.addWidget(proof_panel);proof_panel.hide();m.addWidget(self.split,1)
         foot=QHBoxLayout();self.collection_status=QLabel('本地任务库 · 采集状态可查看');foot.addWidget(self.collection_status,1);view=QPushButton('查看采集进度');view.clicked.connect(self.open_collection);foot.addWidget(view);m.addLayout(foot);self.results.setSizePolicy(__import__('PySide6.QtWidgets',fromlist=['QSizePolicy']).QSizePolicy.Expanding,__import__('PySide6.QtWidgets',fromlist=['QSizePolicy']).QSizePolicy.Minimum);main_scroll=QScrollArea();main_scroll.setWidgetResizable(True);main_scroll.setFrameShape(QScrollArea.NoFrame);main_scroll.setWidget(main);outer.addWidget(main_scroll,1)
         self.signals=Signals(self);self.signals.progress.connect(self.status.setText);self.signals.ready.connect(self.received);self.signals.failed.connect(self.failed)
@@ -61,6 +62,26 @@ class ChatWindow(QMainWindow):
         location=QLabel('原始记录保存在本机：'+str(self.root/'collector.db'));location.setWordWrap(True);layout.addWidget(location)
         row=QHBoxLayout();settings=QPushButton('上报与采集设置');settings.clicked.connect(lambda:(dialog.accept(),self.collector.configure()));row.addWidget(settings);done=QPushButton('关闭');done.clicked.connect(dialog.accept);row.addWidget(done);layout.addLayout(row);dialog.exec()
     def prefill(self,question):self.input.setPlainText(question);self.input.setFocus()
+    def correct_association(self):
+        if self.busy or not self.messages:return
+        from .task_lineage import history,set_override
+        result=self.messages[-1];store=self.collector.store;turns=history(store.db,result['taskId'])
+        if not turns:return
+        dialog=QDialog(self);dialog.setWindowTitle('修正任务关联');dialog.resize(680,340);v=QVBoxLayout(dialog)
+        v.addWidget(QLabel('选择一轮提问，将它关联到更早的任务，或从这里另起任务。原始记录保留。'))
+        turn=QComboBox();turn.addItems([r['label']+' · '+r['text'].replace('\n',' ')[:90] for r in turns]);v.addWidget(turn)
+        target=QComboBox();v.addWidget(target);status=QLabel('');status.setWordWrap(True);v.addWidget(status)
+        def choices(index):
+            target.clear();target.addItem('从这一轮开始作为独立任务',None)
+            for ident,prompt in store.db.execute('SELECT g.id,g.prompt FROM task_groups g JOIN events e ON e.id=g.id WHERE g.source=? AND g.session=? AND e.rowid<? ORDER BY e.rowid DESC LIMIT 100',(result['presentation']['source'],result['presentation']['session'],turns[index]['seq'])):
+                target.addItem(prompt.replace('\n',' ')[:100],ident)
+        turn.currentIndexChanged.connect(choices);choices(0)
+        row=QHBoxLayout();save=QPushButton('保存关联');cancel=QPushButton('取消');row.addWidget(save);row.addWidget(cancel);v.addLayout(row);cancel.clicked.connect(dialog.reject)
+        def apply():
+            try:set_override(store.db,turns[turn.currentIndex()]['eventId'],target.currentData())
+            except (ValueError,sqlite3.Error) as exc:status.setText(str(exc));return
+            result['selectionMismatch']='任务关联已更新，请重新查询完整过程';self.collector.signature=None;self.render();dialog.accept()
+        save.clicked.connect(apply);dialog.exec()
     def refresh_chats(self):
         self.chat_rows=self.cache.execute('SELECT id,title FROM chats ORDER BY updated DESC').fetchall();self.chats.blockSignals(True);self.chats.clear();self.chats.addItems([r[1] for r in self.chat_rows]);self.chats.blockSignals(False)
     def new_chat(self):
@@ -89,6 +110,7 @@ class ChatWindow(QMainWindow):
             message=latest.get('selectionMessage')
             if message:self.current_task.setText('等待补充任务信息');self.status.setText('尚未确认对应任务')
             content='<h3>'+html.escape(message or '你想了解哪一次任务？')+'</h3><p>'+html.escape(latest['question'])+'</p>'
+            if latest.get('taskId') and latest.get('presentation'):content+='<p><a href="associate:">修正任务关联</a></p>'
             for option in latest['options']:
                 date=option['updated'][:16].replace('T',' ')
                 name={'workbuddy':'WorkBuddy','codex':'Codex'}.get(option['source'],option['source'])
@@ -144,6 +166,7 @@ class ChatWindow(QMainWindow):
         self.cache.execute('INSERT OR REPLACE INTO chats VALUES(?,?,?,?)',(self.chat_id,self.messages[0]['question'][:30],json.dumps(self.messages,ensure_ascii=False),__import__('time').time_ns()));self.cache.commit();self.refresh_chats();self.render()
         self.answer.scrollToAnchor('answer-'+str(len(self.messages)-1))
     def evidence(self,url):
+        if url.toString()=='associate:':self.correct_association();return
         if url.toString()=='sample:weather':self.prefill('之前 WorkBuddy 查上海天气遇到了什么问题，后来怎么解决的？');return
         if url.toString().startswith('choose:'):
             latest=self.messages[-1] if self.messages else {};identity=url.toString()[7:]

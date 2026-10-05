@@ -7,16 +7,28 @@ import time
 import urllib.request
 from urllib.parse import urlparse
 from .supervision import event_text
+from .task_lineage import task_table,step_table,resolve,history,execution_map,exists,signature
 
-VERSION=4
+VERSION=5
 
 def packet_for_task(db,task_id):
-    task=db.execute('SELECT source,session,prompt,last_row FROM tasks WHERE id=?',(task_id,)).fetchone()
+    task_id=resolve(db,task_id);steps=step_table(db)
+    task=db.execute('SELECT source,session,prompt,last_row FROM '+task_table(db)+' WHERE id=?',(task_id,)).fetchone()
     if not task:raise ValueError('任务不存在')
-    total=db.execute('SELECT count(*) FROM task_steps WHERE task=?',(task_id,)).fetchone()[0]
+    total=db.execute('SELECT count(*) FROM '+steps+' WHERE task=?',(task_id,)).fetchone()[0]
     # Fetch only selected identities, then one raw record at a time.
-    selected=db.execute('SELECT event FROM task_steps WHERE task=? ORDER BY seq LIMIT ?',(task_id,120 if total<=120 else 60)).fetchall()
-    if total>120:selected+=db.execute('SELECT event FROM task_steps WHERE task=? ORDER BY seq DESC LIMIT 60',(task_id,)).fetchall()[::-1]
+    selected=db.execute('SELECT event FROM '+steps+' WHERE task=? ORDER BY seq LIMIT ?',(task_id,120 if total<=120 else 60)).fetchall()
+    if total>120:selected+=db.execute('SELECT event FROM '+steps+' WHERE task=? ORDER BY seq DESC LIMIT 60',(task_id,)).fetchall()[::-1]
+    requirements=history(db,task_id);bindings=execution_map(db,task_id)
+    # Evidence for the origin and recent revisions gets priority, including
+    # the requirement/approval used by sampled executions in long tasks.
+    chosen=[r[0] for r in selected]
+    required=[r['eventId'] for r in requirements[:1]+requirements[-24:]]
+    for event in chosen:
+        link=bindings.get(event,{})
+        required.extend(x for x in (link.get('requirementEvent'),link.get('approvalEvent'),link.get('planEvent')) if x)
+    wanted=list(dict.fromkeys(required+chosen))[:120]
+    selected=sorted(((ident,) for ident in wanted),key=lambda r:db.execute('SELECT rowid FROM events WHERE id=?',r).fetchone()[0])
     fragments=[];per_record=min(5000,90000//max(1,len(selected)))
     for (identity,) in selected:
         raw=db.execute('SELECT event FROM events WHERE id=?',(identity,)).fetchone()[0]
@@ -24,9 +36,17 @@ def packet_for_task(db,task_id):
         if not cut:continue
         fragments.append({'evidenceId':'E'+str(len(fragments)+1).zfill(3),'eventId':identity,'kind':e['kind'],'role':e.get('role'),'tool':e.get('name'),'callId':e.get('callId'),'timestamp':e.get('timestamp'),'text':cut,'truncated':len(cut)<len(text)})
     if not fragments:raise ValueError('任务暂时没有可分析的文本证据')
-    return {'version':VERSION,'taskId':task_id,'source':task[0],'sessionId':task[1],'prompt':task[2][:16000],
+    refs={f['eventId']:f['evidenceId'] for f in fragments}
+    requirement_history=[{**{k:v for k,v in r.items() if k!='text'},'evidenceRef':refs[r['eventId']]} for r in requirements if r['eventId'] in refs]
+    execution_links=[{'eventId':event,'evidenceRef':refs[event],**link,
+                     'requirementRef':refs.get(link['requirementEvent']),
+                     'approvalRef':refs.get(link['approvalEvent']),
+                     'planRef':refs.get(link['planEvent'])} for event,link in bindings.items() if event in refs]
+    return {'version':VERSION,'lineageVersion':1 if exists(db) else 0,'lineageSignature':signature(db,task_id),'taskId':task_id,'source':task[0],'sessionId':task[1],'prompt':task[2][:16000],
             'revision':task[3],'totalRecords':total,'includedRecords':len(fragments),
-            'coverage':'selected_task_log_records','fragments':fragments}
+            'coverage':'selected_task_log_records','fragments':fragments,
+            'requirementHistory':requirement_history,'totalRequirementTurns':len(requirements),
+            'executionLinks':execution_links}
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None

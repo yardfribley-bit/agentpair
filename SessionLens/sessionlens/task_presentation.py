@@ -3,6 +3,7 @@ import json,re
 from urllib.parse import urlparse,parse_qsl,unquote
 from .supervision import event_text
 from .desktop import category
+from .task_lineage import task_table,step_table,resolve,history,execution_map
 
 LABELS={'prompt':'生成提示词','resolution':'分辨率','aspect_ratio':'画面比例','enable_audio':'生成音频','output_dir':'保存目录','image':'输入图像','last_image':'结束画面','files':'交付文件','queries':'搜索内容','top_k':'候选数量','command':'执行命令','description':'用途','file_path':'文件路径','path':'路径','old_string':'修改前','new_string':'修改后'}
 
@@ -33,11 +34,19 @@ def readable_fields(args):
     return rows
 
 def project(db,task_id):
-    task=db.execute('SELECT source,session,prompt,updated FROM tasks WHERE id=?',(task_id,)).fetchone()
+    task_id=resolve(db,task_id);steps=step_table(db)
+    task=db.execute('SELECT source,session,prompt,updated FROM '+task_table(db)+' WHERE id=?',(task_id,)).fetchone()
     if not task:raise ValueError('任务不存在')
-    count=db.execute('SELECT count(*) FROM task_steps WHERE task=?',(task_id,)).fetchone()[0]
+    count=db.execute('SELECT count(*) FROM '+steps+' WHERE task=?',(task_id,)).fetchone()[0]
     events=[]
-    for seq,raw in db.execute('SELECT s.seq,e.event FROM task_steps s JOIN events e ON e.id=s.event WHERE s.task=? ORDER BY s.seq LIMIT 800',(task_id,)):
+    requirements=history(db,task_id);bindings=execution_map(db,task_id)
+    plans={}
+    for identity in {x['planEvent'] for x in bindings.values() if x.get('planEvent')}:
+        raw=db.execute('SELECT event FROM events WHERE id=?',(identity,)).fetchone()
+        if raw:plans[identity]=event_text(json.loads(raw[0]))[:16000]
+    selected=db.execute('SELECT s.seq,e.event FROM '+steps+' s JOIN events e ON e.id=s.event WHERE s.task=? ORDER BY s.seq LIMIT ?',(task_id,800 if count<=800 else 400)).fetchall()
+    if count>800:selected+=db.execute('SELECT s.seq,e.event FROM '+steps+' s JOIN events e ON e.id=s.event WHERE s.task=? ORDER BY s.seq DESC LIMIT 400',(task_id,)).fetchall()[::-1]
+    for seq,raw in selected:
         e=json.loads(raw);e['_seq']=seq;events.append(e)
     returns={}
     for e in events:
@@ -47,15 +56,18 @@ def project(db,task_id):
         text=event_text(e)
         if category(e)=='解题思路' and text:
             reasoning.append({'id':e['id'],'text':text[:16000],'truncated':len(text)>16000,'timestamp':e.get('timestamp')})
-            following=next((x for x in events[i+1:] if category(x)=='工具调用'),None)
-            next_reason=next((x for x in events[i+1:] if category(x)=='解题思路'),None)
+            following=None;next_reason=None
+            for x in events[i+1:]:
+                if category(x)=='用户提问':break
+                if not following and category(x)=='工具调用':following=x
+                if category(x)=='解题思路':next_reason=x;break
             if following and next_reason and following['_seq']>next_reason['_seq']:following=None
             result=returns.get(following.get('callId'),[]) if following else []
             frames.append({'reasoning':reasoning[-1],'call':following['id'] if following else None,'returnIds':[x['id'] for x in result],'nextReason':next_reason['id'] if next_reason else None})
         if category(e)=='工具调用':
             args=arguments(e);name=e.get('name') or '未命名工具';inner=args.get('toolName');title=name+(' → '+str(inner) if inner else '')
             linked=returns.get(e.get('callId'),[]) if e.get('callId') else []
-            calls.append({'id':e['id'],'name':title,'callId':e.get('callId'),'fields':readable_fields(args),'arguments':args,'returns':[{'id':x['id'],'text':event_text(x)[:16000],'truncated':len(event_text(x))>16000} for x in linked],'timestamp':e.get('timestamp')})
+            calls.append({'id':e['id'],'name':title,'callId':e.get('callId'),'fields':readable_fields(args),'arguments':args,'returns':[{'id':x['id'],'text':event_text(x)[:16000],'truncated':len(event_text(x))>16000} for x in linked],'timestamp':e.get('timestamp'),'requirement':bindings.get(e['id'])})
     finals=[{'id':e['id'],'text':event_text(e)[:16000]} for e in events if category(e)=='Agent 回复']
     context=[{'id':e['id'],'kind':category(e),'text':event_text(e)[:12000]} for e in events if category(e) in ('用户提问','会话背景')]
-    return {'taskId':task_id,'source':task[0],'session':task[1],'prompt':task[2],'updated':task[3],'calls':calls,'reasoning':reasoning,'frames':frames,'replies':finals,'context':context,'total':count,'included':len(events)}
+    return {'taskId':task_id,'source':task[0],'session':task[1],'prompt':task[2],'updated':task[3],'calls':calls,'reasoning':reasoning,'frames':frames,'replies':finals,'context':context,'total':count,'included':len(events),'requirements':requirements,'plans':plans}
