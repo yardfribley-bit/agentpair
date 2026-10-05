@@ -13,7 +13,7 @@ from sessionlens.supervision import TaskStore,describe,event_text
 from sessionlens.assistant import run as run_assistant
 from sessionlens.desktop import Runtime,defaults,state_root,LABELS
 
-STYLE='''QWidget {font-family: Arial; font-size:14px; color:#233247; background:#f5f7fb;} QMainWindow {background:#f5f7fb;} QLabel {background:transparent;} QLabel#title {font-size:28px;font-weight:700;} QLabel#sub {color:#6a7a91;} QGroupBox {background:white;border:1px solid #dce3ee;border-radius:10px;margin-top:12px;padding:18px;} QGroupBox::title {subcontrol-origin:margin;left:16px;padding:0 5px;font-weight:600;} QPushButton {background:#245bdb;color:white;border:0;border-radius:6px;padding:10px 16px;} QPushButton:checked {background:#e9f0fb;color:#275eb2;border:1px solid #275eb2;} QPushButton:disabled {background:#9aaac3;} QTextBrowser,QListWidget,QLineEdit,QPlainTextEdit,QTableWidget {background:white;border:1px solid #dce3ee;border-radius:5px;padding:5px;} QListWidget::item:selected {background:#e9f0fb;color:#202d3d;} QTextBrowser {padding:14px;} QHeaderView::section {background:#edf2fa;padding:9px;border:0;font-weight:600;} QProgressBar {border:0;background:#e4eaf5;height:8px;border-radius:4px;text-align:center;} QProgressBar::chunk {background:#245bdb;border-radius:4px;}'''
+STYLE='''QWidget {font-family: Arial; font-size:14px; color:#233247; background:#F7F8FA;} QMainWindow {background:#F7F8FA;} QLabel {background:transparent;} QLabel#title {font-size:28px;font-weight:700;} QLabel#sub {color:#6a7a91;} QGroupBox {background:white;border:1px solid #E6E8EC;border-radius:10px;margin-top:12px;padding:18px;} QGroupBox::title {subcontrol-origin:margin;left:16px;padding:0 5px;font-weight:600;} QPushButton {background:#1769ef;color:white;border:0;border-radius:6px;padding:10px 16px;} QPushButton:checked {background:#e9f0fb;color:#275eb2;border:1px solid #275eb2;} QPushButton:disabled {background:#9aaac3;} QTextBrowser,QListWidget,QLineEdit,QPlainTextEdit,QTableWidget {background:white;border:1px solid #E6E8EC;border-radius:5px;padding:5px;} QListWidget::item:selected {background:#e9f0fb;color:#202d3d;} QTextBrowser {padding:14px;} QHeaderView::section {background:#edf2fa;padding:9px;border:0;font-weight:600;} QProgressBar {border:0;background:#e4eaf5;height:8px;border-radius:4px;text-align:center;} QProgressBar::chunk {background:#1769ef;border-radius:4px;}'''
 
 def display_time(value):
     try:
@@ -266,7 +266,7 @@ def main():
         from PySide6.QtCore import QUrl
         result_path=Path(sys.argv[sys.argv.index('--verify-ui')+1]);result=json.loads(result_path.read_text())
         chat.messages=[result];chat.input.setPlainText(result['question']);chat.render();chat.show();app.processEvents()
-        assert chat.input.height()>=118
+        assert chat.input.height()>=72
         assert chat.input.toPlainText()==result['question']
         assert chat.composer.mapTo(chat,chat.composer.rect().topLeft()).y()<chat.answer.mapTo(chat,chat.answer.rect().topLeft()).y()
         reference=result['understanding']['steps'][0]['evidenceRefs'][0]
@@ -275,9 +275,9 @@ def main():
         chat.proof_panel.hide()
         if result.get('presentation'):
             view=chat.task_view;assert len(view.data['calls'])==3;assert len(view.data['frames'])==3
-            view.select('calls');assert '1080P' in view.body.toPlainText();assert 'VideoGen' in view.body.toPlainText()
-            view.select('reasoning');view.toggle();view.tick();assert view.position>0;view.toggle();assert not view.timer.isActive();view.next();assert view.index==1
-            view.select('delivery');assert '验证' in view.body.toPlainText();view.select('overview')
+            view.choose_step(2);view.select('calls');app.processEvents();assert '1080P' in view.plain_text();assert 'VideoGen' in view.plain_text()
+            view.choose_step(0);view.select('reasoning');view.toggle();view.tick();assert view.position>0;view.toggle();assert not view.timer.isActive();view.next();assert view.index==1
+            view.select('delivery');app.processEvents();assert '验证' in view.plain_text();view.select('overview')
         app.processEvents();chat.grab().save('/private/tmp/sessionlens-installed-ui.png')
         print('Installed UI verification passed: large top input, answer rendering, original evidence')
         chat.close();return 0

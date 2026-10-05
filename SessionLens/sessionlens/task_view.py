@@ -1,90 +1,212 @@
-"""Native task lenses with explicitly historical reasoning playback."""
-import json,html
-from PySide6.QtCore import QTimer,Signal
-from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QComboBox,QTextBrowser,QDialog,QPlainTextEdit
+"""Prototype task cards: one page scroll, concise evidence and historical replay."""
+import json,re
+from pathlib import Path
+from PySide6.QtCore import Qt,QTimer,Signal
+from PySide6.QtGui import QPainter,QColor,QPen,QPainterPath
+from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QComboBox,QDialog,QPlainTextEdit,QFrame,QSizePolicy
+
+
+def short(text,limit=130):
+    text=re.sub(r'\s+',' ',str(text)).strip()
+    return text if len(text)<=limit else text[:limit]+'…'
+
+
+def task_title(prompt):
+    protocol=re.search(r'(?:描述|展示|介绍)\s*([A-Za-z0-9_-]+)\s*协议',prompt)
+    if protocol and any(x in prompt for x in ('动画','视频')):return protocol.group(1).upper()+' 协议'+('动画' if '动画' in prompt else '视频')
+    return short(re.sub(r'^(帮我|请帮我|请|麻烦你|帮忙)\s*','',prompt),24)
+
+def label(text,style=''):
+    w=QLabel(str(text));w.setTextFormat(Qt.PlainText);w.setWordWrap(True);w.setStyleSheet(style);w.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Minimum);return w
+
+class Brain(QWidget):
+    def __init__(self):super().__init__();self.setFixedSize(78,78);self.phase=0;self.active=False
+    def paintEvent(self,event):
+        p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setPen(QPen(QColor('#c5d8eb'),1));p.setBrush(QColor('#eaf3fb'));p.drawEllipse(4,4,70,70)
+        p.setPen(QPen(QColor('#1769ef'),2));path=QPainterPath();path.moveTo(39,57);path.lineTo(39,23)
+        for x,y in [(29,28),(23,36),(25,47),(32,54),(49,28),(55,36),(53,47),(46,54)]:
+            p.drawEllipse(x-3,y-3,6,6);path.moveTo(39,39);path.lineTo(x,y)
+        p.drawPath(path)
+        if self.active:
+            p.setPen(QPen(QColor('#1769ef'),3));p.drawArc(1,1,76,76,self.phase*16,75*16)
 
 class TaskView(QWidget):
     evidenceRequested=Signal(str)
+    contentChanged=Signal()
     def __init__(self,parent=None):
-        super().__init__(parent);self.data={};self.index=0;self.position=0
-        self.setStyleSheet('QPushButton{background:#f3f6fa;color:#25496e;border:1px solid #d8e2ed;border-radius:7px;padding:8px;} QTextBrowser{background:#ffffff;border:1px solid #dce4ee;border-radius:10px;padding:18px;}')
-        v=QVBoxLayout(self);self.heading=QLabel();self.heading.setWordWrap(True);self.heading.setStyleSheet('font-size:18px;font-weight:600');v.addWidget(self.heading)
-        self.summary=QLabel();self.summary.setWordWrap(True);v.addWidget(self.summary)
-        tabs=QHBoxLayout()
-        for label,key in [('怎么做的','overview'),('当时怎么想','reasoning'),('调用了什么','calls'),('用到什么上下文','context'),('交付与验证','delivery')]:
-            b=QPushButton(label);b.clicked.connect(lambda checked=False,k=key:self.select(k));tabs.addWidget(b)
-        v.addLayout(tabs)
-        self.controls=QWidget();row=QHBoxLayout(self.controls);row.setContentsMargins(0,0,0,0)
-        self.play=QPushButton('播放历史思路');self.play.clicked.connect(self.toggle);row.addWidget(self.play)
-        next_button=QPushButton('下一段');next_button.clicked.connect(self.next);row.addWidget(next_button)
-        self.speed=QComboBox();self.speed.addItems(['1×','2×','4×']);row.addWidget(self.speed)
-        original=QPushButton('完整思路原文');original.clicked.connect(self.original);row.addWidget(original);row.addStretch();v.addWidget(self.controls)
-        self.body=QTextBrowser();self.body.setMinimumHeight(400);self.body.setOpenLinks(False);self.body.anchorClicked.connect(self.detail);v.addWidget(self.body,1)
-        self.timer=QTimer(self);self.timer.setInterval(35);self.timer.timeout.connect(self.tick)
+        super().__init__(parent);self.data={};self.index=0;self.position=0;self.key='overview'
+        self.setStyleSheet('QWidget{background:transparent;} QFrame#player{background:white;border:1px solid #E6E8EC;border-radius:12px;} QFrame#node{background:white;border:1px solid #dbe3ec;border-radius:7px;} QPushButton{background:white;color:#33516f;border:1px solid #dbe3ec;border-radius:6px;padding:7px 12px;} QPushButton:checked{background:#edf4fb;color:#1769ef;border-color:#1769ef;} QComboBox{background:white;border:1px solid #E6E8EC;border-radius:6px;padding:5px;color:#203044;}')
+        v=QVBoxLayout(self);v.setAlignment(Qt.AlignTop);v.setContentsMargins(0,0,0,0);v.setSpacing(14)
+        self.heading=label('', 'font-size:15px;font-weight:600;');v.addWidget(self.heading)
+        self.original_task=label('');self.original_task.hide();self.meta=label('','font-size:12px;color:#61748c;');meta_row=QHBoxLayout();meta_row.addWidget(self.meta,1);self.delivered=label('');self.trust=label('');meta_row.addWidget(self.delivered);meta_row.addWidget(self.trust);v.addLayout(meta_row)
+        self.summary=label('','font-size:17px;color:#203044;');v.addWidget(self.summary)
+        tabs=QHBoxLayout();self.tabs={}
+        for title,key in [('怎么做的 / 做成了吗','overview'),('当时怎么想','reasoning'),('调用了什么','calls'),('用到什么上下文','context'),('交付与验证','delivery')]:
+            b=QPushButton(title);b.setCheckable(True);b.clicked.connect(lambda checked=False,k=key:self.select(k));self.tabs[key]=b;tabs.addWidget(b)
+        self.timeline=QWidget();self.timeline_layout=QHBoxLayout(self.timeline);self.timeline_layout.setContentsMargins(0,6,0,6);self.step_buttons=[];v.addWidget(self.timeline)
+        self.player=QFrame();self.player.setObjectName('player');pv=QVBoxLayout(self.player);pv.setContentsMargins(16,16,16,16)
+        row=QHBoxLayout();self.paneltitle=label('任务回放','font-size:15px;font-weight:600;');row.addWidget(self.paneltitle,1)
+        self.play=QPushButton('播放回放');self.play.clicked.connect(self.toggle);row.addWidget(self.play);next_button=QPushButton('下一段');next_button.clicked.connect(self.next);self.next_button=next_button;row.addWidget(next_button)
+        self.speed=QComboBox();self.speed.addItems(['1.0×','2.0×']);row.addWidget(self.speed);pv.addLayout(row);pv.addLayout(tabs)
+        thinking=QHBoxLayout();thinking.setSpacing(18);self.brain=Brain();thinking.addWidget(self.brain,0,Qt.AlignTop);tokens=QVBoxLayout();self.stage=label('','color:#61748c;font-size:12px;');tokens.addWidget(self.stage);self.reason=label('','border-left:2px solid #1769ef;padding:10px 14px;font-size:15px;');self.reason.setMinimumHeight(70);tokens.addWidget(self.reason);thinking.addLayout(tokens,1);pv.addLayout(thinking)
+        flow=QHBoxLayout();self.nodes=[];self.arrows=[];self.node_labels=[]
+        for i,title in enumerate(('动作','返回','后续调整')):
+            if i:
+                arrow=label('→','color:#8294a8;font-size:19px;');self.arrows.append(arrow);flow.addWidget(arrow,0)
+            frame=QFrame();frame.setObjectName('node');nv=QVBoxLayout(frame);nv.setContentsMargins(12,12,12,12);node_label=label(title,'color:#61748c;font-size:12px;');self.node_labels.append(node_label);nv.addWidget(node_label);text=label('');nv.addWidget(text);flow.addWidget(frame,1);self.nodes.append((frame,text))
+        pv.addLayout(flow);original=QPushButton('查看这一段 reasoning 原文');original.clicked.connect(self.original);self.original_button=original;pv.addWidget(original,0,Qt.AlignLeft);v.addWidget(self.player)
+        self.details=QWidget();self.detail_layout=QVBoxLayout(self.details);self.detail_layout.setContentsMargins(0,0,0,0);self.detail_layout.setSpacing(14);pv.addWidget(self.details)
+        self.note=label('','font-size:12px;color:#61748c;');v.addWidget(self.note)
+        self.timer=QTimer(self);self.timer.setInterval(65);self.timer.timeout.connect(self.tick)
     def load(self,result):
-        self.timer.stop();self.result=result;self.data=result['presentation'];self.index=0;self.position=0
-        self.heading.setText(self.data['source']+' · '+self.data['prompt']);self.summary.setText(result['understanding']['overview']['text']);self.select('reasoning' if any(w in result['question'] for w in ('思路','思考','reasoning')) else 'calls' if any(w in result['question'] for w in ('工具','调用','参数')) else 'context' if any(w in result['question'] for w in ('上下文','记忆')) else 'delivery' if any(w in result['question'] for w in ('交付','时长')) else 'overview')
+        self.stop();self.result=result;self.data=result['presentation'];self.index=0;self.position=0
+        d=self.data;self.heading.hide();self.heading.setText('对应任务 · '+short(d['prompt'],55));self.original_task.setText('用户原话：“'+short(d['prompt'],180)+'”');self.meta.setText({'workbuddy':'WorkBuddy','codex':'Codex'}.get(d['source'],d['source'])+' · '+task_title(d['prompt'])+' · '+str(d.get('updated',''))[:10]+' · 目标：'+short(d['prompt'],24))
+        self.meta.setToolTip(d['prompt']);self.make_steps();self.selected_step=0;self.set_status()
+        q=result['question'];self.select('context' if any(w in q for w in ('上下文','记忆')) else 'calls' if any(w in q for w in ('工具','调用','参数')) else 'reasoning' if any(w in q for w in ('思路','思考','reasoning')) else 'delivery' if any(w in q for w in ('交付','时长')) else 'overview')
+    def stop(self):
+        self.timer.stop();self.brain.active=False;self.brain.update();self.play.setText('播放回放')
+        for frame,_ in self.nodes:frame.setStyleSheet('')
     def select(self,key):
-        self.timer.stop();self.play.setText('播放历史思路');self.key=key;self.controls.setVisible(True);self.paint()
-    def text(self,value):return '<p>'+html.escape(str(value)).replace('\n','<br>')+'</p>'
-    def paint(self):
-        d=self.data;out='<style>body{color:#24354a;font-size:14px}p{line-height:155%}h3{color:#244f7c}a{color:#3265a8}hr{color:#dce4ee}</style>'
-        out+='<p>'+ ' · '.join('<a href="proof:'+html.escape(ref)+'">核对依据 '+html.escape(ref)+'</a>' for ref in self.result['understanding']['overview']['evidenceRefs'][:3])+'</p>'
-        if self.key in ('reasoning','overview'):
-            frames=d['frames']
-            if not frames:out+=self.text('该任务没有记录可回放的思路。')
-            else:
-                f=frames[self.index];text=f['reasoning']['text'][:400];out+='<h3><span style="color:'+('#2f91bb' if self.timer.isActive() and self.position%2 else '#3b6387')+'">◉</span> 历史思路回放 · '+str(self.index+1)+' / '+str(len(frames))+'</h3>'+self.text(text[:self.position] if self.position else text)
-                c=next((c for c in d['calls'] if c['id']==f['call']),None)
-                if c:out+='<hr><h3>动作 → 返回 → 后续调整</h3>'+self.text(c['name']+' → '+('已记录返回' if c['returns'] else '缺少返回'))
-                next_reason=next((r for r in d['reasoning'] if r['id']==f['nextReason']),None)
-                if next_reason:out+=self.text(next_reason['text'][:400])
-                out+=self.text('原日志思路摘录；完整内容见“完整思路原文”。')
-        if self.key in ('calls','overview'):
-            for n,c in enumerate(d['calls']):
-                out+='<h3>'+str(n+1)+'. '+html.escape(c['name'])+'</h3>'
-                notes=self.result['understanding'].get('toolExplanations',[])
-                note=next((x for x in notes if any(f.get('eventId')==c['id'] and f.get('evidenceId') in x.get('evidenceRefs',[]) for f in self.result['packet']['fragments'])),None)
-                if note:out+=self.text(note.get('purpose',''))+self.text(note.get('inputSummary',''))+self.text(note.get('outputSummary',''))
+        self.stop();self.key=key
+        for k,b in self.tabs.items():b.setChecked(k==key)
+        self.player.setVisible(True);self.player.setMaximumHeight(450 if key in ('overview','reasoning') else 16777215)
+        replay=key not in ('context','delivery')
+        for w in [self.brain,self.stage,self.reason,self.play,self.next_button,self.speed,self.original_button]+self.arrows+[f for f,_ in self.nodes]:w.setVisible(replay)
+        self.paneltitle.setText({'context':'用到什么上下文','delivery':'交付与验证'}.get(key,'任务回放'))
+        q=self.result['question']
+        if any(w in q for w in ('做成了吗','完成了吗','结果怎么样')):
+            self.summary.setText(('已交付，实际效果未核验。' if self.delivered.text()=='已交付' else self.delivered.text()+'。')+'过程：'+' → '.join(s['title'] for s in self.steps)+'。')
+        else:self.summary.setText(short(self.result['understanding']['overview']['text'],110))
+        self.render_frame();self.render_details();self.contentChanged.emit()
+    def call_note(self,call):
+        ids={f['evidenceId'] for f in self.result['packet']['fragments'] if f.get('eventId')==call['id']}
+        return next((x for x in self.result['understanding'].get('toolExplanations',[]) if ids.intersection(x.get('evidenceRefs',[]))),{})
+    def return_brief(self,call):
+        if not call['returns']:return '未记录关联返回，不能确认执行成功'
+        for r in call['returns']:
+            try:value=json.loads(r['text'])
+            except ValueError:continue
+            if isinstance(value,dict):
+                status=value.get('status');files=value.get('videos') or value.get('files')
+                if files:return ('工具报告完成；' if status=='completed' else '')+'返回 '+str(len(files))+' 个文件'+('，未记录预览' if value.get('previewed')==[] else '')
+                if status:return '返回状态：'+str(status)
+        return short(self.call_note(call).get('outputSummary') or call['returns'][0]['text'],90)
+    def make_steps(self):
+        while self.timeline_layout.count():
+            item=self.timeline_layout.takeAt(0)
+            if item.widget():item.widget().hide();item.widget().deleteLater()
+        self.steps=[];self.step_buttons=[];self.step_titles=[]
+        for i,c in enumerate(self.data['calls']):
+            frame=next((j for j,f in enumerate(self.data['frames']) if f['call']==c['id']),None)
+            if 'prompt' in c['arguments'].get('params',{}):self.steps.append({'call':i,'frame':frame,'phase':'prepare','title':'写提示词'})
+            name=c['name'];title='找工具' if 'ToolSearch' in name else '生成视频' if 'VideoGen' in name else '交付文件' if 'present_files' in name else short(self.call_note(c).get('purpose') or name,12)
+            self.steps.append({'call':i,'frame':frame,'phase':'execute','title':title})
+        for i,step in enumerate(self.steps):
+            if i:
+                line=label('────','color:#b7cbed;');line.setContentsMargins(0,14,0,0);line.setFixedHeight(40);self.timeline_layout.addWidget(line,1,Qt.AlignTop)
+            cell=QWidget();layout=QVBoxLayout(cell);layout.setContentsMargins(0,0,0,0);layout.setSpacing(8);center=QHBoxLayout();center.addStretch()
+            b=QPushButton(str(i+1));b.setCheckable(True);b.setFixedSize(34,34);b.setStyleSheet('QPushButton{border:1px solid #1769ef;border-radius:17px;background:white;color:#1769ef;padding:0;font-size:15px;} QPushButton:checked{background:#1769ef;color:white;}');b.clicked.connect(lambda checked=False,n=i:self.choose_step(n));b.setToolTip('查看这一步；提示词步骤由实际输入参数分拆展示' if step['phase']=='prepare' else '查看这次工具调用及返回');center.addWidget(b);center.addStretch();layout.addLayout(center)
+            title=QPushButton(step['title']);title.setStyleSheet('QPushButton{border:0;background:transparent;color:#203044;padding:0;}');title.clicked.connect(lambda checked=False,n=i:self.choose_step(n));layout.addWidget(title);self.timeline_layout.addWidget(cell,2);self.step_buttons.append(b);self.step_titles.append(title)
+    def set_status(self):
+        delivered=False;failed=False
+        for c in self.data['calls']:
+            for r in c['returns']:
+                try:value=json.loads(r['text'])
+                except ValueError:continue
+                if not isinstance(value,dict):continue
+                failed=failed or value.get('status') in ('failed','error') or bool(value.get('error'))
+                delivered=delivered or (value.get('type')=='present_files_result' and bool(value.get('files')) and not value.get('error'))
+        self.delivered.setText('失败' if failed else '已交付' if delivered else '结果待确认');self.delivered.setStyleSheet('font-size:12px;padding:6px 10px;border-radius:6px;background:'+('#feecec;color:#b42318;' if failed else '#eaf7ef;color:#238450;' if delivered else '#f2f3f5;color:#667085;'))
+        self.trust.setText('未核验');self.trust.setStyleSheet('font-size:12px;padding:6px 10px;border-radius:6px;background:#fff4df;color:#a56509;');self.trust.setToolTip('SessionLens 没有重新执行或检查交付物；可在交付视图核对已有验证记录。')
+    def choose_step(self,n):
+        self.stop();self.selected_step=n;self.position=0;step=self.steps[n];self.index=step['frame'] if step['frame'] is not None else 0;self.render_frame();self.render_details();self.contentChanged.emit()
+    def render_frame(self):
+        if not self.steps:self.stage.setText('没有记录工具步骤');self.reason.setText('');self.play.setEnabled(False);return
+        step=self.steps[self.selected_step];call=self.data['calls'][step['call']];note=self.call_note(call)
+        for i,b in enumerate(self.step_buttons):
+            b.setChecked(i==self.selected_step);self.step_titles[i].setStyleSheet('QPushButton{border:0;background:transparent;padding:0;color:'+('#1769ef' if i==self.selected_step else '#203044')+';}')
+        frame=self.data['frames'][step['frame']] if step['frame'] is not None else None
+        text=frame['reasoning']['text'] if frame else ''
+        sentences=[x.strip() for x in re.split(r'[。\n]',text.strip()) if x.strip()]
+        if step['phase']=='prepare':sentences=sorted(sentences,key=lambda x:0 if re.search(r'提示词|prompt|构造',x,re.I) else 1)
+        self.excerpt=short(sentences[0],100) if sentences else '该步骤没有单独记录思路，下面展示工具输入与返回。'
+        self.stage.setText('历史思路摘录' if text else '工具记录');self.play.setEnabled(bool(text));self.reason.setText(self.excerpt[:self.position] if self.position else self.excerpt)
+        if step['phase']=='prepare':
+            params=call['arguments'].get('params',{});specs=[]
+            if isinstance(params,dict):
+                if params.get('resolution'):specs.append(str(params['resolution']))
+                if params.get('aspect_ratio'):specs.append(str(params['aspect_ratio']))
+                if 'enable_audio' in params:specs.append('有声' if params['enable_audio'] else '无声')
+            values=('准备提示词',' · '.join(specs) or '具体参数可展开查看','将提示词交给生成工具')
+        else:
+            next_reason=next((r for r in self.data['reasoning'] if frame and r['id']==frame['nextReason']),None)
+            values=(call['name'],self.return_brief(call),short(re.split(r'[。\n]',next_reason['text'].strip())[0],65) if next_reason else '后续记录已结束')
+        for w,title in zip(self.node_labels,('动作','输入规格','接下来') if step['phase']=='prepare' else ('动作','返回','后续调整')):w.setText(title)
+        for (_,w),text in zip(self.nodes,values):w.setText(text)
+    def field(self,layout,title,value):
+        row=QHBoxLayout();name=label(title,'color:#61748c;font-size:13px;');name.setFixedWidth(110);row.addWidget(name,0,Qt.AlignTop);row.addWidget(label(value),1);layout.addLayout(row)
+    def card(self,title,description=''):
+        frame=QFrame();frame.setObjectName('callCard');frame.setStyleSheet('QFrame#callCard{border:0;border-bottom:1px solid #dbe3ec;}');layout=QVBoxLayout(frame);layout.setContentsMargins(0,12,0,14);layout.setSpacing(9);layout.addWidget(label(title,'font-size:15px;font-weight:600;'))
+        if description:layout.addWidget(label(short(description,110)))
+        self.detail_layout.addWidget(frame);return layout
+    def render_details(self):
+        while self.detail_layout.count():
+            item=self.detail_layout.takeAt(0);item.widget().hide();item.widget().deleteLater()
+        d=self.data
+        if self.key=='calls':
+            for i in ([self.steps[self.selected_step]['call']] if self.steps else []):
+                c=d['calls'][i]
+                note=self.call_note(c);v=self.card(str(i+1)+' · '+c['name'],note.get('purpose',''))
+                if note.get('inputSummary'):self.field(v,'输入内容',short(note['inputSummary'],190))
                 for f in c['fields']:
+                    if f['key'] in ('prompt','command','description','explanation','toolName'):continue
                     value=f['value']
-                    if len(value)>350:value='完整内容共 '+str(len(value))+' 字，可展开参数查看。' if note else value[:350]+'…（展开查看）'
-                    out+='<b>'+html.escape(f['label'])+'</b>'+self.text(value)
-                out+='<a href="call:'+str(n)+'">完整参数与原始返回</a>'
-                for r in c['returns']:
-                    try:
-                        value=json.loads(r['text']);readable={k:v for k,v in value.items() if k in ('status','mode','videos','files','message','previewed','explanation')} if isinstance(value,dict) else value
-                        out+='<h4>工具返回</h4>'
-                        if isinstance(readable,dict) and readable:
-                            for k,v in readable.items():out+='<b>'+html.escape({'status':'状态','mode':'生成方式','videos':'生成文件','files':'交付文件','message':'执行结果','previewed':'已预览文件','explanation':'说明'}.get(k,k))+'</b>'+self.text({'completed':'已完成','text-to-video':'文字生成视频'}.get(str(v),json.dumps(v,ensure_ascii=False) if not isinstance(v,str) else v))
-                        elif not note:out+=self.text(r['text'][:700]+'（完整返回可展开查看）')
-                    except ValueError:out+='<h4>工具返回</h4>'+self.text(r['text'][:1800])
-                if not c['returns']:out+=self.text('未记录关联返回，不能据此确认执行成功。')
-                out+='<hr>'
-        if self.key=='context':
-            for c in d['context']:out+='<h3>'+html.escape(c['kind'])+'</h3>'+self.text(c['text'])
-            if not d['context']:out+=self.text('该任务没有单独记录上下文。')
-        if self.key=='delivery':
-            out+='<h3>用户要求</h3>'+self.text(d['prompt'])+'<h3>Agent 最后的答复</h3>'+self.text(d['replies'][-1]['text'] if d['replies'] else '未记录最终答复')
-            out+='<h3>验证边界</h3>'+self.text('工具报告完成与独立验收是两回事。这里展示日志记录，未重新执行工具或检查交付物。')
-        for gap in self.result['understanding'].get('gaps',[]):out+=self.text(gap)
-        out+=self.text('本地读取 '+str(d['included'])+' / '+str(d['total'])+' 条记录；长正文可能截取，完整原文可在历史任务中查看。')
-        self.body.setHtml(out)
+                    if f['key'] in ('files','path','file_path'):value=' / '.join(Path(x).name for x in re.findall(r'[^\s\"\[\],]+',value))
+                    self.field(v,f['label'],value if f['key']=='URL' else short(value,180))
+                self.field(v,'返回',self.return_brief(c))
+                for returned in c['returns']:
+                    try:raw=json.loads(returned['text'])
+                    except ValueError:continue
+                    if not isinstance(raw,dict):continue
+                    files=raw.get('videos') or raw.get('files') or []
+                    if isinstance(files,list):
+                        for file in files[:3]:
+                            path=file.get('localPath','') if isinstance(file,dict) else file
+                            if isinstance(path,str) and path:self.field(v,'文件',Path(path).name)
+                    if raw.get('previewed')==[]:self.field(v,'预览记录','未记录预览检查')
+                b=QPushButton('查看完整参数 / 原始返回');b.clicked.connect(lambda checked=False,n=i:self.tool_original(n));v.addWidget(b,0,Qt.AlignLeft)
+        elif self.key=='context':
+            v=self.card('信息从哪里来','区分用户要求、工具返回和 Agent 自己准备的内容。');self.field(v,'用户明确要求',short(d['prompt'],160))
+            for c in d['calls']:
+                if 'prompt' in c['arguments'].get('params',{}):self.field(v,'Agent 准备的内容',short(self.call_note(c).get('inputSummary','提示词内容见工具参数'),180))
+            backgrounds=[x for x in d['context'] if x['kind']=='会话背景'];self.field(v,'背景与记忆','有 '+str(len(backgrounds))+' 份背景记录，可查看原文' if backgrounds else '当前任务片段没有单独记录，不能确认完整模型上下文')
+            b=QPushButton('查看上下文原文');b.clicked.connect(lambda:self.show_raw('上下文原文','\n\n'.join(x['text'] for x in d['context'])));v.addWidget(b,0,Qt.AlignLeft)
+        elif self.key=='delivery':
+            v=self.card('目标与结果对照','工具报告完成与文件满足要求分开展示。');self.field(v,'需要交付',short(d['prompt'],160))
+            for c in d['calls']:self.field(v,c['name'],self.return_brief(c))
+            for gap in self.result['understanding'].get('gaps',[])[:3]:self.field(v,'尚未确认',short(gap,120))
+            b=QPushButton('查看 Agent 最终回复');b.clicked.connect(lambda:self.show_raw('最终回复',d['replies'][-1]['text'] if d['replies'] else '没有记录最终回复'));v.addWidget(b,0,Qt.AlignLeft)
+        else:pass
+        refs=self.result['understanding']['overview']['evidenceRefs']
+        if refs and self.key in ('calls','context','delivery'):
+            proof=QPushButton('核对原始证据');proof.clicked.connect(lambda:self.evidenceRequested.emit(refs[0]));self.detail_layout.addWidget(proof,0,Qt.AlignLeft)
+        self.details.setVisible(bool(self.detail_layout.count()))
+        self.note.setText('历史回放 · 工具返回已按调用编号关联'+(' · 部分记录未读取' if d['included']<d['total'] else ''))
     def toggle(self):
-        if self.timer.isActive():self.timer.stop();self.play.setText('继续回放')
-        elif self.data.get('frames'):
-            if self.position>=min(400,len(self.data['frames'][self.index]['reasoning']['text'])):self.position=0
-            self.key='reasoning';self.timer.start();self.play.setText('暂停')
-        self.paint()
+        if self.timer.isActive():self.stop();self.play.setText('继续回放');return
+        if not self.data.get('frames'):return
+        if self.position>=len(self.excerpt):self.position=0
+        self.brain.active=True;self.timer.start();self.play.setText('暂停');self.reason.setText(self.excerpt[:self.position])
     def tick(self):
-        self.position+=3*(2**self.speed.currentIndex());text=self.data['frames'][self.index]['reasoning']['text'][:400]
-        if self.position>=len(text):self.timer.stop();self.play.setText('再次回放')
-        self.paint()
+        self.position=min(len(self.excerpt),self.position+(6 if self.speed.currentIndex() else 3));self.reason.setText(self.excerpt[:self.position]);self.brain.phase=(self.brain.phase+12)%360;self.brain.update()
+        for i,(frame,_) in enumerate(self.nodes):frame.setStyleSheet('QFrame#node{background:'+('#edf4fb' if i==min(2,self.position*3//max(1,len(self.excerpt))) else 'white')+';border:1px solid #cbdced;border-radius:7px;}')
+        if self.position==len(self.excerpt):self.stop()
     def next(self):
-        if self.data.get('frames'):self.index=(self.index+1)%len(self.data['frames']);self.position=0;self.timer.stop();self.paint()
+        if self.steps:self.choose_step((self.selected_step+1)%len(self.steps))
+    def plain_text(self):return '\n'.join(w.text() for w in self.findChildren(QLabel) if w.isVisibleTo(self))
     def show_raw(self,title,text):
-        dialog=QDialog(self);dialog.setWindowTitle(title);dialog.resize(900,650);v=QVBoxLayout(dialog);edit=QPlainTextEdit();edit.setReadOnly(True);edit.setPlainText(text);v.addWidget(edit);dialog.exec()
-    def original(self):self.show_raw('记录中的思路原文','\n\n'.join(r['text'] for r in self.data.get('reasoning',[])))
-    def detail(self,url):
-        if url.toString().startswith('proof:'):self.evidenceRequested.emit(url.toString().split(':')[1]);return
-        c=self.data['calls'][int(url.toString().split(':')[1])];self.show_raw(c['name'],'参数\n'+json.dumps(c['arguments'],ensure_ascii=False,indent=2)+'\n\n原始返回\n'+'\n\n'.join(r['text'] for r in c['returns']))
+        dialog=QDialog(self);dialog.setWindowTitle(title);dialog.resize(850,620);v=QVBoxLayout(dialog);edit=QPlainTextEdit();edit.setReadOnly(True);edit.setPlainText(text);v.addWidget(edit);dialog.exec()
+    def original(self):
+        if self.steps and self.steps[self.selected_step]['frame'] is not None:self.show_raw('这一段思路原文',self.data['frames'][self.steps[self.selected_step]['frame']]['reasoning']['text'])
+    def tool_original(self,index):
+        c=self.data['calls'][index];self.show_raw(c['name'],'参数\n'+json.dumps(c['arguments'],ensure_ascii=False,indent=2)+'\n\n原始返回\n'+'\n\n'.join(r['text'] for r in c['returns']))
