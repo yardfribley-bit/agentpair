@@ -243,8 +243,9 @@ def main():
     if verify:
         from PySide6.QtCore import QUrl
         result_path=Path(sys.argv[sys.argv.index('--verify-ui')+1]);result=json.loads(result_path.read_text())
-        chat.messages=[result];chat.render();chat.show();app.processEvents()
+        chat.messages=[result];chat.input.setPlainText(result['question']);chat.render();chat.show();app.processEvents()
         assert chat.input.height()>=118
+        assert chat.input.toPlainText()==result['question']
         assert chat.composer.mapTo(chat,chat.composer.rect().topLeft()).y()<chat.answer.mapTo(chat,chat.answer.rect().topLeft()).y()
         reference=result['understanding']['steps'][0]['evidenceRefs'][0]
         chat.evidence(QUrl('proof:0:'+reference));app.processEvents();assert chat.proof_panel.isVisible()

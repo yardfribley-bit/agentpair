@@ -48,3 +48,14 @@ class LiveUiTests(unittest.TestCase):
             chat.input.setPlainText('多行问题\n具体参数');self.assertIn('\n',chat.input.toPlainText())
             self.assertIsNone(chat.source.currentData());chat.source.setCurrentIndex(1);self.assertEqual(chat.source.currentData(),'workbuddy')
             chat.grab().save('/private/tmp/sessionlens-input-prototype-implemented.png');chat.close()
+    def test_question_remains_in_prototype_input_after_send_and_restore(self):
+        from sessionlens.chat_window import ChatWindow
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));chat=ChatWindow(window)
+            q='那次 SSH 动画是怎么生成的？';chat.input.setPlainText(q)
+            with patch('sessionlens.chat_window.threading.Thread') as worker:
+                chat.send();self.assertEqual(chat.input.toPlainText(),q);worker.return_value.start.assert_called_once()
+            chat.failed('测试失败');self.assertEqual(chat.input.toPlainText(),q)
+            chat.new_chat();self.assertEqual(chat.input.toPlainText(),'')
+            chat.open_chat(0);self.assertEqual(chat.input.toPlainText(),q);chat.close()

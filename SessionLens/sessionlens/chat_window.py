@@ -64,10 +64,10 @@ class ChatWindow(QMainWindow):
         self.chat_rows=self.cache.execute('SELECT id,title FROM chats ORDER BY updated DESC').fetchall();self.chats.blockSignals(True);self.chats.clear();self.chats.addItems([r[1] for r in self.chat_rows]);self.chats.blockSignals(False)
     def new_chat(self):
         if self.busy:return
-        self.chat_id=uuid.uuid4().hex;self.messages=[];self.proof_panel.hide();self.render()
+        self.chat_id=uuid.uuid4().hex;self.messages=[];self.input.clear();self.proof_panel.hide();self.render()
     def open_chat(self,index):
         if self.busy or index<0:return
-        self.chat_id=self.chat_rows[index][0];self.messages=json.loads(self.cache.execute('SELECT content FROM chats WHERE id=?',(self.chat_id,)).fetchone()[0]);self.proof_panel.hide();self.render()
+        self.chat_id=self.chat_rows[index][0];self.messages=json.loads(self.cache.execute('SELECT content FROM chats WHERE id=?',(self.chat_id,)).fetchone()[0]);self.input.setPlainText(self.messages[-1]['question'] if self.messages else '');self.proof_panel.hide();self.render()
     def render(self):
         if self.messages and self.messages[-1].get('presentation') and not self.busy:
             self.task_view.load(self.messages[-1]);self.results.setCurrentWidget(self.task_view);return
@@ -94,7 +94,7 @@ class ChatWindow(QMainWindow):
         q=self.input.toPlainText().strip()
         if len(q)>2000:self.status.setText('问题过长，请缩短到 2000 字以内。');return
         if not q or self.busy:return
-        self.busy=True;self.send_button.setEnabled(False);self.chats.setEnabled(False);self.input.clear();self.pending=q;history=[r for r in self.messages if not r.get('error')];self.status.setText('正在查找相关工作记录…')
+        self.busy=True;self.send_button.setEnabled(False);self.chats.setEnabled(False);self.pending=q;history=[r for r in self.messages if not r.get('error')];self.status.setText('正在查找相关工作记录…')
         self.source.setEnabled(False);self.period.setEnabled(False)
         source=self.source.currentData();days=self.period.currentData()
         self.render()
