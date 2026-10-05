@@ -230,7 +230,8 @@ class Window(QMainWindow):
 
 def main():
     test='--self-test' in sys.argv
-    verify='--verify-ui' in sys.argv
+    query_test='--verify-assistant' in sys.argv
+    verify='--verify-ui' in sys.argv or query_test
     if test or verify:os.environ['QT_QPA_PLATFORM']='offscreen'
     app=QApplication(sys.argv);app.setStyleSheet(STYLE)
     root=Path(__import__('tempfile').mkdtemp(prefix='sessionlens-test-')) if test else state_root();root.mkdir(parents=True,exist_ok=True)
@@ -240,6 +241,27 @@ def main():
     from sessionlens.chat_window import ChatWindow
     chat=ChatWindow(window)
     if test:chat.close();print('SessionLens desktop self-test passed');return 0
+    if query_test:
+        from PySide6.QtCore import QTimer
+        from time import monotonic
+        output=Path(sys.argv[sys.argv.index('--verify-assistant')+1]);question='那次 SSH 动画是怎么生成的，最后做成了吗？'
+        from sessionlens import relay_model
+        original_answer=relay_model.answer
+        def guarded_answer(root,config,q,packet,history):
+            if packet['taskId']!='f18fad6ea1ea44d94d706cbf6236c10633bd38bfe1e8689727de4f39ba029dcf':raise ValueError('测试查询选错了任务，未发送其他任务数据')
+            return original_answer(root,config,q,packet,history)
+        relay_model.answer=guarded_answer
+        chat.source.setCurrentIndex(1);chat.input.setPlainText(question);chat.show();chat.send();started=monotonic();timer=QTimer(chat)
+        def check_query():
+            if chat.busy and monotonic()-started<240:return
+            timer.stop()
+            success=bool(chat.messages and not chat.messages[-1].get('error') and chat.input.toPlainText()==question and chat.results.currentWidget()==chat.task_view)
+            if chat.messages:output.write_text(json.dumps(chat.messages[-1],ensure_ascii=False))
+            chat.grab().save('/private/tmp/sessionlens-query-ui.png')
+            print('Installed assistant query '+('passed' if success else 'failed'),flush=True)
+            if not success and chat.messages:print(chat.messages[-1].get('error','界面显示失败'),flush=True)
+            chat.close();app.exit(0 if success else 1)
+        timer.timeout.connect(check_query);timer.start(250);return app.exec()
     if verify:
         from PySide6.QtCore import QUrl
         result_path=Path(sys.argv[sys.argv.index('--verify-ui')+1]);result=json.loads(result_path.read_text())

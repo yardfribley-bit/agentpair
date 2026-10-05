@@ -15,3 +15,7 @@ class RetrievalTests(unittest.TestCase):
   db=sqlite3.connect(':memory:');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
   db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[('old','上海天气','workbuddy','a','2026-08-01','天气'),('new','上海天气','workbuddy','b','2026-10-04','天气')])
   self.assertEqual([r[0] for r in candidates(db,['天气'],since='2026-09-28')],['new']);db.close()
+ def test_specific_question_prefers_video_over_other_ssh_task(self):
+  db=sqlite3.connect(':memory:');db.execute('CREATE TABLE tasks(id,prompt,source,session,updated,search)')
+  db.executemany('INSERT INTO tasks VALUES(?,?,?,?,?,?)',[('ops','SSH 登录服务器检查日志','workbuddy','a','2026','SSH 动画生成工具完成状态'),('video','帮我生成五秒动画，描述 ssh 协议','workbuddy','b','2026','VideoGen')])
+  self.assertEqual(candidates(db,['SSH','动画生成'],question='那次 SSH 动画是怎么生成的，最后做成了吗？')[0][0],'video');db.close()
