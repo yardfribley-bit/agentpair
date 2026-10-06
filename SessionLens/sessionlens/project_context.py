@@ -363,4 +363,6 @@ class ProjectStore:
             target=absolute(value,directory)
             if not target:continue
             marker=basename(target) in ('package.json','pyproject.toml','Cargo.toml','go.mod','pom.xml')
-            associate(str(Path(target).parent) if not re.match(r'^[a-z]:/',target) else ntpath.dirname(target),eid,target,marker)
+            # Captured paths retain their source platform's syntax, even when
+            # reviewing a macOS session on Windows (or the reverse).
+            associate(posixpath.dirname(target) if not re.match(r'^[a-z]:/',target) else ntpath.dirname(target),eid,target,marker)
