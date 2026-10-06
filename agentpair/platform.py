@@ -81,6 +81,14 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             task['conversationUnlimited']=True
             if not self.task_access(task): raise KeyError('Task not found')
             task['permissions']={'canWrite':self.task_access(task,write=True)}
+            action=task.get('cloudAction',{})
+            if cloud_console and hasattr(cloud_console,'list') and action.get('leaseId'):
+                lease=next((r for r in cloud_console.list() if r['id']==action['leaseId']),None)
+                if lease:
+                    action['assetState']=lease['state']
+                    if lease['state']=='released':
+                        action['state']='released'
+                        action['finalAnswer']='这台机器已释放。创建与安装历史保留在执行详情中。'
             task['applens']=devices.task_participants(tid)
             return task
 

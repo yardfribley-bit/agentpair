@@ -233,8 +233,8 @@ class CloudWorkflow:
             else:
                 lease = {'id': action['leaseId']}
             access = None
-            for _ in range(20):
-                self._save(tid, 'checking_login', '正在检查机器登录；云端开机状态不能代替登录成功。')
+            for _ in range(60):
+                self._save(tid, 'checking_login', '机器正在初始化，我会自动检查登录并继续安装；你暂时不用操作。')
                 access = self.console.login(lease['id'])
                 if access.get('loginState') == 'ssh_authenticated':
                     break

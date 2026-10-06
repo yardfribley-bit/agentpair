@@ -247,7 +247,7 @@ class CloudWorkflowTests(unittest.TestCase):
         waiting = self.run_confirmed(task)
         self.assertEqual(waiting['status'], 'waiting_for_machine')
         self.assertEqual(waiting['cloudAction']['state'], 'waiting_machine')
-        self.assertEqual(len(self.console.login_calls), 20)
+        self.assertEqual(len(self.console.login_calls), 60)
         self.assertEqual(self.console.install_calls, [])
         self.console.login_state = 'ssh_authenticated'
         self.workflow.resume(task['id'], {'requestId': task['cloudAction']['requestId']})

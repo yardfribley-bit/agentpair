@@ -9,7 +9,7 @@
   let selectedJob=null;let task=null,selected='Navigator',tab='messages',follow=false,signature='',unread=0,scope='all';
   const root=make('section',null,'team-console');root.id='team-console';root.hidden=true;
   root.innerHTML='<div class="tc-heading"><div><div class="tc-breadcrumb">任务 <span>›</span> 团队工作台</div><h1></h1><p></p></div><span class="tc-task-status"></span></div><div class="tc-overview"><section class="tc-canvas"><div class="tc-canvas-label">团队工作流 <small>点击节点查看工作 · 点击连线消息查看往返记录</small></div><div class="tc-map"><svg aria-hidden="true"></svg><div class="tc-nodes"></div><div class="tc-edge-messages"></div></div></section><section class="tc-activity"><h2>团队动态</h2><div></div></section></div><section class="tc-work"><div class="tc-work-heading"><h2></h2><span></span></div><div class="tc-tabs" role="tablist" aria-label="节点详情"></div><div class="tc-work-body"><section class="tc-jobs"></section><section class="tc-detail"></section></div><div class="tc-work-footer"><span class="tc-new"></span><label><input type="checkbox"> 跟随最新</label></div></section>';
-  $('pair-board').before(root);
+  const executionDetails=make('details',null,'assistant-execution-details');executionDetails.append(make('summary','查看执行详情 · 协作、交接与处理记录'),root);$('conversation').after(executionDetails);
   document.body.classList.add('team-console-page');
   const stylesheet=make('link');stylesheet.rel='stylesheet';stylesheet.href='/team_console.css';document.head.append(stylesheet);
   // Preserve existing forms/access control, but place publishing in the top bar.
