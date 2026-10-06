@@ -15,6 +15,13 @@ from sessionlens.core import Collector
 class LiveUiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):cls.app=QApplication.instance() or QApplication([])
+    def setUp(self):
+        from unittest.mock import patch
+        from sessionlens.desktop import defaults
+        from sessionlens.i18n import set_language
+        set_language('zh')
+        configured=patch('desktop_main.defaults',side_effect=lambda:{**defaults(),'ui':{'language':'zh'}})
+        configured.start();self.addCleanup(configured.stop)
     def test_monitor_switch_and_follow_new_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);log=root/'task.jsonl';window=Window(root)

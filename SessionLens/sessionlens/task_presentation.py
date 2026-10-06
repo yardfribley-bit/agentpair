@@ -76,12 +76,13 @@ def project(db,task_id):
                     if category(previous)=='解题思路':
                         if event_text(previous):decision={'reasoningEvent':previous['id'],'basis':'sequence_candidate','path':[previous['id'],e['id']]}
                         break
-            calls.append({'id':e['id'],'name':title,'callId':e.get('callId'),'fields':readable_fields(args),'arguments':args,'truncated':bool(e.get('_bodyTruncated')),'returns':[{'id':x['id'],'text':event_text(x)[:16000],'truncated':bool(x.get('_bodyTruncated')) or len(event_text(x))>16000} for x in linked],'timestamp':e.get('timestamp'),'requirement':bindings.get(e['id']),'decisionLink':decision})
+            calls.append({'id':e['id'],'name':title,'callId':e.get('callId'),'fields':readable_fields(args),'arguments':args,'truncated':bool(e.get('_bodyTruncated')),'returns':[{'id':x['id'],'text':event_text(x)[:16000],'timestamp':x.get('timestamp'),'truncated':bool(x.get('_bodyTruncated')) or len(event_text(x))>16000} for x in linked],'timestamp':e.get('timestamp'),'requirement':bindings.get(e['id']),'decisionLink':decision})
     for frame in frames:
         related=[c for c in calls if c.get('decisionLink') and c['decisionLink']['reasoningEvent']==frame['reasoning']['id']]
         frame['callIds']=[c['id'] for c in related];frame['call']=frame['callIds'][0] if related else None
         frame['returnIds']=[r['id'] for c in related for r in c['returns']]
-    finals=[{'id':e['id'],'text':event_text(e)[:16000]} for e in events if category(e)=='Agent 回复']
-    context=[{'id':e['id'],'kind':category(e),'text':event_text(e)[:12000]} for e in events if category(e) in ('用户提问','会话背景')]
+    finals=[{'id':e['id'],'text':event_text(e)[:16000],'timestamp':e.get('timestamp')} for e in events if category(e)=='Agent 回复']
+    context=[{'id':e['id'],'kind':category(e),'text':event_text(e)[:12000],'timestamp':e.get('timestamp')} for e in events if category(e) in ('用户提问','会话背景')]
+    requirements=[{**r,'timestamp':by_id.get(r['eventId'],{}).get('timestamp')} for r in requirements]
     from .interactions import task_interactions
     return {'taskId':task_id,'source':task[0],'session':task[1],'prompt':task[2],'updated':task[3],'calls':calls,'reasoning':reasoning,'frames':frames,'replies':finals,'context':context,'total':count,'included':len(events),'requirements':requirements,'plans':plans,'messageGraph':graph,'interactions':task_interactions(db,task_id)}

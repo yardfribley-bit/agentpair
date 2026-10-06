@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBo
 from sessionlens.supervision import TaskStore,describe,event_text
 from sessionlens.assistant import run as run_assistant
 from sessionlens.desktop import Runtime,defaults,state_root,LABELS
+from sessionlens.i18n import language,t,localize_widgets
 
 STYLE='''QWidget {font-family: Arial; font-size:14px; color:#233247; background:#F7F8FA;} QMainWindow {background:#F7F8FA;} QLabel {background:transparent;} QLabel#title {font-size:28px;font-weight:700;} QLabel#sub {color:#6a7a91;} QGroupBox {background:white;border:1px solid #E6E8EC;border-radius:10px;margin-top:12px;padding:18px;} QGroupBox::title {subcontrol-origin:margin;left:16px;padding:0 5px;font-weight:600;} QPushButton {background:#1769ef;color:white;border:0;border-radius:6px;padding:10px 16px;} QPushButton:checked {background:#e9f0fb;color:#275eb2;border:1px solid #275eb2;} QPushButton:disabled {background:#9aaac3;} QTextBrowser,QListWidget,QLineEdit,QPlainTextEdit,QTableWidget {background:white;border:1px solid #E6E8EC;border-radius:5px;padding:5px;} QListWidget::item:selected {background:#e9f0fb;color:#202d3d;} QTextBrowser {padding:14px;} QHeaderView::section {background:#edf2fa;padding:9px;border:0;font-weight:600;} QProgressBar {border:0;background:#e4eaf5;height:8px;border-radius:4px;text-align:center;} QProgressBar::chunk {background:#1769ef;border-radius:4px;}'''
 
@@ -19,7 +20,7 @@ def display_time(value):
     try:
         if str(value).isdigit():return datetime.fromtimestamp(int(value)/1000).strftime('%m-%d %H:%M')
         return datetime.fromisoformat(str(value).replace('Z','+00:00')).astimezone().strftime('%m-%d %H:%M')
-    except (ValueError,OSError,OverflowError):return '时间未记录'
+    except (ValueError,OSError,OverflowError):return t('时间未记录')
 
 class AssistantSignals(QObject):
     progress=Signal(str)
@@ -49,6 +50,8 @@ class Settings(QDialog):
         self.embedding_directory=QLineEdit(config.get('embedding',{}).get('directory',str(state_root()/'models/bge-small-zh-v1.5')));form.addRow('本地 embedding 模型目录',self.embedding_directory)
         hint=QLabel('目录以分号分隔。开启上报后，会发送所选日志的完整记录。\n未配置接口和令牌时，仅保存在本机；关闭应用停止采集。');hint.setWordWrap(True);form.addRow(hint)
         buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);form.addRow(buttons)
+        buttons.button(QDialogButtonBox.Ok).setText('保存');buttons.button(QDialogButtonBox.Cancel).setText('取消')
+        localize_widgets(self)
     def result_config(self):
         result=dict(self.config)
         result.update({'sources':{s:{'enabled':c.isChecked(),'roots':[x.strip() for x in p.text().split(';') if x.strip()]} for s,(c,p) in self.sources.items()},'endpoint':self.endpoint.text().strip(),'assistant':{'url':self.assistant_url.text().strip(),'tokenFile':self.assistant_token.text().strip()}})
@@ -75,14 +78,19 @@ class Window(QMainWindow):
         self.ask=QPushButton('理解这次任务');self.ask.clicked.connect(self.ask_assistant);assistant_bar.addWidget(self.ask)
         self.associate=QPushButton('关联多轮对话');self.associate.clicked.connect(self.review_association);assistant_bar.addWidget(self.associate);layout.addLayout(assistant_bar)
         self.analysis_status=QLabel('选择任务后提问 · AgentPair · 仅发送当前任务证据');self.analysis_status.setWordWrap(True);layout.addWidget(self.analysis_status)
-        self.assistant_signals=AssistantSignals(self);self.assistant_signals.progress.connect(self.analysis_status.setText);self.assistant_signals.result.connect(self.assistant_ready);self.assistant_signals.failed.connect(self.assistant_failed)
-        self.association_signals=AssociationSignals(self);self.association_signals.progress.connect(self.analysis_status.setText);self.association_signals.result.connect(self.association_ready);self.association_signals.failed.connect(self.association_failed)
+        self.assistant_signals=AssistantSignals(self);self.assistant_signals.progress.connect(self.analysis_progress);self.assistant_signals.result.connect(self.assistant_ready);self.assistant_signals.failed.connect(self.assistant_failed)
+        self.association_signals=AssociationSignals(self);self.association_signals.progress.connect(self.analysis_progress);self.association_signals.result.connect(self.association_ready);self.association_signals.failed.connect(self.association_failed)
         split=QSplitter(Qt.Horizontal);layout.addWidget(split,1)
         left=QWidget();lv=QVBoxLayout(left);lv.setContentsMargins(0,0,0,0);self.list_title=QLabel('当前任务');lv.addWidget(self.list_title);self.task_list=QListWidget();self.task_list.setWordWrap(True);self.task_list.currentRowChanged.connect(self.select_task);lv.addWidget(self.task_list);split.addWidget(left)
         self.middle=QTextBrowser();self.middle.setOpenLinks(False);self.middle.anchorClicked.connect(self.follow_link);split.addWidget(self.middle)
         right=QWidget();rv=QVBoxLayout(right);rv.setContentsMargins(0,0,0,0);rv.addWidget(QLabel('对应证据'));self.proof=QTextBrowser();rv.addWidget(self.proof,1);self.mark=QPushButton('标记待核实');self.mark.clicked.connect(self.mark_event);rv.addWidget(self.mark);raw=QPushButton('查看来源定位与原始片段');raw.clicked.connect(self.details);rv.addWidget(raw);split.addWidget(right);split.setSizes([230,640,330]);split.setChildrenCollapsible(False)
         self.foot=QLabel('只展示已记录的动作；待核实标记不会暂停 Agent。');self.foot.setWordWrap(True);layout.addWidget(self.foot)
         self.timer=QTimer(self);self.timer.timeout.connect(self.periodic_refresh);self.timer.start(1200);self.set_mode('live')
+        localize_widgets(self)
+    def analysis_progress(self,message):
+        self.analysis_status.setText(message);localize_widgets(self.analysis_status)
+    def refresh_language(self):
+        self.signature=None;self.selected_signature=None;self.reload();localize_widgets(self)
     def review_association(self):
         if not self.selected or not self.associate.isEnabled():return
         from sessionlens.semantic_lineage import candidate_turns
@@ -99,6 +107,7 @@ class Window(QMainWindow):
             item=QListWidgetItem(prompt[:220]);item.setFlags(item.flags()|Qt.ItemIsUserCheckable);item.setCheckState(Qt.Checked);item.setData(Qt.UserRole,ident);listing.addItem(item)
         layout.addWidget(listing)
         buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.button(QDialogButtonBox.Ok).setText('开始关联');buttons.accepted.connect(dialog.accept);buttons.rejected.connect(dialog.reject);layout.addWidget(buttons)
+        localize_widgets(dialog)
         if dialog.exec()!=QDialog.Accepted:return
         scope=[listing.item(i).data(Qt.UserRole) for i in range(listing.count()) if listing.item(i).checkState()==Qt.Checked]
         if task not in scope:
@@ -144,15 +153,15 @@ class Window(QMainWindow):
         self.ask.setEnabled(True);self.associate.setEnabled(True);self.analysis_status.setText('分析未完成：'+error)
     def understanding_html(self,result):
         esc=html.escape;value=result['understanding'];packet=result['packet']
-        text='<h3>任务助手</h3><p style="color:#67778b">'+esc(result.get('question',''))+'</p>'
+        text='<h3>'+esc(t('任务助手'))+'</h3><p style="color:#67778b">'+esc(result.get('question',''))+'</p>'
         for block in [value['overview']]+value['steps']:
             if block.get('title'):text+='<h3>'+esc(block['title'])+'</h3>'
-            prefix={'inferred':'推断：','unknown':'尚不能确定：','recorded':''}.get(block['basis'],'')
+            prefix=t({'inferred':'推断：','unknown':'尚不能确定：','recorded':''}.get(block['basis'],''))
             text+='<p>'+esc(prefix+block['text']).replace('\n','<br>')+'</p><p>'
-            text+=' · '.join('<a href="ai:'+esc(ref)+'">'+esc(ref)+' 查看依据</a>' for ref in block['evidenceRefs'])+'</p>'
-        if value.get('gaps'):text+='<h3>还不能确定的地方</h3>'+''.join('<p>'+esc(str(x))+'</p>' for x in value['gaps'])
-        text+=f'<p style="color:#67778b">基于 {packet["includedRecords"]}/{packet["totalRecords"]} 条任务记录；部分长记录可能截取。</p>'
-        text+='<p><a href="records:">'+('收起逐条记录' if self.show_records else '展开逐条记录')+'</a></p>'
+            text+=' · '.join('<a href="ai:'+esc(ref)+'">'+esc(ref)+' '+esc(t('查看依据'))+'</a>' for ref in block['evidenceRefs'])+'</p>'
+        if value.get('gaps'):text+='<h3>'+esc(t('还不能确定的地方'))+'</h3>'+''.join('<p>'+esc(str(x))+'</p>' for x in value['gaps'])
+        text+='<p style="color:#67778b">'+esc(t(f'基于 {packet["includedRecords"]}/{packet["totalRecords"]} 条任务记录；部分长记录可能截取。'))+'</p>'
+        text+='<p><a href="records:">'+esc(t('收起逐条记录' if self.show_records else '展开逐条记录'))+'</a></p>'
         return text
     def set_mode(self,mode):
         self.project_task=None
@@ -169,7 +178,7 @@ class Window(QMainWindow):
         if self.runtime:
             with self.runtime.lock:status=dict(self.runtime.status)
             message=status.get('task_index','整理中')+'\n'+status.get('upload','')+'\n本地存储：'+str(self.runtime.path)
-            QMessageBox.information(self,'采集状态',message)
+            QMessageBox.information(self,t('采集状态'),t(message))
             self.runtime.stop.set();self.stopping=True;self.button.setEnabled(False);return
         self.open_settings()
     def open_settings(self):
@@ -185,6 +194,7 @@ class Window(QMainWindow):
             with self.runtime.lock:s=dict(self.runtime.status)
             self.status.setText(s.get('task_index','正在读取日志')+' · '+s.get('upload','仅本地'))
         self.reload()
+        localize_widgets(self)
     def periodic_refresh(self):
         # Collection runs in Runtime; a hidden evidence window does not need
         # to recreate documents and lists on every background record.
@@ -198,7 +208,7 @@ class Window(QMainWindow):
         if pin and self.mode=='history' and not source and not self.search.text() and not any(r[0]==pin for r in rows):
             pinned=self.store.db.execute('SELECT id,source,session,prompt,updated,state,last_row FROM task_groups WHERE id=?',(resolve(self.store.db,pin),)).fetchone()
             if pinned:rows=[pinned,*rows]
-        sig=(self.mode,tuple(rows),self.search.text(),source)
+        sig=(self.mode,tuple(rows),self.search.text(),source,language())
         if sig==self.signature:return
         self.signature=sig;old=None if self.mode=='live' and self.follow.isChecked() else resolve(self.store.db,self.selected);
         if self.mode=='live' and self.follow.isChecked():self.selected_event=None
@@ -208,7 +218,7 @@ class Window(QMainWindow):
         if rebuild:self.task_list.clear()
         for i,row in enumerate(rows):
             count=self.store.db.execute('SELECT turn_count FROM task_groups WHERE id=?',(row[0],)).fetchone()
-            rounds=f' · {count[0]} 轮对话' if count else ''
+            rounds=' · '+t(f'{count[0]} 轮对话') if count else ''
             text=row[1].title()+' · '+display_time(row[4])+rounds+'\n'+row[3].replace('\n',' ')[:100]
             if rebuild:
                 item=QListWidgetItem(text);item.setSizeHint(QSize(210,90));self.task_list.addItem(item)
@@ -217,29 +227,30 @@ class Window(QMainWindow):
                 if item.text()!=text:item.setText(text)
         self.list_structure=structural
         self.task_list.blockSignals(False);index=next((i for i,r in enumerate(rows) if r[0]==old),0)
-        self.list_title.setText(('当前任务' if self.mode=='live' else '相关任务')+f' · {len(rows)}')
+        self.list_title.setText(t('当前任务' if self.mode=='live' else '相关任务')+f' · {len(rows)}')
         if rows:
             self.task_list.blockSignals(True);self.task_list.setCurrentRow(index);self.task_list.blockSignals(False)
             selected=rows[index];step=self.store.db.execute('SELECT max(seq) FROM linked_task_steps WHERE task=?',(selected[0],)).fetchone()[0]
-            selected_sig=(selected[0],selected[5],step,self.mode,self.step_limit,self.selected_event,self.show_records)
-            if selected_sig!=getattr(self,'selected_signature',None):self.select_task(index);self.selected_signature=(selected[0],selected[5],step,self.mode,self.step_limit,self.selected_event,self.show_records)
-        else:self.selected=None;self.selected_event=None;self.middle.setHtml('<h2>当前索引尚未找到匹配任务</h2><p>历史仍在后台整理时，尚未索引的任务暂时无法搜索。这不代表原日志中没有记录。</p>');self.proof.setHtml('<p>选择任务后展示对应原文。</p>')
+            selected_sig=(selected[0],selected[5],step,self.mode,self.step_limit,self.selected_event,self.show_records,language())
+            if selected_sig!=getattr(self,'selected_signature',None):self.select_task(index);self.selected_signature=(selected[0],selected[5],step,self.mode,self.step_limit,self.selected_event,self.show_records,language())
+        else:self.selected=None;self.selected_event=None;self.middle.setHtml('<h2>'+html.escape(t('当前索引尚未找到匹配任务'))+'</h2><p>'+html.escape(t('历史仍在后台整理时，尚未索引的任务暂时无法搜索。这不代表原日志中没有记录。'))+'</p>');self.proof.setHtml('<p>'+html.escape(t('选择任务后展示对应原文。'))+'</p>')
+        localize_widgets(self)
     def select_task(self,index):
         if index<0 or index>=len(getattr(self,'rows',[])):return
         row=self.rows[index]
         if self.selected!=row[0]:self.step_limit=300
         self.selected=row[0];self.steps=self.store.steps(row[0],self.step_limit,latest=self.mode=='live');esc=html.escape
         last=self.store.db.execute('SELECT event,kind,excerpt,call_id FROM linked_task_steps WHERE task=? ORDER BY seq DESC LIMIT 1',(row[0],)).fetchone()
-        outcome=last[2][:450] if last else '尚未记录后续动作'
+        outcome=last[2][:450] if last else t('尚未记录后续动作')
         title=row[3].splitlines()[0][:90]
-        content='<style>a {color:#275eb2;text-decoration:none;} p {line-height:150%;} blockquote {color:#202d3d;}</style>'+f'<h2>{esc(title)}</h2><p style="color:#67778b">{esc(row[1])} · {esc(display_time(row[4]))} · {esc(row[5])}</p><div style="background:#edf2f8"><h3>{"现在记录到什么" if self.mode=="live" else "这次实际做了什么"}</h3><p>{esc(outcome)}</p></div><h3>你的原始要求</h3><blockquote>{esc(row[3]).replace(chr(10),"<br>")}</blockquote><hr><p style="color:#67778b">按记录顺序展示；较长任务分批展开，原文完整保留。</p><h3>{"已经看到的动作" if self.mode=="live" else "处理经过与依据"}</h3>'
+        content='<style>a {color:#275eb2;text-decoration:none;} p {line-height:150%;} blockquote {color:#202d3d;}</style>'+f'<h2>{esc(title)}</h2><p style="color:#67778b">{esc(row[1])} · {esc(display_time(row[4]))} · {esc(t(row[5]))}</p><div style="background:#edf2f8"><h3>{esc(t("现在记录到什么" if self.mode=="live" else "这次实际做了什么"))}</h3><p>{esc(outcome)}</p></div><h3>{esc(t("你的原始要求"))}</h3><blockquote>{esc(row[3]).replace(chr(10),"<br>")}</blockquote><hr><p style="color:#67778b">{esc(t("按记录顺序展示；较长任务分批展开，原文完整保留。"))}</p><h3>{esc(t("已经看到的动作" if self.mode=="live" else "处理经过与依据"))}</h3>'
         from sessionlens.task_lineage import dialogues,signature
-        turns=dialogues(self.store.db,row[0],limit=12);total_turns=turns[0]['totalTurns'] if turns else 0;dialogue_html=f'<h3>需求对话 · {total_turns} 轮</h3>'
-        if len(turns)<total_turns:dialogue_html+='<p>显示最初要求和最近 11 轮；全部轮次保留在任务记录中。</p>'
+        turns=dialogues(self.store.db,row[0],limit=12);total_turns=turns[0]['totalTurns'] if turns else 0;dialogue_html='<h3>'+esc(t(f'需求对话 · {total_turns} 轮'))+'</h3>'
+        if len(turns)<total_turns:dialogue_html+='<p>'+esc(t('显示最初要求和最近 11 轮；全部轮次保留在任务记录中。'))+'</p>'
         for turn in turns:
             number=turn['ordinal']
-            label={'semantic_inference':'模型判断','confirmed_by_user':'用户修正','provisional':'初步关联'}[turn['association']]
-            dialogue_html+=f'<p><b>{number} · {esc(turn["label"])}{ " · 本轮中断" if turn["interrupted"] else ""}</b> <span style="color:#67778b">{label}</span><br><a href="dialogue:{turn["eventId"]}">{esc(turn["text"][:220])}</a></p>'
+            label=t({'semantic_inference':'模型判断','confirmed_by_user':'用户修正','provisional':'初步关联'}[turn['association']])
+            dialogue_html+=f'<p><b>{number} · {esc(t(turn["label"]))}{ " · "+esc(t("本轮中断")) if turn["interrupted"] else ""}</b> <span style="color:#67778b">{label}</span><br><a href="dialogue:{turn["eventId"]}">{esc(turn["text"][:220])}</a></p>'
             for reply in turn['replies']:
                 dialogue_html+=f'<p style="color:#67778b">Agent：<a href="dialogue:{reply["eventId"]}">{esc(reply["text"][:150])}</a></p>'
         content=dialogue_html+'<hr>'+content
@@ -259,6 +270,7 @@ class Window(QMainWindow):
                 if self.selected_event not in {f['eventId'] for f in fragments}:
                     first=next((f for f in fragments if f['evidenceId']==answer['understanding']['overview']['evidenceRefs'][0]),fragments[0]);self.show_evidence(first['eventId'],first['evidenceId'])
                 if row[6]>answer['packet']['revision']:self.analysis_status.setText('这是此前记录的分析；任务有新记录，可再次提问更新解释。')
+                localize_widgets(self)
                 return
         calls={s[3] for s in self.steps if s[1]=='工具调用' and s[3]};results={s[3] for s in self.steps if s[1]=='工具返回' and s[3]}
         for i,s in enumerate(self.steps):
@@ -266,20 +278,21 @@ class Window(QMainWindow):
             step_title,step_body=describe(s[1],s[2])
             content+=f'<div style="background:{"#e9f0fb" if focused else "#ffffff"};margin:8px;padding:8px"><a href="e:{i}"><b>{i+1} · {esc(step_title)}</b>　E{i+1:03}</a><p>{esc(step_body[:300]).replace(chr(10),"<br>")}</p></div>'
         total=self.store.db.execute('SELECT count(*) FROM linked_task_steps WHERE task=?',(row[0],)).fetchone()[0]
-        if self.mode=='history' and total>len(self.steps):content+=f'<p><a href="more:">继续展开 · 已显示 {len(self.steps)} / {total} 个步骤</a></p>'
+        if self.mode=='history' and total>len(self.steps):content+='<p><a href="more:">'+esc(t(f'继续展开 · 已显示 {len(self.steps)} / {total} 个步骤'))+'</a></p>'
         gaps=[]
-        if total==len(self.steps) and calls-results:gaps.append(f'{len(calls-results)} 个工具调用尚未找到对应返回。')
-        if total==len(self.steps) and not any(s[1]=='解题思路' for s in self.steps):gaps.append('这段日志没有记录处理思路，无法据此说明为什么这样做。')
-        if row[5]=='结束状态未记录':gaps.append('没有明确的任务结束记录。')
-        if gaps:content+='<div style="background:#fff5e7;color:#875820"><h3>这次还有什么没说明白</h3><p>'+ '<br>'.join(gaps)+'</p></div>'
+        if total==len(self.steps) and calls-results:gaps.append(t(f'{len(calls-results)} 个工具调用尚未找到对应返回。'))
+        if total==len(self.steps) and not any(s[1]=='解题思路' for s in self.steps):gaps.append(t('这段日志没有记录处理思路，无法据此说明为什么这样做。'))
+        if row[5]=='结束状态未记录':gaps.append(t('没有明确的任务结束记录。'))
+        if gaps:content+='<div style="background:#fff5e7;color:#875820"><h3>'+esc(t('这次还有什么没说明白'))+'</h3><p>'+ '<br>'.join(esc(x) for x in gaps)+'</p></div>'
         related=self.store.db.execute('SELECT id,prompt FROM task_groups WHERE source=? AND session=? AND id<>? ORDER BY last_row DESC LIMIT 4',(row[1],row[2],row[0])).fetchall()
         if related:
-            content+='<hr><h3>同一会话 · 继续追溯前后任务</h3>'
+            content+='<hr><h3>'+esc(t('同一会话 · 继续追溯前后任务'))+'</h3>'
             for identity,prompt in related:content+=f'<p><a href="t:{identity}">{esc(prompt[:100])}</a></p>'
         self.middle.setHtml(content)
-        self.foot.setText('日志证据 · 会话 '+row[2]+' · 点击一步核对原文。摘要是记录摘录，不代表独立验证的结论。')
+        self.foot.setText(t('日志证据')+' · '+t('会话')+' '+row[2]+' · '+t('点击一步核对原文。摘要是记录摘录，不代表独立验证的结论。'))
         if self.steps:
             chosen=next((i for i,s in enumerate(self.steps) if s[0]==self.selected_event),len(self.steps)-1);self.select_evidence(chosen)
+        localize_widgets(self)
     def follow_link(self,url):
         target=url.toString()
         if target=='records:':self.show_records=not self.show_records;self.select_task(self.task_list.currentRow())
@@ -305,22 +318,23 @@ class Window(QMainWindow):
         loc=e.get('evidence',{});quote=event_text(e);call=e.get('callId');linked=''
         if call:
             peers=self.store.db.execute('SELECT e.event FROM linked_task_steps s JOIN events e ON e.id=s.event WHERE s.task=? AND s.call_id=? ORDER BY s.seq',(self.selected,call)).fetchall()
-            linked='<hr><h3>这次工具往返</h3>'+''.join('<p><b>'+esc(json.loads(raw)['kind'])+'</b></p><pre style="white-space:pre-wrap">'+esc(event_text(json.loads(raw))[:6000])+'</pre>' for (raw,) in peers)
-        self.proof.setHtml(f'<h3>{esc(ref)} · {esc(e.get("name") or e["kind"])}</h3><p>{esc(display_time(e.get("timestamp")))}</p><pre style="white-space:pre-wrap">{esc(quote[:12000])}</pre>{linked}<hr><p>来源：{esc(str(loc.get("path","未记录")))}</p><p>字节 {loc.get("byteStart","?")}–{loc.get("byteEnd","?")}</p><p>完整原文保存在本机，可导出核对。</p>')
+            linked='<hr><h3>'+esc(t('这次工具往返'))+'</h3>'+''.join('<p><b>'+esc(json.loads(raw)['kind'])+'</b></p><pre style="white-space:pre-wrap">'+esc(event_text(json.loads(raw))[:6000])+'</pre>' for (raw,) in peers)
+        self.proof.setHtml(f'<h3>{esc(ref)} · {esc(e.get("name") or e["kind"])}</h3><p>{esc(display_time(e.get("timestamp")))}</p><pre style="white-space:pre-wrap">{esc(quote[:12000])}</pre>{linked}<hr><p>{esc(t("来源"))}：{esc(str(loc.get("path",t("未记录"))))}</p><p>{esc(t("字节"))} {loc.get("byteStart","?")}–{loc.get("byteEnd","?")}</p><p>{esc(t("完整原文保存在本机，可导出核对。"))}</p>')
         self.mark.setText('取消待核实标记' if self.store.marked(identity) else '标记待核实')
+        localize_widgets(self.mark)
     def mark_event(self):
-        if self.selected_event:self.store.mark(self.selected_event);self.mark.setText('取消待核实标记' if self.store.marked(self.selected_event) else '标记待核实')
+        if self.selected_event:self.store.mark(self.selected_event);self.mark.setText('取消待核实标记' if self.store.marked(self.selected_event) else '标记待核实');localize_widgets(self.mark)
     def details(self):
         if not self.selected_event:return
         with sqlite3.connect(self.root/'collector.db') as db:record=db.execute('SELECT event FROM events WHERE id=?',(self.selected_event,)).fetchone()
         dialog=QDialog(self);dialog.setWindowTitle('采集原文与证据来源');dialog.resize(900,600);v=QVBoxLayout(dialog);text=QPlainTextEdit();text.setReadOnly(True);raw=record[0]
         text.setPlainText(raw[:100000] if len(raw)>100000 else json.dumps(json.loads(raw),ensure_ascii=False,indent=2));v.addWidget(text);export=QPushButton('导出完整记录');v.addWidget(export)
         def save():
-            filename,_=QFileDialog.getSaveFileName(dialog,'导出完整采集记录','sessionlens-record.json','JSON (*.json)')
+            filename,_=QFileDialog.getSaveFileName(dialog,t('导出完整采集记录'),'sessionlens-record.json','JSON (*.json)')
             if filename:
                 try:Path(filename).write_text(raw,encoding='utf-8')
-                except OSError as exc:QMessageBox.warning(dialog,'导出失败',str(exc))
-        export.clicked.connect(save);dialog.exec()
+                except OSError as exc:QMessageBox.warning(dialog,t('导出失败'),str(exc))
+        export.clicked.connect(save);localize_widgets(dialog);dialog.exec()
     def closeEvent(self,event):
         if getattr(self,'hide_on_close',False):self.hide();event.ignore();return
         if self.runtime:self.runtime.stop.set()
@@ -333,15 +347,32 @@ def main():
     conversation_test='--verify-conversation' in sys.argv
     project_test='--verify-projects' in sys.argv
     project_query_test='--verify-project-query' in sys.argv
-    verify='--verify-ui' in sys.argv or query_test or conversation_test or project_test or project_query_test
+    answer_view_test='--verify-knowledge-view' in sys.argv
+    verify='--verify-ui' in sys.argv or query_test or conversation_test or project_test or project_query_test or answer_view_test
     if test or verify:os.environ['QT_QPA_PLATFORM']='offscreen'
     app=QApplication(sys.argv);app.setStyleSheet(STYLE)
     root=Path(__import__('tempfile').mkdtemp(prefix='sessionlens-test-')) if test else state_root();root.mkdir(parents=True,exist_ok=True)
     lock=QLockFile(str(root/'desktop.lock'));lock.setStaleLockTime(0)
     if not test and not verify and not lock.tryLock(0):QMessageBox.information(None,'SessionLens','SessionLens 已在运行。');return 1
     window=Window(root)
+    if '--ui-language' in sys.argv:
+        chosen=sys.argv[sys.argv.index('--ui-language')+1]
+        if chosen not in ('zh','en'):raise ValueError('--ui-language must be zh or en')
+        window.config['ui']={**window.config.get('ui',{}),'language':chosen}
     from sessionlens.chat_window import ChatWindow
     chat=ChatWindow(window)
+    if answer_view_test:
+        index=sys.argv.index('--verify-knowledge-view');result=json.loads(Path(sys.argv[index+1]).read_text());output=Path(sys.argv[index+2])
+        # Render caller-owned recorded results locally; no model or retrieval.
+        window.config['model']={};chat.messages=[result];chat.input.setPlainText(result.get('question',''));chat.render();chat.show();app.processEvents()
+        assert chat.results.currentWidget()==chat.knowledge_view
+        before=chat.input.toPlainText();view=chat.knowledge_view
+        if view.data.get('kind')=='task_process' and result.get('presentation',{}).get('calls'):
+            view.select_step(0);view.toggle_play();view.next_step();view.stop();app.processEvents();assert chat.input.toPlainText()==before
+        chat.fit_result();app.processEvents();app.processEvents()
+        output.parent.mkdir(parents=True,exist_ok=True);chat.grab().save(str(output));os.chmod(output,0o600)
+        print('Native answer view verified: input retained, recorded result rendered, replay stopped',flush=True)
+        chat.close();return 0
     if project_query_test:
         index=sys.argv.index('--verify-project-query');question=sys.argv[index+1];output=Path(sys.argv[index+2])
         # Exercise the same native input/send/result path. This local test must
@@ -377,6 +408,16 @@ def main():
             assert len(values)==2 and all(len(v)==512 for v in values)
             assert all(abs(sum(x*x for x in v)-1)<.01 for v in values)
             print('Packaged local embedding self-test passed: 512 dimensions, CPU, no network')
+        # Packaged smoke test exercises both locales without reading user history.
+        from sessionlens.i18n import set_language,localize_widgets
+        draft='Unsubmitted question · 尚未提交的问题'
+        chat.input.setPlainText(draft)
+        for locale in ('zh','en'):
+            set_language(locale);localize_widgets(chat)
+            assert chat.input.toPlainText()==draft
+            assert chat.send_button.text()==('Ask' if locale=='en' else '提问')
+            assert chat.knowledge_view.data.get('kind')=='home'
+        print('Packaged Chinese/English interface smoke test passed',flush=True)
         chat.close();print('SessionLens desktop self-test passed');return 0
     if conversation_test:
         from time import monotonic

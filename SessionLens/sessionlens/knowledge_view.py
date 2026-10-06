@@ -1,156 +1,693 @@
-"""Native project → requirement → execution answers; stable between queries."""
-import json,re
-from PySide6.QtCore import Qt,Signal,QTimer,QSize
-from PySide6.QtWidgets import QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QFrame,QDialog,QPlainTextEdit,QSizePolicy
-from .project_window import task_preview
+"""Native project, decision and observable-process answer cards."""
+import json
+from pathlib import PurePath
 
-def compact(text,n=110):
-    text=' '.join(task_preview(str(text)).split());return text[:n]+('…' if len(text)>n else '')
-def label(text,style=''):
-    w=QLabel(str(text));w.setTextFormat(Qt.PlainText);w.setWordWrap(True);w.setStyleSheet(style);w.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Preferred);return w
-def clear(layout):
-    while layout.count():
-        item=layout.takeAt(0)
-        if item.widget():item.widget().hide();item.widget().deleteLater()
-        elif item.layout():clear(item.layout())
-def action_name(name):
-    leaf=str(name).split('→')[-1].strip().split('.')[-1]
-    return {'Bash':'运行命令','Read':'读取文件','Write':'写入文件','Edit':'修改文件','ToolSearch':'寻找可用工具','VideoGen':'生成视频','present_files':'交付文件','WebSearch':'检索网页','WebFetch':'读取网页','TaskCreate':'创建子任务','TaskUpdate':'更新子任务'}.get(leaf,compact(name,30))
-class ActiveStack(__import__('PySide6.QtWidgets',fromlist=['QStackedWidget']).QStackedWidget):
-    def sizeHint(self):return self.currentWidget().sizeHint() if self.currentWidget() else QSize(400,200)
-    def minimumSizeHint(self):return QSize(200,max(100,self.currentWidget().minimumSizeHint().height())) if self.currentWidget() else QSize(200,100)
+from PySide6.QtCore import Qt, Signal, QTimer, QSize
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QFrame,
+    QDialog, QPlainTextEdit, QSizePolicy, QStackedWidget, QTabWidget, QComboBox,
+)
+
+from .answer_presentation import present
+from .answer_widgets import label, short, clear, ClickRow, Fold, RelationFlow, LineIcon
+from .i18n import t, language, localize_widgets
+
+
+def compact(text, n=110):
+    return short(text, n)
+
+
+class ActiveStack(QStackedWidget):
+    def sizeHint(self):
+        return self.currentWidget().sizeHint() if self.currentWidget() else QSize(400, 200)
+
+    def minimumSizeHint(self):
+        widget = self.currentWidget()
+        return QSize(200, max(100, widget.minimumSizeHint().height())) if widget else QSize(200, 100)
+
 
 class KnowledgeView(QWidget):
-    projectRequested=Signal(str)
-    taskRequested=Signal(str)
-    evidenceRequested=Signal(str)
-    questionRequested=Signal(str)
-    associationRequested=Signal()
-    projectCorrectionRequested=Signal()
-    def __init__(self,parent=None):
-        super().__init__(parent);self.result={};self.index=0;self.expanded=False;self.signature=None
-        self.setStyleSheet('QWidget{background:transparent;} QPushButton{background:transparent;color:#315fc4;border:0;text-align:left;padding:7px 4px;} QPushButton:hover{background:#eaf0fc;} QPushButton:checked{background:#eaf0fc;border:1px solid #315fc4;} QFrame#kbrow{border:0;border-bottom:1px solid #e1e5ec;}')
-        self.v=QVBoxLayout(self);self.v.setContentsMargins(0,0,0,0);self.v.setSpacing(18);self.v.setAlignment(Qt.AlignTop)
-        self.origin=label('SessionLens 回答','font-size:12px;color:#626c7b;');self.v.addWidget(self.origin)
-        self.title=label('','font-size:21px;font-weight:600;');self.v.addWidget(self.title)
-        self.summary=label('','font-size:15px;');self.v.addWidget(self.summary)
-        self.scope=label('','font-size:12px;color:#626c7b;');self.v.addWidget(self.scope)
-        self.body=QWidget();self.body_layout=QVBoxLayout(self.body);self.body_layout.setContentsMargins(0,0,0,0);self.body_layout.setSpacing(18);self.v.addWidget(self.body)
-        self.project_label=label('','font-size:12px;color:#626c7b;');self.project_label.hide();self.v.addWidget(self.project_label)
-        self.requirement_button=QPushButton();self.requirement_button.clicked.connect(self.dialogues);self.requirement_button.hide();self.v.addWidget(self.requirement_button)
-        correction=QHBoxLayout();self.association_button=QPushButton('修正需求关联');self.association_button.clicked.connect(self.associationRequested.emit);correction.addWidget(self.association_button)
-        self.project_button=QPushButton('修正项目归属');self.project_button.clicked.connect(self.projectCorrectionRequested.emit);correction.addWidget(self.project_button);correction.addStretch();self.v.addLayout(correction);self.association_button.hide();self.project_button.hide()
-        self.timer=QTimer(self);self.timer.setInterval(1000);self.timer.timeout.connect(self.next_step)
-    def load(self,result):
-        signature=json.dumps(result,ensure_ascii=False,sort_keys=True)
-        if signature==self.signature:return
-        self.timer.stop();self.signature=signature;self.result=result;self.index=0;self.expanded=False;self.render()
+    projectRequested = Signal(str)
+    taskRequested = Signal(str)
+    evidenceRequested = Signal(str)
+    questionRequested = Signal(str)
+    associationRequested = Signal()
+    projectCorrectionRequested = Signal()
+    contentChanged = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('nativeKnowledge')
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.result, self.data = {}, {}
+        self.signature, self.index, self.expanded = None, 0, False
+        self.step_buttons, self.input_labels = [], []
+        self.flow = None
+        self.setStyleSheet('''
+            QWidget#nativeKnowledge {background:#ffffff;border:1px solid #E6E8EC;border-radius:12px;color:#202834;}
+            QWidget#nativeKnowledge QWidget {background:transparent;}
+            QWidget#nativeKnowledge QLabel {background:transparent;border:0;color:#202834;}
+            QWidget#nativeKnowledge QPushButton {background:#ffffff;border:1px solid #E6E8EC;border-radius:7px;padding:7px 12px;font-size:12px;color:#2563eb;}
+            QWidget#nativeKnowledge QPushButton:hover {background:#f1f4f8;}
+            QWidget#nativeKnowledge QPushButton:focus {border-color:#2563eb;}
+            QWidget#nativeKnowledge QPushButton:disabled {color:#a3aab5;}
+            QWidget#nativeKnowledge QPushButton#answerRow {background:transparent;border:0;border-bottom:1px solid #E6E8EC;border-radius:0;padding:0;text-align:left;}
+            QWidget#nativeKnowledge QPushButton#answerRow:hover {background:#f7f9fc;}
+            QWidget#nativeKnowledge QPushButton#answerRow:focus {background:#edf3ff;}
+            QWidget#nativeKnowledge QFrame#rowIcon {background:#f1f4f8;border:0;border-radius:7px;}
+            QWidget#nativeKnowledge QFrame#answerMeta {border:0;border-bottom:1px solid #E6E8EC;border-radius:0;}
+            QWidget#nativeKnowledge QWidget#answerFold {border:0;border-top:1px solid #E6E8EC;border-radius:0;}
+            QWidget#nativeKnowledge QToolButton#foldToggle {border:0;background:transparent;text-align:left;color:#2563eb;font-size:12px;padding:2px 0;}
+            QWidget#nativeKnowledge QToolButton#foldToggle:hover {color:#174dcc;}
+            QWidget#nativeKnowledge QPushButton#stepButton {background:transparent;border:0;border-radius:0;text-align:left;color:#626d7d;padding:4px 3px 9px;font-size:12px;}
+            QWidget#nativeKnowledge QPushButton#stepButton:checked {color:#2563eb;background:#edf3ff;border-radius:6px;}
+            QWidget#nativeKnowledge QPushButton#stepButton:hover {background:#f1f4f8;}
+            QWidget#nativeKnowledge QComboBox {background:white;border:1px solid #E6E8EC;border-radius:6px;padding:6px;font-size:12px;color:#202834;}
+            QWidget#nativeKnowledge QTabWidget::pane {border:0;}
+            QWidget#nativeKnowledge QTabBar::tab {background:transparent;border:0;border-bottom:2px solid transparent;padding:9px 10px;font-size:12px;color:#626d7d;}
+            QWidget#nativeKnowledge QTabBar::tab:selected {color:#2563eb;border-bottom-color:#2563eb;}
+        ''')
+        self.v = QVBoxLayout(self)
+        self.v.setContentsMargins(22, 22, 22, 22)
+        self.v.setSpacing(9)
+        self.v.setAlignment(Qt.AlignTop)
+        origin_row = QHBoxLayout()
+        origin_row.setSpacing(8)
+        origin_row.addWidget(LineIcon('history', '#2563eb'))
+        self.origin = label('任务历史', 'font-size:12px;color:#626d7d;')
+        origin_row.addWidget(self.origin, 1)
+        self.source = label('', 'font-size:11px;color:#626d7d;')
+        self.source.setProperty('i18nSkip', True)
+        self.source.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        origin_row.addWidget(self.source)
+        self.v.addLayout(origin_row)
+        self.title = label('', 'font-size:21px;font-weight:600;')
+        self.v.addWidget(self.title)
+        self.summary = label('', 'font-size:14px;color:#626d7d;')
+        self.v.addWidget(self.summary)
+        self.meta_frame = QFrame()
+        self.meta_frame.setObjectName('answerMeta')
+        meta = QHBoxLayout(self.meta_frame)
+        meta.setContentsMargins(0, 5, 0, 16)
+        meta.setSpacing(10)
+        self.scope = label('', 'font-size:12px;color:#626d7d;')
+        meta.addWidget(self.scope, 1)
+        self.status = label('')
+        self.status.setWordWrap(False)
+        self.status.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        meta.addWidget(self.status)
+        self.v.addWidget(self.meta_frame)
+        self.body = QWidget()
+        self.body.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(0, 8, 0, 0)
+        self.body_layout.setSpacing(18)
+        self.body_layout.setAlignment(Qt.AlignTop)
+        self.v.addWidget(self.body)
+        self.timer = QTimer(self)
+        self.timer.setInterval(3500)
+        self.timer.timeout.connect(self.next_step)
+        # Retain the public context label used by project-association dialogs.
+        self.project_label = label('', 'font-size:12px;color:#626d7d;')
+        self.project_label.setProperty('i18nSkip', True)
+        self.project_label.hide()
+        self.v.addWidget(self.project_label)
+
+    def load(self, result):
+        signature = language() + '|' + json.dumps(result, ensure_ascii=False, sort_keys=True, default=str)
+        if signature == self.signature:
+            return
+        self.stop()
+        self.signature, self.result = signature, result
+        self.data = present(result)
+        self.index, self.expanded = 0, False
+        self.render()
+
     def render(self):
         self.setUpdatesEnabled(False)
         try:
-            clear(self.body_layout);self.project_label.hide();self.requirement_button.hide();self.association_button.hide();self.project_button.hide()
-            r=self.result
-            if r.get('projectInventory'):self.inventory(r['projectInventory'])
-            elif r.get('projectDetails'):self.project(r['projectDetails'])
-            elif r.get('presentation'):self.task(r['presentation'])
-            else:self.choices()
-        finally:self.setUpdatesEnabled(True)
-    def button(self,text,slot,parent_layout=None):
-        b=QPushButton(text);b.clicked.connect(slot);(self.body_layout if parent_layout is None else parent_layout).addWidget(b);return b
-    def row(self,title,detail,slot,layout):
-        frame=QFrame();frame.setObjectName('kbrow');v=QVBoxLayout(frame);v.setContentsMargins(4,8,4,12);v.setSpacing(3)
-        b=QPushButton(compact(title,38));b.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed);b.setToolTip(task_preview(str(title)));b.setStyleSheet('font-size:14px;font-weight:500;');b.clicked.connect(slot);v.addWidget(b);v.addWidget(label(detail,'font-size:12px;color:#626c7b;'));layout.addWidget(frame)
-    def metric_line(self,stats):
-        if not stats:return ''
-        return f'用户发言 {stats.get("userTurns",0)} 轮，其中确认 {stats.get("approvalTurns",0)} 轮、开始执行 {stats.get("executionTurns",0)} 轮。模型实际调用次数：暂无法确认。'
-    def inventory(self,snapshot):
-        c=snapshot['counts'];self.origin.setText('SessionLens 回答 / '+(snapshot.get('source') or '全部 Agent'))
-        self.title.setText(f'已识别 {c["identified"]+c["confirmed"]} 个有开发记录的项目目录。')
-        self.summary.setText(f'另有 {c["candidate"]} 个目录待确认，尚未计入项目总数。')
-        self.scope.setText('依据已采集的源码修改记录；包括二开与实验项目。'+('' if snapshot['complete'] else '历史整理仍在进行。'))
-        rows=[p for p in snapshot['projects'] if p['state']!='excluded'];show=rows if self.expanded else rows[:7]
-        header=QHBoxLayout();header.addWidget(label('项目名称','font-size:12px;color:#626c7b;'),3);header.addWidget(label('关联开发任务','font-size:12px;color:#626c7b;'),1);header.addWidget(label('源码文件','font-size:12px;color:#626c7b;'),1);self.body_layout.addLayout(header)
-        for p in show:
-            row=QHBoxLayout();b=QPushButton(p['name']);b.clicked.connect(lambda checked=False,id=p['id']:self.projectRequested.emit(id));row.addWidget(b,3);row.addWidget(label(str(p['taskCount'])),1);row.addWidget(label(str(p['fileCount'])),1);self.body_layout.addLayout(row)
-        if len(rows)>7:self.button('收起清单' if self.expanded else f'查看其余 {len(rows)-7} 个项目',self.toggle_expanded)
-    def toggle_expanded(self):self.expanded=not self.expanded;self.render()
-    def project(self,p):
-        self.origin.setText('SessionLens 回答 / '+p['source']);self.title.setText(f'{p["name"]} 已关联 {p["taskCount"]} 个需求任务。')
-        self.summary.setText(self.metric_line(p.get('interactions')) or f'记录涉及 {p["fileCount"]} 个源码文件。')
-        self.scope.setText('统计覆盖全部已关联记录，确认与执行指令计入用户发言。模型请求、回复分片和工具调用分别统计。')
-        columns=QHBoxLayout();left_widget=QWidget();right_widget=QWidget();right_widget.setMinimumWidth(240);left=QVBoxLayout(left_widget);left.setContentsMargins(0,0,0,0);left.setSpacing(8);right=QVBoxLayout(right_widget);right.setContentsMargins(12,0,0,0);right.setSpacing(9);columns.addWidget(left_widget,3);columns.addWidget(right_widget,2);self.body_layout.addLayout(columns)
-        left.addWidget(label('这些任务在做什么','font-size:15px;font-weight:600;'))
-        tasks=p.get('tasks',[]);shown=tasks if self.expanded else tasks[:6]
-        for t in shown:
-            stats=t.get('interactions',{});detail=(t.get('updated') or '')[:10]+f' / 用户发言 {stats.get("userTurns",1)} 轮'
-            if stats.get('approvalTurns') or stats.get('executionTurns'):detail+=f' / 确认与执行 {stats.get("approvalTurns",0)+stats.get("executionTurns",0)} 轮'
-            self.row(t['prompt'],detail,lambda checked=False,id=t['taskId']:self.taskRequested.emit(id),left)
-        if len(tasks)>6:self.button('收起任务' if self.expanded else f'展开其余 {len(tasks)-6} 个已读取任务',self.toggle_expanded,left)
-        right.addWidget(label('项目里有什么','font-size:15px;font-weight:600;'))
-        for c in p.get('components',[])[:7]:
-            right.addWidget(label(c['name'],'font-size:13px;'));right.addWidget(label(str(c['fileCount'])+' 个源码文件','font-size:12px;color:#626c7b;'))
-        right.addWidget(label('按源码路径归类，目录含义尚未作业务解释。','font-size:12px;color:#626c7b;'));right.addStretch()
-        stats=p.get('interactions',{})
-        if stats:self.body_layout.addWidget(label(stats['modelCallsReason'],'font-size:12px;color:#626c7b;'))
-        if stats.get('modelMessageIdentifiers'):
-            self.body_layout.addWidget(label(f'日志提供 {stats["modelMessageIdentifiers"]} 个不同模型消息标识；标识数量未认证为实际 API 调用次数。','font-size:12px;color:#626c7b;'))
-    def task(self,d):
-        self.origin.setText('SessionLens 回答 / '+d['source']);self.title.setText(compact(d['prompt'],55));r=self.result
-        self.summary.setText(compact(r.get('understanding',{}).get('overview',{}).get('text',''),230))
-        stats=r.get('interactions') or d.get('interactions') or {};self.scope.setText(self.metric_line(stats))
-        ctx=d.get('projectContext') or r.get('packet',{}).get('projectContext') or {};items=ctx.get('projects',[])
-        self.project_label.setText('\n'.join(p['name']+(' / '+p['repository'] if p.get('repository') else '') for p in items) or '未关联项目');self.project_label.show()
-        self.project_button.show()
-        history=d.get('requirements',[]);self.requirement_button.setText(f'查看 {stats.get("userTurns",len(history))} 轮需求与确认');self.requirement_button.setVisible(bool(history))
-        self.association_button.setVisible(bool(history))
-        callbar=QHBoxLayout();callbar.addWidget(label('执行过程','font-size:15px;font-weight:600;'),1)
-        if d.get('calls'):
-            replay=QPushButton('暂停回放' if self.timer.isActive() else '回放');replay.clicked.connect(self.toggle_play);callbar.addWidget(replay)
-            next_button=QPushButton('下一步');next_button.clicked.connect(self.next_step);callbar.addWidget(next_button)
-        self.body_layout.addLayout(callbar)
-        calls=d.get('calls',[])
-        if not calls:self.body_layout.addWidget(label('当前记录没有工具调用。'));return
-        chain=QHBoxLayout();start=max(0,self.index-1);visible=calls[start:start+3]
-        for n,c in enumerate(visible,start):
-            b=QPushButton(action_name(c['name']));b.setCheckable(True);b.setChecked(n==self.index);b.clicked.connect(lambda checked=False,i=n:self.select_step(i));chain.addWidget(b,1)
+            clear(self.body_layout)
+            self.flow, self.step_buttons = None, []
+            self.project_label.hide()
+            data = self.data
+            kind = data.get('kind', 'home')
+            self.origin.setText('任务历史' if kind.startswith('task') else '项目与任务')
+            raw = self.result.get('presentation', {}) or self.result.get('projectDetails', {}) or self.result.get('projectInventory', {})
+            source = raw.get('source', '')
+            self.source.setText({'workbuddy': 'WorkBuddy', 'codex': 'Codex'}.get(source, source))
+            self.source.setVisible(bool(source))
+            self.title.setText(short(data.get('title') or '从项目或需求继续了解', 100))
+            self.summary.setText(short(data.get('summary'), 320))
+            self.summary.setVisible(bool(data.get('summary')))
+            self.scope.setText(' · '.join(str(item) for item in data.get('meta', []) if item))
+            status = data.get('status') or {}
+            self.status.setText(status.get('text', ''))
+            color, background = {
+                'green': ('#16704a', '#ebf7f0'),
+                'warning': ('#93621c', '#fff5e4'),
+                'error': ('#b42318', '#fff0ee'),
+            }.get(status.get('tone'), ('#626d7d', '#f1f4f8'))
+            self.status.setStyleSheet(f'font-size:11px;color:{color};background:{background};border-radius:5px;padding:3px 7px;')
+            self.status.setVisible(bool(status.get('text')))
+            self.meta_frame.setVisible(bool(self.scope.text() or status.get('text')))
+            if kind in ('projects', 'home', 'choices'):
+                self._projects(data.get('projects', []), kind)
+            elif kind == 'project':
+                self._project()
+            elif kind.startswith('task'):
+                self._task(kind)
+            else:
+                self._projects(data.get('projects', []), kind)
+            self._followups(data.get('followups', []))
+            if data.get('notice'):
+                self.body_layout.addWidget(label(short(data['notice'], 340), 'font-size:11px;color:#626d7d;'))
+            if kind.startswith('task'):
+                self._identity_fold()
+        finally:
+            self.setUpdatesEnabled(True)
+        localize_widgets(self)
+        self.updateGeometry()
+        self.contentChanged.emit()
+
+    def _button(self, text, slot, layout=None):
+        button = QPushButton(text)
+        button.setCursor(Qt.PointingHandCursor)
+        button.clicked.connect(slot)
+        (layout if layout is not None else self.body_layout).addWidget(button)
+        return button
+
+    def _fold(self, title, layout=None):
+        fold = Fold(title)
+        fold.changed.connect(self.contentChanged.emit)
+        (layout if layout is not None else self.body_layout).addWidget(fold)
+        return fold
+
+    def _row_action(self, row):
+        self.stop()
+        task_id = row.get('taskId')
+        if task_id:
+            self.taskRequested.emit(str(task_id))
+        else:
+            self.projectRequested.emit(str(row.get('projectId') or row.get('id') or ''))
+
+    def _projects(self, rows, kind):
+        if not rows:
+            return
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(24)
+        grid.setVerticalSpacing(0)
+        for index, row in enumerate(rows[:6]):
+            detail = row.get('description') or row.get('latest') or ''
+            latest = row.get('latest') if row.get('description') else ''
+            meta = ' · '.join(str(x) for x in row.get('meta', []) if x)
+            button = ClickRow(row.get('name') or row.get('title') or '', detail, latest or meta,
+                              number=f'{index + 1:02}' if row.get('taskId') else '')
+            button.clicked.connect(lambda checked=False, item=row: self._row_action(item))
+            grid.addWidget(button, index // 2, index % 2)
+        for column in range(2):
+            grid.setColumnStretch(column, 1)
+        self.body_layout.addLayout(grid)
+        if len(rows) > 6:
+            fold = self._fold(f'查看其余 {len(rows) - 6} 个已读取项目与任务')
+            more = QGridLayout()
+            more.setHorizontalSpacing(24)
+            more.setVerticalSpacing(0)
+            for index, row in enumerate(rows[6:]):
+                button = ClickRow(row.get('name', ''), row.get('description') or row.get('latest') or '',
+                                  ' · '.join(str(x) for x in row.get('meta', []) if x))
+                button.clicked.connect(lambda checked=False, item=row: self._row_action(item))
+                more.addWidget(button, index // 2, index % 2)
+            fold.content_layout.addLayout(more)
+
+    def _project(self):
+        rows = self.data.get('projects', [])
+        for index, row in enumerate(rows[:6]):
+            detail = row.get('description') or row.get('latest') or ''
+            button = ClickRow(row.get('name') or row.get('title') or '', detail,
+                              ' · '.join(str(x) for x in row.get('meta', []) if x), number=f'{index + 1:02}')
+            button.clicked.connect(lambda checked=False, item=row: self._row_action(item))
+            self.body_layout.addWidget(button)
+        if len(rows) > 6:
+            fold = self._fold(f'查看其余 {len(rows) - 6} 个需求任务')
+            for index, row in enumerate(rows[6:], 7):
+                button = ClickRow(row.get('name', ''), row.get('description') or row.get('latest') or '',
+                                  ' · '.join(str(x) for x in row.get('meta', []) if x), number=f'{index:02}')
+                button.clicked.connect(lambda checked=False, item=row: self._row_action(item))
+                fold.content_layout.addWidget(button)
+        if self.data.get('files'):
+            fold = self._fold('查看项目内容范围')
+            self._file_rows(self.data['files'], fold.content_layout)
+
+    def _task(self, kind):
+        requirements = self.data.get('requirements', [])
+        context = self.result.get('presentation', {}).get('projectContext') or self.result.get('packet', {}).get('projectContext') or {}
+        projects = context.get('projects', [])
+        self.project_label.setText('\n'.join(str(item.get('name', '')) + (' / ' + item['repository'] if item.get('repository') else '') for item in projects))
+        self.project_label.setToolTip(self.project_label.text())
+        # The single metadata row already names known projects; repository
+        # details remain available under the raw-record fold.
+        if kind != 'task_process' and requirements:
+            quote = label('“' + short(requirements[0].get('text'), 180) + '”',
+                          'font-size:14px;background:#edf3ff;border-left:3px solid #2563eb;border-radius:0;padding:8px 13px;')
+            quote.setProperty('i18nSkip', True)
+            self.body_layout.addWidget(quote)
+        if kind == 'task_process':
+            self._process()
+        elif kind == 'task_reason':
+            self._decisions()
+        self._proof_fold()
+        if kind == 'task_process' and self.data.get('artifacts'):
+            fold = self._fold('最后做成了吗？查看交付与核验')
+            for artifact in self.data['artifacts'][:12]:
+                path = artifact.get('path') or artifact.get('url') or artifact.get('name') or artifact.get('value') or ''
+                fold.content_layout.addWidget(label(short(path, 240), 'font-size:13px;'))
+                if artifact.get('description'):
+                    fold.content_layout.addWidget(label(short(artifact['description'], 220), 'font-size:12px;color:#626d7d;'))
+                self._refs(artifact.get('refs', []), fold.content_layout)
+
+    def _decisions(self):
+        row = QHBoxLayout()
+        row.setSpacing(16)
+        requirements = self.data.get('requirements', [])
+        requirement = requirements[0] if requirements else {}
+        reason_step = next((step for step in self.data.get('steps', []) if step.get('reasoning')), {})
+        decision = next((item for item in self.data.get('decisions', [])
+                         if item.get('text') and item.get('refs') and item.get('basis') != 'unknown'), {})
+        if reason_step:
+            reason_title = '已读取的思路记录'
+            reason_text = reason_step['reasoning']
+            if reason_step.get('reasoningAssociation') == 'sequence_candidate':
+                reason_title = '按顺序找到的候选思路'
+                reason_text = '关联待核对：' + reason_text
+        elif decision:
+            reason_title = decision.get('title') or '记录支持的考虑'
+            reason_text = ('分析推断：' if decision.get('basis') == 'inferred' else '') + decision['text']
+        else:
+            reason_title = '修改原因尚未确认'
+            reason_text = '没有找到可支持这次修改原因的关联思路记录。'
+        has_recorded_decision = bool(decision)
+        files = self.data.get('files', [])
+        names = list(dict.fromkeys(PurePath(str(item.get('path', '')).replace('\\', '/')).name for item in files if item.get('path')))
+        columns = [
+            {'label': '用户想解决什么', 'title': requirement.get('label') or '原始用户要求',
+             'text': requirement.get('text') or '当前记录未提供可关联的原始要求。'},
+            {'label': '如何考虑这次修改', 'title': reason_title, 'text': reason_text},
+            {'label': '执行涉及哪些部分', 'title': '、'.join(names[:3]) or '修改文件尚未确认',
+             'text': '；'.join(str(item.get('path', '')) + '（' + t(item.get('description') or '记录路径') + '）'
+                              for item in files[:3]) or '没有找到可确认的修改路径；工具调用记录不等于修改已完成。'},
+        ]
+        for index, decision in enumerate(columns):
+            frame = QFrame()
+            frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            if index:
+                frame.setStyleSheet('QFrame{border:0;border-left:1px solid #e6e8ec;}')
+            column = QVBoxLayout(frame)
+            column.setContentsMargins(16 if index else 0, 0, 0, 0)
+            column.setSpacing(7)
+            head = QHBoxLayout()
+            head.setSpacing(5)
+            head.addWidget(LineIcon(('message', 'model', 'file')[index]))
+            head.addWidget(label(decision.get('label'), 'font-size:11px;color:#626d7d;'), 1)
+            column.addLayout(head)
+            column.addWidget(label(short(decision.get('title'), 65), 'font-size:15px;font-weight:600;'))
+            body = label(short(decision.get('text'), 220), 'font-size:12px;color:#626d7d;')
+            if (index == 0 and requirement.get('text')) or (index == 1 and (reason_step or has_recorded_decision)) or (index == 2 and names):
+                body.setProperty('i18nSkip', True)
+            column.addWidget(body)
+            column.addStretch()
+            row.addWidget(frame, 1)
+        self.body_layout.addLayout(row)
+
+    def _proof_fold(self):
+        requirements = self.data.get('requirements', [])
+        self.proof_fold = self._fold(f'查看依据 · {len(requirements)} 次已读取用户发言、思路与修改文件')
+        tabs = QTabWidget()
+        tabs.setObjectName('proofTabs')
+        tabs.setDocumentMode(True)
+        self.proof_fold.content_layout.addWidget(tabs)
+        for title, key in (('需求与反馈', 'requirements'), ('当时的考虑', 'reasoning'), ('修改文件', 'files')):
+            page = QWidget()
+            layout = QVBoxLayout(page)
+            layout.setContentsMargins(0, 12, 0, 0)
+            layout.setSpacing(10)
+            if key == 'requirements':
+                for index, requirement in enumerate(requirements[:12], 1):
+                    history = label(f'{index:02}  ' + short(requirement.get('text'), 280), 'font-size:13px;')
+                    history.setProperty('i18nSkip', True)
+                    layout.addWidget(history)
+                    detail = ' · '.join(str(requirement.get(k) or '') for k in ('label', 'time', 'reason') if requirement.get(k))
+                    layout.addWidget(label(short(detail, 220), 'font-size:11px;color:#626d7d;'))
+                    self._refs(requirement.get('refs', []), layout)
+                if requirements:
+                    self.requirement_button = self._button(f'查看 {len(requirements)} 轮完整需求与确认历程', self.dialogues, layout)
+                else:
+                    layout.addWidget(label('未读取到可关联的用户发言。', 'font-size:12px;color:#626d7d;'))
+            elif key == 'files':
+                self._file_rows(self.data.get('files', []), layout)
+            else:
+                reasons = self.result.get('presentation', {}).get('reasoning', [])
+                if reasons:
+                    for reason in reasons[:8]:
+                        history = label(short(reason.get('text'), 280), 'font-size:13px;')
+                        history.setProperty('i18nSkip', True)
+                        layout.addWidget(history)
+                        self._button('查看思路原文', lambda checked=False, item=reason: self.raw('已记录思路', item.get('text', '')), layout)
+                else:
+                    layout.addWidget(label('未读取到可关联的思路原文。', 'font-size:12px;color:#626d7d;'))
+                for decision in self.data.get('decisions', []):
+                    if decision.get('basis'):
+                        basis = {'recorded': '记录支持', 'inferred': '分析推断', 'unknown': '尚未确认',
+                                 'source_parent_path': '原始消息链关联', 'sequence_candidate': '按记录顺序候选关联，待核对'}.get(decision['basis'], decision['basis'])
+                        layout.addWidget(label(short(basis, 240), 'font-size:11px;color:#626d7d;'))
+                    self._refs(decision.get('refs', []), layout)
+            tabs.addTab(page, title)
+        tabs.currentChanged.connect(lambda index: self.contentChanged.emit())
+
+    def _file_rows(self, files, layout):
+        for item in files[:14]:
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            row.addWidget(LineIcon('folder' if str(item.get('path', '')).endswith('/') else 'file'), 0, Qt.AlignTop)
+            column = QVBoxLayout()
+            column.setSpacing(3)
+            path = label(short(item.get('path'), 230), 'font-size:13px;')
+            path.setProperty('i18nSkip', True)
+            column.addWidget(path)
+            if item.get('description'):
+                column.addWidget(label(short(item['description'], 180), 'font-size:12px;color:#626d7d;'))
+            row.addLayout(column, 1)
+            layout.addLayout(row)
+            self._refs(item.get('refs', []), layout)
+        if not files:
+            layout.addWidget(label('没有可确认的修改文件记录。', 'font-size:12px;color:#626d7d;'))
+        if len(files) > 14:
+            self._button(f'查看全部 {len(files)} 个文件记录', lambda: self.raw('修改文件记录', '\n\n'.join(
+                str(item.get('path', '')) + '\n' + str(item.get('description', '')) for item in files)), layout)
+
+    def _refs(self, refs, layout):
+        # Only packet evidence identifiers can be opened by ChatWindow. Event
+        # identifiers remain in raw-record dialogs rather than broken links.
+        known = {fragment.get('evidenceId') for fragment in self.result.get('packet', {}).get('fragments', [])}
+        refs = list(dict.fromkeys(str(ref) for ref in refs if ref and ref in known))
+        if not refs:
+            return
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        for ref in refs[:4]:
+            self._button('核对来源 ' + ref, lambda checked=False, identity=ref: self._request_evidence(identity), row)
+        row.addStretch()
+        layout.addLayout(row)
+
+    def _request_evidence(self, identity):
+        self.stop()
+        self.evidenceRequested.emit(identity)
+
+    def _process(self):
+        steps = self.data.get('steps', [])
+        header = QHBoxLayout()
+        header.setSpacing(6)
+        header.addWidget(label('一次任务里的内容往返', 'font-size:15px;font-weight:600;'), 1)
+        self.play_button = self._button('播放过程', self.toggle_play, header)
+        self.next_button = self._button('下一步', self.advance_manually, header)
+        self.speed = QComboBox()
+        self.speed.addItems(['1×', '2×'])
+        self.speed.setAccessibleName('播放速度')
+        self.speed.currentIndexChanged.connect(self._speed_changed)
+        header.addWidget(self.speed)
+        self.body_layout.addLayout(header)
+        if not steps:
+            self.play_button.setEnabled(False)
+            self.next_button.setEnabled(False)
+            self.body_layout.addWidget(label('当前记录没有工具调用。', 'font-size:13px;color:#626d7d;'))
+            return
+        chain = QHBoxLayout()
+        chain.setSpacing(8)
+        for _ in range(min(4, len(steps))):
+            button = QPushButton()
+            button.setObjectName('stepButton')
+            button.setCheckable(True)
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            button.clicked.connect(lambda checked=False, item=button: self.select_step(item.property('stepIndex')))
+            chain.addWidget(button, 1)
+            self.step_buttons.append(button)
         self.body_layout.addLayout(chain)
-        self.body_layout.addWidget(label(f'正在查看第 {self.index+1} 个动作，共读取 {len(calls)} 个调用。','font-size:12px;color:#626c7b;'))
-        c=calls[self.index];columns=QHBoxLayout();left=QVBoxLayout();right=QVBoxLayout();columns.addLayout(left,3);columns.addLayout(right,2);self.body_layout.addLayout(columns)
-        left.addWidget(label('已记录的处理思路','font-size:14px;font-weight:600;'))
-        reasoning=next((x['text'] for x in d.get('reasoning',[]) if x['id']==(c.get('decisionLink') or {}).get('reasoningEvent')),None)
-        left.addWidget(label(compact(reasoning,240) if reasoning else '这一调用没有找到可关联的思路记录。','font-size:13px;'))
-        if reasoning:self.button('查看思路原文',lambda:self.raw('已记录思路',reasoning),left)
-        right.addWidget(label('工具参数与返回','font-size:14px;font-weight:600;'))
-        right.addWidget(label('工具：'+c['name'],'font-size:12px;color:#626c7b;'))
-        fields=c.get('fields',[])[:5]
-        for f in fields:right.addWidget(label(f['label']+'：'+compact(f['value'],180),'font-size:13px;'))
-        if not fields:right.addWidget(label('没有可读的参数字段。','font-size:13px;'))
-        returns=c.get('returns',[]);right.addWidget(label('返回：'+(compact(returns[0]['text'],180) if returns else '没有找到对应的工具返回，结果尚未确认。'),'font-size:13px;'))
-        self.button('查看原始参数与返回',lambda:self.raw(c['name'],'参数\n'+json.dumps(c.get('arguments',{}),ensure_ascii=False,indent=2)+'\n\n原始返回\n'+'\n\n'.join(t['text'] for t in returns)),right)
-        for event in [c['id']]+[x['id'] for x in returns]:
-            ref=next((f['evidenceId'] for f in r.get('packet',{}).get('fragments',[]) if f.get('eventId')==event),None)
-            if ref:self.button('核对来源 '+ref,lambda checked=False,id=ref:self.evidenceRequested.emit(id),right)
-        self.body_layout.addWidget(label('这里只回放已记录的内容，不执行历史命令。未核验交付物时不显示为已验证成功。','font-size:12px;color:#626c7b;'))
-        follow=QHBoxLayout();self.button('追问当时的思路',lambda:self.questionRequested.emit('这个任务当时为什么这样做？'),follow)
-        self.button('追问对话与模型交互次数',lambda:self.questionRequested.emit('这个任务用户发了多少轮，Agent 和大模型交互了多少次？'),follow);self.body_layout.addLayout(follow)
-    def select_step(self,index):self.timer.stop();self.index=index;self.render()
+        self.flow = RelationFlow()
+        self.body_layout.addWidget(self.flow)
+        self.route_label = label('', 'font-size:12px;color:#626d7d;')
+        self.body_layout.addWidget(self.route_label)
+        columns = QHBoxLayout()
+        columns.setSpacing(24)
+        left, right = QVBoxLayout(), QVBoxLayout()
+        left.setSpacing(8)
+        right.setSpacing(8)
+        self.input_heading = label('', 'font-size:12px;color:#626d7d;')
+        left.addWidget(self.input_heading)
+        self.input_labels = []
+        for _ in range(5):
+            field = label('', 'font-size:13px;')
+            field.setProperty('i18nSkip', True)
+            left.addWidget(field)
+            self.input_labels.append(field)
+        left.addStretch()
+        right.addWidget(label('返回了什么', 'font-size:12px;color:#626d7d;'))
+        self.return_label = label('', 'font-size:13px;')
+        self.return_label.setProperty('i18nSkip', True)
+        self.next_label = label('', 'font-size:12px;color:#626d7d;')
+        right.addWidget(self.return_label)
+        right.addWidget(self.next_label)
+        right.addStretch()
+        columns.addLayout(left, 1)
+        columns.addLayout(right, 1)
+        self.body_layout.addLayout(columns)
+        self.step_details = self._fold('这一轮的思路与后续内容关联')
+        self.reasoning_label = label('', 'font-size:13px;')
+        self.reasoning_label.setProperty('i18nSkip', True)
+        self.reasoning_basis = label('', 'font-size:11px;color:#626d7d;')
+        self.step_details.content_layout.addWidget(self.reasoning_label)
+        self.step_details.content_layout.addWidget(self.reasoning_basis)
+        self.reasoning_button = self._button('查看这一轮思路原文', self._step_reasoning, self.step_details.content_layout)
+        raw_fold = self._fold('查看参数与原始返回位置')
+        self._button('打开原始参数与返回', self._step_raw, raw_fold.content_layout)
+        refs_row = QHBoxLayout()
+        self.step_ref_buttons = []
+        for _ in range(4):
+            button = self._button('', lambda checked=False: None, refs_row)
+            button.clicked.disconnect()
+            button.clicked.connect(lambda checked=False, item=button: self._request_evidence(item.property('evidenceId')))
+            button.hide()
+            self.step_ref_buttons.append(button)
+        refs_row.addStretch()
+        raw_fold.content_layout.addLayout(refs_row)
+        self.play_state = label('', 'font-size:11px;color:#626d7d;')
+        self.body_layout.addWidget(self.play_state)
+        self._update_step()
+
+    def refresh_language(self):
+        # Rebuild only readable field labels. Keep timers, animation progress,
+        # selected steps, raw records and opened evidence in place.
+        if self.flow is not None:self._update_step(refresh_flow=False)
+        else:localize_widgets(self)
+
+    def _update_step(self, animate=False, refresh_flow=True):
+        steps = self.data.get('steps', [])
+        if not steps or self.flow is None:
+            return
+        self.index = max(0, min(self.index, len(steps) - 1))
+        step = steps[self.index]
+        start = min(max(0, self.index - 1), max(0, len(steps) - 4))
+        for offset, button in enumerate(self.step_buttons):
+            index = start + offset
+            item = steps[index]
+            button.setProperty('stepIndex', index)
+            prefix = '✓' if index < self.index else str(index + 1)
+            button.setText(prefix + '  ' + short(item.get('title') or item.get('call'), 23))
+            button.setToolTip(str(item.get('title') or item.get('call') or ''))
+            button.setChecked(index == self.index)
+            button.setAccessibleName(f'第 {index + 1} 步，' + str(item.get('title') or item.get('call') or ''))
+        if refresh_flow:self.flow.set_step(step, step.get('agentLabel') or self.source.text())
+        if animate:
+            self.flow.play(self._speed())
+        self.route_label.setText(short(step.get('route'), 230))
+        self.input_heading.setText(short(step.get('call'), 95) + ' · 输入')
+        fields = step.get('inputFields', [])
+        for index, widget in enumerate(self.input_labels):
+            if index < len(fields):
+                field = fields[index]
+                widget.setText(t(field.get('label', '参数')) + (': ' if language() == 'en' else '：') + short(field.get('value'), 220))
+                widget.show()
+            elif index == 0:
+                widget.setText(t('没有可读的参数字段。'))
+                widget.show()
+            else:
+                widget.hide()
+        returned = step.get('returnText') or '没有找到对应的工具返回，结果尚未确认。'
+        # Translate adapter field labels only for structured returns. Plain
+        # historical return text remains untouched, even if it matches UI text.
+        call = next((item for item in self.result.get('presentation', {}).get('calls', [])
+                     if item.get('id') == step.get('eventId')), {})
+        structured = bool(call.get('returns'))
+        for item in call.get('returns', []):
+            try:
+                structured = structured and isinstance(json.loads(item.get('text', '')), (dict, list))
+            except (TypeError, ValueError):
+                structured = False
+        return_lines = []
+        for line in returned.splitlines():
+            key, separator, value = line.partition('：')
+            if structured and separator:
+                return_lines.append(t(key) + (': ' if language() == 'en' else '：') + value)
+            else:
+                return_lines.append(t(line) if not call.get('returns') else line)
+        self.return_label.setText(short('\n'.join(return_lines), 360))
+        self.next_label.setText(short(step.get('nextText') or '后续内容关联未知。', 260))
+        self.reasoning_label.setText(short(step.get('reasoning') or t('这一调用没有找到可关联的思路记录。'), 480))
+        self.reasoning_basis.setText(str(step.get('reasoningBasis') or '思路与工具调用的原始关系未记录。'))
+        self.reasoning_button.setEnabled(bool(step.get('reasoning')))
+        known = {fragment.get('evidenceId') for fragment in self.result.get('packet', {}).get('fragments', [])}
+        refs = list(dict.fromkeys(ref for ref in step.get('refs', []) if ref in known))
+        for index, button in enumerate(self.step_ref_buttons):
+            if index < len(refs):
+                button.setText('核对来源 ' + str(refs[index]))
+                button.setProperty('evidenceId', refs[index])
+                button.show()
+            else:
+                button.hide()
+        self.next_button.setEnabled(self.index < len(steps) - 1)
+        self.play_button.setText('暂停' if self.timer.isActive() else '播放过程')
+        prefix = '正在回放' if self.timer.isActive() else '当前'
+        self.play_state.setText(f'{prefix}：第 {self.index + 1} / {len(steps)} 步 · 仅展示已记录的关系')
+        localize_widgets(self)
+        self.updateGeometry()
+        self.contentChanged.emit()
+
+    def _speed(self):
+        return 2 if hasattr(self, 'speed') and self.speed.currentIndex() == 1 else 1
+
+    def _speed_changed(self):
+        self.timer.setInterval(int(3500 / self._speed()))
+        if self.timer.isActive() and self.flow:
+            self.flow.play(self._speed())
+
+    def select_step(self, index):
+        self.stop()
+        self.index = int(index or 0)
+        self._update_step(animate=True)
+
+    def advance_manually(self):
+        self.stop()
+        self.next_step()
+
     def toggle_play(self):
-        if self.timer.isActive():self.timer.stop()
-        else:self.timer.start()
-        self.render()
+        if self.timer.isActive():
+            self.stop()
+            return
+        steps = self.data.get('steps', [])
+        if not steps:
+            return
+        if self.index == len(steps) - 1:
+            self.index = 0
+        self.timer.start(int(3500 / self._speed()))
+        self._update_step(animate=True)
+
     def next_step(self):
-        count=len(self.result.get('presentation',{}).get('calls',[]))
-        if self.index+1>=count:self.timer.stop()
-        else:self.index+=1
-        self.render()
-    def dialogues(self):
-        rows=self.result.get('presentation',{}).get('requirements',[])
-        self.raw('需求与确认历程','\n\n'.join(str(i)+' / '+r['label']+'\n'+r['text']+'\n关联依据：'+r.get('reason','') for i,r in enumerate(rows,1)))
-    def choices(self):
-        r=self.result;self.origin.setText('SessionLens 回答');self.title.setText(r.get('projectMessage') or r.get('selectionMessage') or '请确认要了解的任务。');self.summary.clear();self.scope.setText('保留当前问题；没有明确对象时不自动选择第一项。')
-        for p in r.get('projectChoices',[]):self.button(p['name']+' / '+p['source'],lambda checked=False,id=p['id']:self.projectRequested.emit(id))
-        for t in r.get('options',[]):self.row(t['title'],t['source']+' / '+t['updated'][:10],lambda checked=False,id=t['taskId']:self.taskRequested.emit(id),self.body_layout)
-    def raw(self,title,text):
+        steps = self.data.get('steps', [])
+        if not steps:
+            self.stop()
+            return
+        if self.index + 1 >= len(steps):
+            self.stop()
+            return
+        self.index += 1
+        self._update_step(animate=True)
+
+    def stop(self):
         self.timer.stop()
-        dialog=QDialog(self);dialog.setWindowTitle(title);dialog.resize(850,600);v=QVBoxLayout(dialog);edit=QPlainTextEdit();edit.setReadOnly(True);edit.setPlainText(text);v.addWidget(edit);dialog.exec()
-    def plain_text(self):return '\n'.join(w.text() for w in self.findChildren(QLabel) if w.isVisibleTo(self))
+        if self.flow:
+            self.flow.stop()
+        if hasattr(self, 'play_button'):
+            try:
+                self.play_button.setText(t('播放过程'))
+                if hasattr(self, 'play_state'):
+                    steps = self.data.get('steps', [])
+                    self.play_state.setText(t(f'当前：第 {self.index + 1} / {len(steps)} 步 · 仅展示已记录的关系'))
+            except RuntimeError:
+                pass  # A previous card may have been deferred for deletion.
+
+    def hideEvent(self, event):
+        self.stop()
+        super().hideEvent(event)
+
+    def _step_reasoning(self):
+        step = self.data.get('steps', [])[self.index]
+        self.raw('已记录思路', str(step.get('reasoning') or '') + '\n\n关联依据：' + str(step.get('reasoningBasis') or '未知'))
+
+    def _step_raw(self):
+        step = self.data.get('steps', [])[self.index]
+        event_id = step.get('eventId')
+        call = next((item for item in self.result.get('presentation', {}).get('calls', []) if item.get('id') == event_id), {})
+        args = call.get('arguments') or {field.get('label'): field.get('value') for field in step.get('inputFields', [])}
+        returns = '\n\n'.join(str(item.get('text') or '') for item in call.get('returns', [])) or str(step.get('returnText') or '')
+        text = '工具：' + str(step.get('call') or '') + '\n调用记录：' + str(event_id or '未记录')
+        text += '\ncallId：' + str(step.get('callId') or '未记录')
+        text += '\n\n参数\n' + json.dumps(args, ensure_ascii=False, indent=2)
+        text += '\n\n原始返回\n' + returns
+        text += '\n\n返回关联\n' + json.dumps(step.get('returnRelations', []), ensure_ascii=False, indent=2)
+        text += '\n\n思路关联\n' + json.dumps(step.get('reasoningRelations', []), ensure_ascii=False, indent=2)
+        text += '\n\n后续关联\n' + json.dumps(step.get('nextRelations', []), ensure_ascii=False, indent=2)
+        self.raw('工具参数与原始返回', text)
+
+    def _followups(self, followups):
+        if not followups:
+            return
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        for question in followups[:3]:
+            self._button(short(question, 55) + '  ↗', lambda checked=False, q=question: self._ask(q), row)
+        row.addStretch()
+        self.body_layout.addLayout(row)
+
+    def _ask(self, question):
+        self.stop()
+        self.questionRequested.emit(str(question))
+
+    def _identity_fold(self):
+        fold = self._fold('查看任务标识与原始记录位置')
+        raw = self.result.get('presentation', {})
+        details = [
+            '任务：' + str(self.data.get('taskId') or raw.get('taskId') or '未记录'),
+            '会话：' + str(raw.get('session') or '未记录'),
+            '来源：' + (self.source.text() or '未记录'),
+        ]
+        if self.project_label.text():
+            details.append('项目：' + self.project_label.text())
+        fold.content_layout.addWidget(label('\n'.join(details), 'font-size:12px;color:#626d7d;'))
+        row = QHBoxLayout()
+        self.association_button = self._button('修正需求关联', lambda: self.associationRequested.emit(), row)
+        self.project_button = self._button('修正项目归属', lambda: self.projectCorrectionRequested.emit(), row)
+        row.addStretch()
+        fold.content_layout.addLayout(row)
+
+    def dialogues(self):
+        rows = self.data.get('requirements', [])
+        text = '\n\n'.join(
+            f'{index} / {row.get("label", "用户发言")}\n{row.get("text", "")}\n关联依据：{row.get("reason") or "未记录"}'
+            for index, row in enumerate(rows, 1))
+        self.raw('需求与确认历程', text)
+
+    def raw(self, title, text):
+        self.stop()
+        dialog = QDialog(self)
+        dialog.setWindowTitle(t(title))
+        dialog.resize(850, 600)
+        layout = QVBoxLayout(dialog)
+        edit = QPlainTextEdit()
+        edit.setReadOnly(True)
+        edit.setPlainText(str(text))
+        layout.addWidget(edit)
+        dialog.exec()
+
+    def plain_text(self):
+        from PySide6.QtWidgets import QLabel
+        return '\n'.join(widget.text() for widget in self.findChildren(QLabel) if widget.isVisibleTo(self))

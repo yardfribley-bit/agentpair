@@ -1,5 +1,6 @@
 """Count recorded conversations, without pretending messages are API calls."""
 from collections import Counter
+import re
 from .task_lineage import resolve,step_table,task_table,exists
 
 def model_identifiers(db,tasks):
@@ -41,4 +42,4 @@ def project_interactions(db,tasks):
     return totals
 
 def interaction_question(question):
-    return any(w in question.lower() for w in ('交互','几轮','多少轮','对话次数','发了几','发了多少','问了几','问了多少','模型调用','模型多少','模型几次','确认几次'))
+    return any(w in question.lower() for w in ('交互','几轮','多少轮','对话次数','发了几','发了多少','问了几','问了多少','模型调用','模型多少','模型几次','确认几次')) or bool(re.search(r'\b(?:how many|number of|count)\b.*\b(?:turns?|messages?|conversations?|interactions?|model calls?|api calls?|times|confirmations?)\b|\b(?:model|api)\s+(?:call|request)\s+count\b',question,re.I))

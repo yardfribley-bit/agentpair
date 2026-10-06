@@ -27,7 +27,7 @@ def local_project_query(root,question,source='',previous=None,selected=None):
     agent='workbuddy' if 'workbuddy' in question.lower() else 'codex' if 'codex' in question.lower() else source or ''
     with sqlite3.connect((root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=1) as db:
         path=root/'project_inventory.db'
-        if not path.exists():return {'question':question,'projectChoices':[],'projectMessage':'项目知识正在准备中，采集记录仍保留在本机。'} if '项目' in question else None
+        if not path.exists():return {'question':question,'projectChoices':[],'projectMessage':'项目知识正在准备中，采集记录仍保留在本机。'} if '项目' in question or re.search(r'\bprojects?\b',question,re.I) else None
         store=ProjectInventory(path,filesystem=False,read_only=True)
         try:
             snapshot=store.snapshot(db,agent)
@@ -36,13 +36,21 @@ def local_project_query(root,question,source='',previous=None,selected=None):
                 named=[p for p in snapshot['projects'] if p['id']==selected and p['state']!='excluded']
                 if not named:return {'question':question,'projectChoices':[],'projectMessage':'项目归属已变化，请从项目总览重新选择。'}
             elif inventory_question(question) and not named:
+                for item in snapshot['projects']:
+                    tasks=item.get('taskIds',[])
+                    latest=[]
+                    for start in range(0,len(tasks),200):
+                        batch=tasks[start:start+200];marks=','.join('?' for _ in batch)
+                        latest.extend(db.execute(
+                            'SELECT id,prompt,updated,last_row FROM task_groups WHERE id IN ('+marks+') ORDER BY updated DESC,last_row DESC LIMIT 2',batch))
+                    item['latestTasks']=[{'taskId':r[0],'prompt':r[1],'updated':r[2]} for r in sorted(latest,key=lambda r:(r[2],r[3]),reverse=True)[:2]]
                 return {'question':question,'projectInventory':snapshot,'queryKind':'project_inventory','engine':'sessionlens.local_projects.v1'}
-            elif not named and previous.get('projectDetails') and any(w in question for w in ('这个项目','该项目','它','里面','多少任务','哪些任务')):
+            elif not named and previous.get('projectDetails') and (any(w in question for w in ('这个项目','该项目','它','里面','多少任务','哪些任务')) or re.search(r'\b(?:this project|that project|it|its tasks|how many tasks|which tasks|what tasks)\b',question,re.I)):
                 named=[p for p in snapshot['projects'] if p['id']==previous['projectDetails']['id'] and p['state']!='excluded']
-            summary_question=any(w in question for w in ('多少','几个','哪些任务','什么任务','内容','里面','模块','结构','开发情况','做了什么','做过什么','开发过程','项目介绍','项目概况','介绍一下','项目名称','职责','哪些工具','什么时候','什么项目','用来','干什么','做什么'))
+            summary_question=any(w in question for w in ('多少','几个','哪些任务','什么任务','内容','里面','模块','结构','开发情况','做了什么','做过什么','开发过程','项目介绍','项目概况','介绍一下','项目名称','职责','哪些工具','什么时候','什么项目','用来','干什么','做什么')) or bool(re.search(r'\b(?:how many|tasks?|components?|modules?|structure|overview|summary|summarize|tools?|when|purpose|tell me|worked on|contains?)\b',question,re.I))
             if not selected and not summary_question:return None
             if not named:
-                if '项目' not in question:return None
+                if '项目' not in question and not re.search(r'\bprojects?\b',question,re.I):return None
                 return {'question':question,'projectChoices':[],'projectMessage':'还没有找到这个项目。请补充项目名称，或在项目总览确认名称与目录。'}
             if len(named)>1:
                 return {'question':question,'projectChoices':[{'id':p['id'],'name':p['name'],'source':p['source'],'roots':p['roots']} for p in named],

@@ -8,7 +8,9 @@ MARKERS={'package.json','pyproject.toml','Cargo.toml','go.mod','pom.xml','settin
 IGNORED={'.workbuddy','.codex','.git','node_modules','.venv','venv','__pycache__','Library','memory','outputs','output'}
 
 def inventory_question(question):
-    return bool(re.search(r'多少(?:个)?(?:开发)?项目|项目(?:总数|数量|清单|列表|名称)|哪些项目|开发了.*项目|(?:列一下|列出).*项目',question)) and not any(w in question for w in ('怎么修改','为什么','工具参数','调用多少','多少工具'))
+    requested=bool(re.search(r'多少(?:个)?(?:开发)?项目|项目(?:总数|数量|清单|列表|名称)|哪些项目|开发了.*项目|(?:列一下|列出).*项目|\b(?:which|what|how many)\s+(?:development\s+)?projects\b|\bprojects?\s+(?:list|names|count|inventory)\b|\blist\s+(?:all\s+)?(?:the\s+)?projects\b|\bprojects\b.*\b(?:worked on|developed|built)\b',question,re.I))
+    excluded=any(w in question for w in ('怎么修改','为什么','工具参数','调用多少','多少工具')) or bool(re.search(r'\b(?:why|tool parameters?|tool calls?|model calls?)\b',question,re.I))
+    return requested and not excluded
 
 def write_path(excerpt):
     name,sep,body=excerpt.partition(' · ')

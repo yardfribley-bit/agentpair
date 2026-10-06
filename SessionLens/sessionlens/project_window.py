@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt,QTimer,Signal
 from PySide6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QLineEdit,QPushButton,QSplitter,QListWidget,QTextBrowser,QTabWidget,QFormLayout
 from .project_inventory import ProjectInventory
 from .supervision import event_text
+from .i18n import language,t,localize_widgets
 
 def task_preview(text):
     # Keep useful host/user context in summaries; conceal the password tail.
@@ -28,7 +29,7 @@ class ProjectWindow(QDialog):
         self.progress=QLabel();self.progress.setWordWrap(True);v.addWidget(self.progress)
         split=QSplitter();self.projects=QListWidget();split.addWidget(self.projects)
         panel=QDialog();p=QVBoxLayout(panel);p.setContentsMargins(14,0,0,0);self.title=QLabel('选择一个项目');self.title.setStyleSheet('font-size:18px;font-weight:600;');p.addWidget(self.title)
-        self.meta=QLabel();self.meta.setWordWrap(True);p.addWidget(self.meta)
+        self.meta=QLabel();self.meta.setWordWrap(True);self.meta.setProperty('i18nSkip',True);p.addWidget(self.meta)
         self.tabs=QTabWidget();self.tasks=QListWidget();self.files=QListWidget();self.tabs.addTab(self.tasks,'相关任务');self.tabs.addTab(self.files,'修改依据');p.addWidget(self.tabs,1)
         self.preview=QTextBrowser();self.preview.setMaximumHeight(200);self.preview.hide();p.addWidget(self.preview)
         actions=QHBoxLayout();self.review_button=QPushButton('确认 / 更名 / 合并 / 排除');self.review_button.clicked.connect(self.review);actions.addWidget(self.review_button);actions.addStretch();p.addLayout(actions)
@@ -37,6 +38,7 @@ class ProjectWindow(QDialog):
         self.agent.currentIndexChanged.connect(self.refresh);self.filter.currentIndexChanged.connect(self.refresh);self.search.textChanged.connect(self.refresh)
         self.projects.currentRowChanged.connect(self.details);self.tasks.itemDoubleClicked.connect(self.open_task);self.files.currentRowChanged.connect(self.proof)
         self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(2500);self.refresh()
+        localize_widgets(self)
     def connections(self):
         source=sqlite3.connect((self.root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=.2)
         return source,ProjectInventory(self.root/'project_inventory.db')
@@ -47,11 +49,12 @@ class ProjectWindow(QDialog):
             c=snapshot['counts'];self.counts.setText(f'已识别 {c["identified"]+c["confirmed"]} 个项目　·　待确认 {c["candidate"]} 个目录　·　已排除 {c["excluded"]} 个')
             self.progress.setText('当前已采历史整理完成；新记录持续归入。' if snapshot['complete'] else '历史正在逐步整理，当前数量还会增加；新记录优先处理。')
             self.rows=[r for r in snapshot['projects'] if self.filter.currentData()=='all' or r['state']==self.filter.currentData()]
-            signature=json.dumps(self.rows,sort_keys=True)
+            signature=json.dumps([self.rows,language()],sort_keys=True)
             if signature==self.last_signature:return
             self.last_signature=signature;selected=self.selected;self.projects.blockSignals(True);self.projects.clear()
             for r in self.rows:
-                self.projects.addItem(r['name']+'\n'+{'identified':'项目标记 + 源码记录','confirmed':'人工确认项目','candidate':'待确认目录','excluded':'已排除'}[r['state']]+f' · {r["taskCount"]} 个任务 · {r["fileCount"]} 个源码文件'+'\n'+r['roots'][0])
+                state=t({'identified':'项目标记 + 源码记录','confirmed':'人工确认项目','candidate':'待确认目录','excluded':'已排除'}[r['state']])
+                self.projects.addItem(r['name']+'\n'+state+' · '+t(f'{r["taskCount"]} 个任务 · {r["fileCount"]} 个源码文件')+'\n'+r['roots'][0])
                 self.projects.item(self.projects.count()-1).setToolTip('\n'.join(r['roots']))
             index=next((i for i,r in enumerate(self.rows) if r['id']==selected),0 if self.rows else -1)
             self.projects.setCurrentRow(index);self.projects.blockSignals(False);self.details(index)
@@ -59,17 +62,18 @@ class ProjectWindow(QDialog):
         finally:
             if source:source.close()
             if store:store.close()
+            localize_widgets(self)
     def details(self,index):
         if index<0 or index>=len(self.rows):
-            self.selected=None;self.title.setText('没有符合条件的项目');self.meta.clear();self.tasks.clear();self.files.clear();self.preview.hide();self.review_button.setEnabled(False);return
+            self.selected=None;self.title.setProperty('i18nSkip',False);self.title.setText('没有符合条件的项目');self.meta.clear();self.tasks.clear();self.files.clear();self.preview.hide();self.review_button.setEnabled(False);localize_widgets(self);return
         self.selected=self.rows[index]['id'];self.review_button.setEnabled(True);source=store=None
         try:
             source,store=self.connections();self.detail=store.details(source,self.selected)
-            d=self.detail;self.title.setText(d['name']);basis={'user_confirmed':'用户确认','recorded_manifest':'日志记录了目录内的项目清单写入','current_directory':'本机现存项目标记；不能倒推历史仓库'}.get(d['basis'],'仅有源码修改路径，项目身份待确认')
-            self.meta.setText('\n'.join(d['roots'])+f'\n{d["taskCount"]} 个关联任务 · {d["fileCount"]} 个源码文件 · {d["writes"]} 次写入/修改请求\n识别依据：'+basis)
+            d=self.detail;self.title.setProperty('i18nSkip',True);self.title.setText(d['name']);basis={'user_confirmed':'用户确认','recorded_manifest':'日志记录了目录内的项目清单写入','current_directory':'本机现存项目标记；不能倒推历史仓库'}.get(d['basis'],'仅有源码修改路径，项目身份待确认')
+            self.meta.setText('\n'.join(d['roots'])+'\n'+t(f'{d["taskCount"]} 个关联任务 · {d["fileCount"]} 个源码文件 · {d["writes"]} 次写入/修改请求')+'\n'+t('识别依据：')+t(basis))
             self.tasks.clear()
-            for t in d['tasks']:
-                self.tasks.addItem(t['updated'][:16].replace('T',' ')+'\n'+task_preview(t['prompt'].replace('\n',' '))[:160]);self.tasks.item(self.tasks.count()-1).setToolTip(task_preview(t['prompt']))
+            for task in d['tasks']:
+                self.tasks.addItem(task['updated'][:16].replace('T',' ')+'\n'+task_preview(task['prompt'].replace('\n',' '))[:160]);self.tasks.item(self.tasks.count()-1).setToolTip(task_preview(task['prompt']))
             self.files.blockSignals(True);self.files.clear()
             for f in d['evidence']:self.files.addItem(f['path'])
             self.files.blockSignals(False);self.preview.hide()
@@ -78,6 +82,7 @@ class ProjectWindow(QDialog):
         finally:
             if source:source.close()
             if store:store.close()
+            localize_widgets(self)
     def open_task(self,item):
         index=self.tasks.currentRow()
         if index>=0:self.taskRequested.emit(self.detail['tasks'][index]['taskId'])
@@ -86,7 +91,7 @@ class ProjectWindow(QDialog):
         with sqlite3.connect((self.root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=.2) as source:
             ident=self.detail['evidence'][index]['eventId'];row=source.execute('SELECT CASE WHEN length(event)<=262144 THEN event END FROM events WHERE id=?',(ident,)).fetchone()
             excerpt=source.execute('SELECT substr(excerpt,1,16000) FROM task_steps WHERE event=?',(ident,)).fetchone() if row and not row[0] else None
-        text=event_text(json.loads(row[0]))[:16000] if row and row[0] else '大记录仅展示索引摘录：\n'+excerpt[0] if excerpt else '原始证据暂不可用'
+        text=event_text(json.loads(row[0]))[:16000] if row and row[0] else t('大记录仅展示索引摘录：')+'\n'+excerpt[0] if excerpt else t('原始证据暂不可用')
         self.preview.setPlainText(text);self.preview.show()
     def review(self):
         if not self.selected:return
@@ -94,7 +99,7 @@ class ProjectWindow(QDialog):
         name=QLineEdit(self.detail['name']);form.addRow('显示名称',name);state=QComboBox()
         for label,value in [('确认为开发项目','confirmed'),('保留为待确认目录','candidate'),('排除临时脚本 / 输出目录','excluded'),('恢复自动识别','automatic')]:state.addItem(label,value)
         state.setCurrentIndex(max(0,state.findData(self.detail['state'])));form.addRow('归类',state)
-        target=QComboBox();target.addItem('保持独立',None)
+        target=QComboBox();target.setProperty('i18nSkip',True);target.addItem(t('保持独立'),None)
         for r in self.rows:
             if r['id']!=self.selected:target.addItem(r['name']+' · '+r['roots'][0],r['id'])
         form.addRow('合并到已有项目',target);status=QLabel();form.addRow(status);save=QPushButton('保存');form.addRow(save)
@@ -106,5 +111,5 @@ class ProjectWindow(QDialog):
             finally:
                 if store:store.close()
             self.last_signature=None;dialog.accept();self.refresh()
-        save.clicked.connect(apply);dialog.exec()
+        save.clicked.connect(apply);localize_widgets(dialog);dialog.exec()
     def closeEvent(self,event):self.timer.stop();event.accept()
