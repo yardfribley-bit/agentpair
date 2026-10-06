@@ -6,7 +6,7 @@ from .tasks import now
 
 
 class PlatformAssistant:
-    ACTIONS = ('machines', 'devices', 'model_data', 'security', 'sessions', 'session_detail', 'release_machine', 'device_detail', 'model_calls', 'security_detail')
+    ACTIONS = ('machines', 'devices', 'model_data', 'security', 'sessions', 'session_detail', 'release_machine', 'device_detail', 'model_calls', 'security_detail', 'session_upload_status')
 
     def __init__(self, engine, devices, sessions, cloud):
         self.engine, self.devices, self.sessions, self.cloud = engine, devices, sessions, cloud
@@ -78,6 +78,27 @@ class PlatformAssistant:
                         }.get(previous.get('state'), '需要进一步核对当前操作记录。')
                         result['items'] = []
                 result['links'] = [{'label': '查看云机器', 'url': '/cloud-machines'}]
+            elif action=='session_upload_status':
+                selected=tool.get('deviceId')
+                if selected and owner!='admin' and selected not in {r['id'] for r in self.devices.list(owner)}:
+                    raise PermissionError('设备不属于当前账号')
+                data=self.sessions.upload_status(owner,selected)
+                import datetime
+                def stamp(value):
+                    return datetime.datetime.fromtimestamp(value,datetime.timezone(datetime.timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S（北京时间）')
+                last=data['lastAttempt'];success=data['lastSuccess']
+                if last:
+                    item={'name':'SessionLens 上报状态','lastAttempt':stamp(last['received']),
+                          'lastSuccess':stamp(success['received']) if success else '尚无成功接收记录',
+                          'device':last.get('device') or '认证失败，设备无法确认',
+                          'uploadStatus':'成功接收' if last['status']==200 else '上报失败（HTTP '+str(last['status'])+'）',
+                          'failureReason':{'device_not_authorized':'设备认证失败','invalid_batch':'数据格式不符合要求','payload_too_large':'上报批次过大','accepted':'无'}.get(last['reason'],'需要核对'),
+                          'receiptSource':'服务器接口回执' if last['source']=='endpoint' else '历史访问日志'}
+                    result['items']=[item]
+                    text='最近一次上报尝试：'+item['lastAttempt']+'，'+item['uploadStatus']+'。最近成功接收：'+item['lastSuccess']+'。'
+                else:text='尚无可查询的 SessionLens 上报回执，不能确定最近上报时间。'
+                result['coverage']=data['historicalCoverage']
+                result['links']=[{'label':'查看会话洞察','url':'/session-insights/'}]
             elif action in ('devices','device_detail'):
                 rows = self.devices.list(owner)
                 if action=='device_detail':

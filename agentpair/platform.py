@@ -301,16 +301,23 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
 
         def do_POST(self):
             if self.path=='/api/sessionlens/events':
+                identity=None
                 try:
                     auth=self.headers.get('Authorization','')
                     if not auth.startswith('Bearer '):raise PermissionError('Device token required')
                     identity=devices.identity(auth[7:])
                     if self.headers.get('Content-Type','').split(';')[0]!='application/json':raise ValueError('JSON required')
                     size=int(self.headers.get('Content-Length','0'))
-                    if not 0<size<=4194304:self.respond(413,{'error':'Payload too large'});return
+                    if not 0<size<=4194304:
+                        session_lens.record_upload_failure(identity,413,'payload_too_large')
+                        self.respond(413,{'error':'Payload too large'});return
                     self.respond(200,session_lens.ingest(identity,json.loads(self.rfile.read(size))))
-                except PermissionError:self.respond(401,{'error':'Device not authorized'})
-                except (ValueError,TypeError,AttributeError,KeyError):self.respond(400,{'error':'Invalid SessionLens batch'})
+                except PermissionError:
+                    session_lens.record_upload_failure(None,401,'device_not_authorized')
+                    self.respond(401,{'error':'Device not authorized'})
+                except (ValueError,TypeError,AttributeError,KeyError):
+                    session_lens.record_upload_failure(identity,400,'invalid_batch')
+                    self.respond(400,{'error':'Invalid SessionLens batch'})
                 return
             if self.path=='/api/applens/model-context':
                 try:

@@ -5,6 +5,7 @@ import re
 import sqlite3
 from contextlib import contextmanager
 import os
+import time
 
 class SessionStore:
     def __init__(self,path):
@@ -12,7 +13,9 @@ class SessionStore:
         self.path.parent.mkdir(parents=True,exist_ok=True)
         with self.connect() as db:
             db.executescript('''CREATE TABLE IF NOT EXISTS session_events(device TEXT,owner TEXT,id TEXT,session TEXT,event TEXT,PRIMARY KEY(device,id));
-            CREATE INDEX IF NOT EXISTS session_events_session ON session_events(owner,device,session);''')
+            CREATE INDEX IF NOT EXISTS session_events_session ON session_events(owner,device,session);
+            CREATE TABLE IF NOT EXISTS session_uploads(id INTEGER PRIMARY KEY,device TEXT,owner TEXT,received REAL,status INTEGER,accepted INTEGER,reason TEXT,source TEXT);
+            CREATE INDEX IF NOT EXISTS session_uploads_owner ON session_uploads(owner,received);''')
         os.chmod(self.path,0o600)
     @contextmanager
     def connect(self):
@@ -37,7 +40,26 @@ class SessionStore:
                 body=json.dumps(e,ensure_ascii=False,sort_keys=True)
                 if prior and prior['event']!=body:raise ValueError('Conflicting event replay')
                 db.execute('INSERT OR IGNORE INTO session_events VALUES(?,?,?,?,?)',(identity['id'],identity['owner'],e['id'],e['sessionId'],body))
+            db.execute('INSERT INTO session_uploads(device,owner,received,status,accepted,reason,source) VALUES(?,?,?,?,?,?,?)',(identity['id'],identity['owner'],time.time(),200,len(events),'accepted','endpoint'))
         return {'ids':[e['id'] for e in events],'accepted':len(events),'deviceId':identity['id']}
+    def record_upload_failure(self,identity,status,reason):
+        with self.connect() as db:
+            db.execute('INSERT INTO session_uploads(device,owner,received,status,accepted,reason,source) VALUES(?,?,?,?,?,?,?)',
+                       ((identity or {}).get('id'),(identity or {}).get('owner'),time.time(),status,0,reason,'endpoint'))
+
+    def upload_status(self,owner,device=None):
+        # Anonymous failures cannot be attributed to a user or device.
+        scope='1=1' if owner=='admin' else 'owner=?'
+        args=[] if owner=='admin' else [owner]
+        if device:
+            scope+=' AND device=?';args.append(device)
+        with self.connect() as db:
+            def latest(extra=''):
+                row=db.execute('SELECT device,received,status,accepted,reason,source FROM session_uploads WHERE '+scope+extra+' ORDER BY received DESC,id DESC LIMIT 1',args).fetchone()
+                return dict(row) if row else None
+            return {'lastAttempt':latest(),'lastSuccess':latest(' AND status=200'),
+                    'timeBasis':'server_received','historicalCoverage':'仅已记录的接口回执；未记录不代表从未上报'}
+
     def sessions(self,owner):
         with self.connect() as db:
             return [dict(r) for r in db.execute('SELECT device,session,count(*) AS events FROM session_events WHERE owner=? GROUP BY device,session',(owner,))]
