@@ -354,6 +354,10 @@ def ask(root,config,question,history,progress,source=None,days=0,selected_task=N
         packet=packet_for_task(db,ids[0],question,plan.get('facets'),project_context=context);presentation=project(db,ids[0]);presentation['projectContext']=context
         knowledge_state={**(index.status() if index else {}),'embedding':vectors.status(embedder.identity) if vectors and embedder else None,'embeddingError':embedding_error}
     progress('正在核对这一次任务的思路、工具参数与返回')
+    from .interactions import interaction_question
+    if interaction_question(question):
+        from .task_queries import local_task_query
+        return local_task_query(root,question,selected=ids[0])
     relevant_history=[result for result in history if result.get('taskId')==ids[0]] if mode=='same_task' else []
     understanding=answer(root,config,question,packet,relevant_history)
     return {'question':question,'taskId':ids[0],'retrievedTaskIds':ids,'retrieved':[{'title':packet['prompt'],'source':packet['source']}],'packet':packet,'presentation':presentation,'understanding':understanding,'knowledgeState':knowledge_state,'selection':{'version':4,'mode':mode,'terms':plan.get('terms',[]),'subjects':plan.get('subjects',[]),'facets':question_facets(question,plan.get('facets'))}}

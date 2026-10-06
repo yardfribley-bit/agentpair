@@ -2,10 +2,11 @@
 import html,json,sqlite3,threading,uuid
 from pathlib import Path
 from PySide6.QtCore import QObject,Signal,Qt,QUrl,QTimer
-from PySide6.QtWidgets import QMainWindow,QWidget,QHBoxLayout,QVBoxLayout,QLabel,QPushButton,QPlainTextEdit,QComboBox,QTextBrowser,QListWidget,QSplitter,QDialog,QStackedWidget,QScrollArea,QFormLayout,QLineEdit
+from PySide6.QtWidgets import QMainWindow,QWidget,QHBoxLayout,QVBoxLayout,QLabel,QPushButton,QPlainTextEdit,QComboBox,QTextBrowser,QListWidget,QSplitter,QDialog,QStackedWidget,QScrollArea,QFormLayout,QLineEdit,QSizePolicy
 from .knowledge import ask,answer_mismatch
 from .task_view import TaskView,task_title
 from .supervision import event_text
+from .knowledge_view import KnowledgeView,ActiveStack
 
 class Signals(QObject):
     progress=Signal(str)
@@ -18,8 +19,8 @@ class ChatWindow(QMainWindow):
         self.setWindowTitle('SessionLens · 工作记忆助手');self.resize(1360,1000)
         self.cache=sqlite3.connect(self.root/'conversations.db');self.cache.execute('CREATE TABLE IF NOT EXISTS chats(id TEXT PRIMARY KEY,title TEXT,content TEXT,updated INTEGER)');self.cache.commit()
         body=QWidget();self.setCentralWidget(body);outer=QHBoxLayout(body);outer.setContentsMargins(0,0,0,0)
-        side=QWidget();side.setFixedWidth(220);side.setStyleSheet('QPushButton{background:transparent;color:#233247;border:0;text-align:left;} QPushButton:checked{background:#e9f0fb;color:#275eb2;}');v=QVBoxLayout(side);v.setContentsMargins(18,24,18,20)
-        brand=QLabel('SessionLens');brand.setStyleSheet('font-size:22px;font-weight:600');v.addWidget(brand);v.addWidget(QLabel('工作记忆'));v.addSpacing(18)
+        side=QWidget();side.setFixedWidth(182);side.setStyleSheet('QWidget{background:#f0f2f6;} QPushButton{background:transparent;color:#233247;border:0;text-align:left;padding:10px 8px;} QPushButton:checked{background:#eaf0fc;color:#315fc4;}');v=QVBoxLayout(side);v.setContentsMargins(14,24,14,20)
+        brand=QLabel('SessionLens');brand.setStyleSheet('font-size:18px;font-weight:600');v.addWidget(brand);v.addSpacing(18)
         assistant=QPushButton('智能助手');assistant.setChecked(True);assistant.setCheckable(True);assistant.clicked.connect(self.raise_);v.addWidget(assistant)
         records=QPushButton('历史任务');records.clicked.connect(self.open_history);v.addWidget(records)
         projects=QPushButton('项目总览');projects.clicked.connect(self.open_projects);v.addWidget(projects)
@@ -28,21 +29,24 @@ class ChatWindow(QMainWindow):
         self.chats=QListWidget();self.chats.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.chats.currentRowChanged.connect(self.open_chat);v.addWidget(self.chats,1);outer.addWidget(side)
         main=QWidget();m=QVBoxLayout(main);m.setContentsMargins(28,26,28,20)
         head=QLabel('智能助手');head.setStyleSheet('font-size:20px;font-weight:600');m.addWidget(head)
-        sub=QLabel('先回答你的问题，再展开相关思路、动作与结果。');sub.setWordWrap(True);m.addWidget(sub)
+        sub=QLabel('编程 Agent 的知识问答。');sub.setWordWrap(True);sub.setStyleSheet('font-size:12px;color:#626c7b;');m.addWidget(sub)
         scope=QHBoxLayout();scope.addWidget(QLabel('查询范围'));self.source=QComboBox();self.source.addItem('全部 Agent',None);self.source.addItem('WorkBuddy','workbuddy');self.source.addItem('Codex','codex');scope.addWidget(self.source)
         scope.addWidget(QLabel('时间'));self.period=QComboBox();self.period.addItem('全部历史',0);self.period.addItem('最近 7 天',7);self.period.addItem('最近 30 天',30);scope.addWidget(self.period);scope.addStretch();scope_container=QWidget(main);scope_container.setLayout(scope);scope_container.hide()
         self.composer=QWidget();self.composer.setObjectName('assistantComposer');self.composer.setStyleSheet('QWidget#assistantComposer{background:white;border:1px solid #E6E8EC;border-radius:12px;}')
-        cv=QVBoxLayout(self.composer);cv.setContentsMargins(20,16,20,16);prompt=QLabel('你想了解什么？');prompt.setStyleSheet('font-size:17px;font-weight:600');prompt.hide()
+        cv=QVBoxLayout(self.composer);cv.setContentsMargins(18,14,18,14);prompt=QLabel('你的问题');prompt.setStyleSheet('font-size:12px;color:#626c7b;');cv.addWidget(prompt)
         self.input=QPlainTextEdit();self.input.setFixedHeight(72);self.input.setStyleSheet('QPlainTextEdit{border:0;background:transparent;font-size:16px;padding:6px;}');self.input.setPlaceholderText('描述你想找的任务，或者直接问：当时为什么这样修改？用了什么工具？最后做成了吗？');cv.addWidget(self.input)
         row=QHBoxLayout();hint=QLabel('项目统计在本机完成；任务解释按模型设置处理');hint.setWordWrap(True);hint.setStyleSheet('color:#667589;font-size:12px');row.addWidget(hint,1);self.send_button=QPushButton('查询');self.send_button.setMinimumWidth(88);self.send_button.clicked.connect(self.send);row.insertWidget(0,self.send_button)
         # Project scope is inferred from the question; no preparatory dropdown.
         self.project_scope=QComboBox(self);self.project_scope.addItem('全部任务',None);self.project_scope.hide();cv.addLayout(row);m.addWidget(self.composer);self.project_catalog_seen=None
-        self.status=QLabel('从你的任务记录中寻找答案');self.status.setWordWrap(True);m.addWidget(self.status)
-        self.split=QSplitter(Qt.Horizontal);self.split.setChildrenCollapsible(False);self.answer=QTextBrowser();self.answer.setOpenLinks(False);self.answer.anchorClicked.connect(self.evidence);self.results=QStackedWidget();self.results.addWidget(self.answer);self.task_view=TaskView();self.task_view.contentChanged.connect(lambda:QTimer.singleShot(0,self.fit_result));self.task_view.evidenceRequested.connect(lambda ref:self.evidence(QUrl("proof:"+str(len(self.messages)-1)+":"+ref)));self.results.addWidget(self.task_view);self.split.addWidget(self.results)
+        self.status=QLabel('从你的任务记录中寻找答案');self.status.setFixedHeight(23);self.status.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed);m.addWidget(self.status)
+        self.split=QSplitter(Qt.Horizontal);self.split.setChildrenCollapsible(False);self.answer=QTextBrowser();self.answer.setOpenLinks(False);self.answer.anchorClicked.connect(self.evidence);self.results=ActiveStack();self.results.addWidget(self.answer);self.task_view=TaskView();self.task_view.contentChanged.connect(lambda:QTimer.singleShot(0,self.fit_result));self.task_view.evidenceRequested.connect(lambda ref:self.evidence(QUrl("proof:"+str(len(self.messages)-1)+":"+ref)));self.results.addWidget(self.task_view)
+        self.knowledge_view=KnowledgeView();self.results.addWidget(self.knowledge_view);self.knowledge_view.projectRequested.connect(self.open_project_answer);self.knowledge_view.taskRequested.connect(self.open_task_answer);self.knowledge_view.questionRequested.connect(self.followup_question);self.knowledge_view.evidenceRequested.connect(lambda ref:self.evidence(QUrl('proof:'+str(len(self.messages)-1)+':'+ref)));self.split.addWidget(self.results)
         self.task_view.associationRequested.connect(self.correct_association)
         self.task_view.projectRequested.connect(self.correct_project)
+        self.knowledge_view.associationRequested.connect(self.correct_association)
+        self.knowledge_view.projectCorrectionRequested.connect(self.correct_project)
         proof_panel=QWidget();pv=QVBoxLayout(proof_panel);pv.setContentsMargins(0,0,0,0);pr=QHBoxLayout();pr.addWidget(QLabel('原始依据'));pr.addStretch();close=QPushButton('收起');close.clicked.connect(proof_panel.hide);pr.addWidget(close);pv.addLayout(pr);self.proof=QTextBrowser();self.proof.setMinimumWidth(240);pv.addWidget(self.proof);self.proof_panel=proof_panel;self.split.addWidget(proof_panel);proof_panel.hide();m.addWidget(self.split,1)
-        foot=QHBoxLayout();self.collection_status=QLabel('本地任务库 · 采集状态可查看');foot.addWidget(self.collection_status,1);view=QPushButton('查看采集进度');view.clicked.connect(self.open_collection);foot.addWidget(view);m.addLayout(foot);self.results.setSizePolicy(__import__('PySide6.QtWidgets',fromlist=['QSizePolicy']).QSizePolicy.Expanding,__import__('PySide6.QtWidgets',fromlist=['QSizePolicy']).QSizePolicy.Minimum);main_scroll=QScrollArea();main_scroll.setWidgetResizable(True);main_scroll.setFrameShape(QScrollArea.NoFrame);main_scroll.setWidget(main);outer.addWidget(main_scroll,1)
+        foot=QHBoxLayout();self.collection_status=QLabel('本地任务库 · 采集状态可查看');self.collection_status.setFixedHeight(23);self.collection_status.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed);foot.addWidget(self.collection_status,1);view=QPushButton('查看采集进度');view.clicked.connect(self.open_collection);foot.addWidget(view);m.addLayout(foot);self.results.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Minimum);main_scroll=QScrollArea();main_scroll.setWidgetResizable(True);main_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOn);main_scroll.setFrameShape(QScrollArea.NoFrame);main_scroll.setWidget(main);outer.addWidget(main_scroll,1);self.main_scroll=main_scroll;self.render_signature=None
         self.signals=Signals(self);self.signals.progress.connect(self.status.setText);self.signals.ready.connect(self.received);self.signals.failed.connect(self.failed)
         self.knowledge_timer=QTimer(self);self.knowledge_timer.timeout.connect(self.refresh_knowledge);self.knowledge_timer.start(1200)
         self.refresh_chats();self.new_chat()
@@ -50,9 +54,14 @@ class ChatWindow(QMainWindow):
         runtime=self.collector.runtime
         if runtime:
             with runtime.lock:text=runtime.status.get('knowledge','任务知识库正在准备…')
-            self.collection_status.setText(text)
+            if self.collection_status.text()!=text:self.collection_status.setText(text)
     def fit_result(self):
-        if self.results.currentWidget()==self.task_view:self.split.setMinimumHeight(max(300,self.task_view.layout().totalHeightForWidth(max(720,self.results.width()))))
+        if self.results.currentWidget()==self.knowledge_view:
+            height=max(300,self.knowledge_view.layout().totalHeightForWidth(max(320,self.results.width())))
+            if self.split.minimumHeight()!=height:self.split.setMinimumHeight(height)
+        elif self.results.currentWidget()==self.task_view:
+            height=max(300,self.task_view.layout().totalHeightForWidth(max(720,self.results.width())))
+            if self.split.minimumHeight()!=height:self.split.setMinimumHeight(height)
     def resizeEvent(self,event):
         super().resizeEvent(event)
         if hasattr(self,'task_view'):QTimer.singleShot(0,self.fit_result)
@@ -78,6 +87,12 @@ class ChatWindow(QMainWindow):
         location=QLabel('原始记录保存在本机：'+str(self.root/'collector.db'));location.setWordWrap(True);layout.addWidget(location)
         row=QHBoxLayout();settings=QPushButton('上报与采集设置');settings.clicked.connect(lambda:(dialog.accept(),self.collector.configure()));row.addWidget(settings);done=QPushButton('关闭');done.clicked.connect(dialog.accept);row.addWidget(done);layout.addLayout(row);dialog.exec()
     def prefill(self,question):self.input.setPlainText(question);self.input.setFocus()
+    def followup_question(self,question):self.prefill(question);self.send()
+    def open_project_answer(self,identity):
+        latest=self.messages[-1] if self.messages else {};offered=latest.get('projectChoices',latest.get('projectInventory',{}).get('projects',[]));p=next((p for p in offered if p['id']==identity),None)
+        if p:self.prefill(p['name']+' 里面做了哪些任务，有多少轮用户发言？');self.send(selected_project=identity)
+    def open_task_answer(self,identity):
+        self.prefill('这次任务是怎么做的？');self.send(selected_task=identity)
     def correct_project(self):
         if self.busy or not self.messages:return
         result=self.messages[-1];task=result.get('taskId')
@@ -133,10 +148,16 @@ class ChatWindow(QMainWindow):
                 if mismatch:result['selectionMismatch']=mismatch
         self.input.setPlainText(self.messages[-1]['question'] if self.messages else '');self.proof_panel.hide();self.render()
     def render(self):
+        latest=self.messages[-1] if self.messages else {}
+        signature=(self.chat_id,len(self.messages),self.busy,getattr(self,'pending','') if self.busy else '',id(latest),latest.get('selectionMismatch'))
+        if signature==self.render_signature:return
+        self.render_signature=signature
         if self.busy:
             self.task_view.stop();self.split.setMinimumHeight(150);self.results.setCurrentWidget(self.answer);self.current_task.setText('正在查找相关任务');self.proof_panel.hide()
             self.answer.setHtml('<h3>正在查找这次问题的相关记录</h3><p>'+html.escape(self.pending)+'</p>');self.send_button.setText('查询中…');return
         latest=self.messages[-1] if self.messages else {}
+        if not latest.get('selectionMismatch') and (latest.get('projectInventory') or latest.get('projectDetails') or 'projectChoices' in latest or latest.get('presentation')):
+            self.task_view.stop();self.results.setCurrentWidget(self.knowledge_view);self.knowledge_view.load(latest);self.proof_panel.hide();self.send_button.setText('提问');self.current_task.setText(latest.get('projectDetails',{}).get('name') or latest.get('presentation',{}).get('prompt','项目与任务')[:30]);QTimer.singleShot(0,self.fit_result);return
         if 'projectChoices' in latest or latest.get('projectDetails'):
             self.task_view.stop();self.results.setCurrentWidget(self.answer);self.split.setMinimumHeight(360);self.proof_panel.hide();self.send_button.setText('查询');esc=html.escape
             if 'projectChoices' in latest:
@@ -219,6 +240,9 @@ class ChatWindow(QMainWindow):
             config={**self.collector.config.get('model',{}),'embedding':self.collector.config.get('embedding',{})}
             try:
                 from .project_queries import local_project_query
+                from .task_queries import local_task_query
+                local_task=local_task_query(self.root,q,previous=history[-1] if history else None,selected=selected_task)
+                if local_task is not None:local_task['projectScope']=project_id;self.signals.ready.emit(local_task);return
                 if not selected_task:
                     local=local_project_query(self.root,q,source=source,previous=history[-1] if history else None,selected=selected_project)
                     if local is not None:local['projectScope']=project_id;self.signals.ready.emit(local);return
@@ -243,7 +267,7 @@ class ChatWindow(QMainWindow):
             return
         if url.toString().startswith('project-task:'):
             ident=url.toString()[len('project-task:'):];latest=self.messages[-1] if self.messages else {}
-            if ident in latest.get('projectDetails',{}).get('taskIds',[]):self.collector.open_project_task(ident);self.open_collector()
+            if ident in latest.get('projectDetails',{}).get('taskIds',[]):self.open_task_answer(ident)
             return
         if url.toString()=='projects:':self.open_projects();return
         if url.toString()=='associate:':self.correct_association();return
@@ -259,13 +283,15 @@ class ChatWindow(QMainWindow):
                 self.input.setPlainText('这一次任务的要求、执行过程和结果是什么？');self.send(selected_task=identity)
             return
         _,n,ref=url.toString().split(':');r=self.messages[int(n)];f=next(x for x in r['packet']['fragments'] if x['evidenceId']==ref)
-        with sqlite3.connect(self.root/'collector.db') as db:raw=db.execute('SELECT event FROM events WHERE id=?',(f['eventId'],)).fetchone()
-        if not raw:self.status.setText('这条原始记录暂不可用；回答引用的摘录仍保存在本次对话中。');return
-        e=json.loads(raw[0]);esc=html.escape;loc=e.get('evidence',{})
+        from .message_graph import bounded_event
+        with sqlite3.connect(self.root/'collector.db') as db:e=bounded_event(db,f['eventId'])
+        if not e:self.status.setText('这条原始记录暂不可用；回答引用的摘录仍保存在本次对话中。');return
+        esc=html.escape;loc=e.get('evidence',{})
         owner=next((x['title'] for x in r.get('retrieved',[]) if x.get('taskId')==f.get('taskId')),None)
-        self.proof.setHtml('<h3>'+esc(ref)+' · 原始证据</h3>'+('<p>所属任务：'+esc(owner[:160])+'</p>' if owner else '')+'<p>'+esc(str(e.get('name') or e['kind']))+'</p><pre style="white-space:pre-wrap">'+esc(event_text(e)[:20000])+'</pre><hr><p>'+esc(str(loc.get('path','')))+ '</p><p>字节 '+str(loc.get('byteStart'))+'–'+str(loc.get('byteEnd'))+'</p>');self.proof_panel.show();self.split.setSizes([650,350])
+        self.proof.setHtml('<h3>'+esc(ref)+' · 原始证据</h3>'+('<p>大记录仅显示已索引摘录，完整原文仍保留在本机。</p>' if e.get('_bodyTruncated') else '')+('<p>所属任务：'+esc(owner[:160])+'</p>' if owner else '')+'<p>'+esc(str(e.get('name') or e['kind']))+'</p><pre style="white-space:pre-wrap">'+esc(event_text(e)[:20000])+'</pre><hr><p>'+esc(str(loc.get('path','')))+ '</p><p>字节 '+str(loc.get('byteStart'))+'–'+str(loc.get('byteEnd'))+'</p>');self.proof_panel.show();self.split.setSizes([650,350])
     def closeEvent(self,event):
         self.knowledge_timer.stop()
         self.task_view.timer.stop()
+        self.knowledge_view.timer.stop()
         if self.collector.runtime:self.collector.runtime.stop.set()
         self.collector.hide_on_close=False;self.collector.close();self.cache.close();event.accept()

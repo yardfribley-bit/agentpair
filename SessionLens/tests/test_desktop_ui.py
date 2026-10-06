@@ -37,11 +37,13 @@ class LiveUiTests(unittest.TestCase):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
             window=Window(Path(tmp));chat=ChatWindow(window);question='WorkBuddy 开发了多少项目，项目名称';chat.input.setPlainText(question)
+            from sessionlens.project_inventory import ProjectInventory
+            inventory=ProjectInventory(Path(tmp)/'project_inventory.db');inventory.close()
             class Immediate:
                 def __init__(self,target,**kwargs):self.target=target
                 def start(self):self.target()
             with patch('sessionlens.chat_window.ask') as model,patch('sessionlens.chat_window.threading.Thread',Immediate):chat.send();model.assert_not_called()
-            self.app.processEvents();self.assertIn('已识别',chat.answer.toPlainText());self.assertEqual(chat.input.toPlainText(),question);self.assertTrue(chat.messages[-1].get('projectInventory'));self.assertTrue(chat.project_scope.isHidden());chat.close()
+            self.app.processEvents();self.assertIn('已识别',chat.knowledge_view.plain_text());self.assertEqual(chat.input.toPlainText(),question);self.assertTrue(chat.messages[-1].get('projectInventory'));self.assertTrue(chat.project_scope.isHidden());chat.close()
 
     def test_history_review_is_explicit_and_preserves_selected_retry(self):
         from sessionlens.task_lineage import resolve
@@ -103,7 +105,7 @@ class LiveUiTests(unittest.TestCase):
             store=ProjectStore(root/'project_context.db',filesystem=False);ctx=store.resolve(window.store.db,task)
             packet=packet_for_task(window.store.db,task,project_context=ctx);view=project(window.store.db,task);view['projectContext']=ctx
             q='项目说明修改了什么';chat.input.setPlainText(q);chat.messages=[{'question':q,'taskId':task,'packet':packet,'presentation':view,'understanding':{'overview':{'text':'记录显示读取了仓库状态。','basis':'recorded','evidenceRefs':['E001']},'steps':[]}}]
-            chat.render();chat.refresh_knowledge();self.assertIn('atlas',chat.task_view.project_label.text());self.assertIn('github.com/team/atlas',chat.task_view.project_label.text());self.assertTrue(chat.project_scope.isHidden())
+            chat.render();chat.refresh_knowledge();self.assertIn('atlas',chat.knowledge_view.project_label.text());self.assertIn('github.com/team/atlas',chat.knowledge_view.project_label.text());self.assertTrue(chat.project_scope.isHidden())
             def save():
                 dialog=next(w for w in self.app.topLevelWidgets() if isinstance(w,QDialog) and w.windowTitle()=='修正项目关联')
                 dialog.findChildren(QComboBox)[0].setCurrentIndex(1);next(b for b in dialog.findChildren(QPushButton) if b.text()=='保存关联').click()
@@ -221,7 +223,7 @@ class LiveUiTests(unittest.TestCase):
             task=window.store.db.execute("SELECT id FROM task_groups WHERE prompt='手机号登录，会员表格'").fetchone()[0]
             q='会员登录为什么这样做';chat.input.setPlainText(q)
             chat.messages=[{'question':q,'taskId':task,'presentation':project(window.store.db,task),'packet':packet_for_task(window.store.db,task),'understanding':{'overview':{'text':'需求讨论之后开始执行。','evidenceRefs':[]},'steps':[]}}]
-            chat.render();self.assertFalse(chat.task_view.requirement_button.isHidden());self.assertIn('2 轮',chat.task_view.requirement_button.text())
+            chat.render();self.assertFalse(chat.knowledge_view.requirement_button.isHidden());self.assertIn('2 轮',chat.knowledge_view.requirement_button.text())
             def save():
                 dialog=next(w for w in self.app.topLevelWidgets() if isinstance(w,QDialog) and w.windowTitle()=='修正任务关联')
                 combos=dialog.findChildren(QComboBox);combos[1].setCurrentIndex(1)

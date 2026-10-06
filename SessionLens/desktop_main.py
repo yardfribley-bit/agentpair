@@ -82,7 +82,7 @@ class Window(QMainWindow):
         self.middle=QTextBrowser();self.middle.setOpenLinks(False);self.middle.anchorClicked.connect(self.follow_link);split.addWidget(self.middle)
         right=QWidget();rv=QVBoxLayout(right);rv.setContentsMargins(0,0,0,0);rv.addWidget(QLabel('对应证据'));self.proof=QTextBrowser();rv.addWidget(self.proof,1);self.mark=QPushButton('标记待核实');self.mark.clicked.connect(self.mark_event);rv.addWidget(self.mark);raw=QPushButton('查看来源定位与原始片段');raw.clicked.connect(self.details);rv.addWidget(raw);split.addWidget(right);split.setSizes([230,640,330]);split.setChildrenCollapsible(False)
         self.foot=QLabel('只展示已记录的动作；待核实标记不会暂停 Agent。');self.foot.setWordWrap(True);layout.addWidget(self.foot)
-        self.timer=QTimer(self);self.timer.timeout.connect(self.refresh);self.timer.start(1200);self.set_mode('live')
+        self.timer=QTimer(self);self.timer.timeout.connect(self.periodic_refresh);self.timer.start(1200);self.set_mode('live')
     def review_association(self):
         if not self.selected or not self.associate.isEnabled():return
         from sessionlens.semantic_lineage import candidate_turns
@@ -185,6 +185,10 @@ class Window(QMainWindow):
             with self.runtime.lock:s=dict(self.runtime.status)
             self.status.setText(s.get('task_index','正在读取日志')+' · '+s.get('upload','仅本地'))
         self.reload()
+    def periodic_refresh(self):
+        # Collection runs in Runtime; a hidden evidence window does not need
+        # to recreate documents and lists on every background record.
+        if self.isVisible() or getattr(self,'stopping',False):self.refresh()
     def reload(self):
         from sessionlens.task_lineage import resolve
         source=['','codex','workbuddy'][self.source.currentIndex()] if self.mode=='history' else ''
@@ -198,14 +202,27 @@ class Window(QMainWindow):
         if sig==self.signature:return
         self.signature=sig;old=None if self.mode=='live' and self.follow.isChecked() else resolve(self.store.db,self.selected);
         if self.mode=='live' and self.follow.isChecked():self.selected_event=None
-        self.rows=rows;self.task_list.blockSignals(True);self.task_list.clear()
-        for row in rows:
+        self.rows=rows;self.task_list.blockSignals(True)
+        structural=tuple(r[0] for r in rows)
+        rebuild=structural!=getattr(self,'list_structure',None)
+        if rebuild:self.task_list.clear()
+        for i,row in enumerate(rows):
             count=self.store.db.execute('SELECT turn_count FROM task_groups WHERE id=?',(row[0],)).fetchone()
             rounds=f' · {count[0]} 轮对话' if count else ''
-            item=QListWidgetItem(row[1].title()+' · '+display_time(row[4])+rounds+'\n'+row[3].replace('\n',' ')[:100]);item.setSizeHint(QSize(210,90));self.task_list.addItem(item)
+            text=row[1].title()+' · '+display_time(row[4])+rounds+'\n'+row[3].replace('\n',' ')[:100]
+            if rebuild:
+                item=QListWidgetItem(text);item.setSizeHint(QSize(210,90));self.task_list.addItem(item)
+            else:
+                item=self.task_list.item(i)
+                if item.text()!=text:item.setText(text)
+        self.list_structure=structural
         self.task_list.blockSignals(False);index=next((i for i,r in enumerate(rows) if r[0]==old),0)
         self.list_title.setText(('当前任务' if self.mode=='live' else '相关任务')+f' · {len(rows)}')
-        if rows:self.task_list.setCurrentRow(index);self.select_task(index)
+        if rows:
+            self.task_list.blockSignals(True);self.task_list.setCurrentRow(index);self.task_list.blockSignals(False)
+            selected=rows[index];step=self.store.db.execute('SELECT max(seq) FROM linked_task_steps WHERE task=?',(selected[0],)).fetchone()[0]
+            selected_sig=(selected[0],selected[5],step,self.mode,self.step_limit,self.selected_event,self.show_records)
+            if selected_sig!=getattr(self,'selected_signature',None):self.select_task(index);self.selected_signature=(selected[0],selected[5],step,self.mode,self.step_limit,self.selected_event,self.show_records)
         else:self.selected=None;self.selected_event=None;self.middle.setHtml('<h2>当前索引尚未找到匹配任务</h2><p>历史仍在后台整理时，尚未索引的任务暂时无法搜索。这不代表原日志中没有记录。</p>');self.proof.setHtml('<p>选择任务后展示对应原文。</p>')
     def select_task(self,index):
         if index<0 or index>=len(getattr(self,'rows',[])):return
@@ -337,7 +354,7 @@ def main():
             timer.stop();value=chat.messages[-1] if chat.messages else {'error':'query timeout'}
             output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(value,ensure_ascii=False,indent=2));os.chmod(output,0o600)
             chat.grab().save(str(output.with_suffix('.png')))
-            passed=value.get('engine')=='sessionlens.local_projects.v1'
+            passed=value.get('engine') in ('sessionlens.local_projects.v1','sessionlens.local_tasks.v1')
             print('SessionLens product project query '+('passed' if passed else 'failed')+': '+question,flush=True)
             chat.close();app.exit(0 if passed else 1)
         timer.timeout.connect(check_project_query);timer.start(100);return app.exec()
@@ -429,7 +446,7 @@ def main():
         def check_query():
             if chat.busy and monotonic()-started<240:return
             timer.stop()
-            success=bool(chat.messages and not chat.messages[-1].get('error') and chat.input.toPlainText()==question and chat.results.currentWidget()==chat.task_view)
+            success=bool(chat.messages and not chat.messages[-1].get('error') and chat.input.toPlainText()==question and chat.results.currentWidget()==chat.knowledge_view)
             if chat.messages:output.write_text(json.dumps(chat.messages[-1],ensure_ascii=False))
             chat.grab().save('/private/tmp/sessionlens-query-ui.png')
             print('Installed assistant query '+('passed' if success else 'failed'),flush=True)
@@ -448,10 +465,9 @@ def main():
         assert chat.proof.toPlainText().strip()
         chat.proof_panel.hide()
         if result.get('presentation'):
-            view=chat.task_view;assert len(view.data['calls'])==3;assert len(view.data['frames'])==3
-            view.choose_step(2);view.select('calls');app.processEvents();assert '1080P' in view.plain_text();assert 'VideoGen' in view.plain_text()
-            view.choose_step(0);view.select('reasoning');view.toggle();view.tick();assert view.position>0;view.toggle();assert not view.timer.isActive();view.next();assert view.index==1
-            view.select('delivery');app.processEvents();assert '验证' in view.plain_text();view.select('overview')
+            view=chat.knowledge_view;assert len(view.result['presentation']['calls'])==3
+            view.select_step(1);app.processEvents();assert '1080P' in view.plain_text();assert 'VideoGen' in view.plain_text()
+            view.select_step(0);view.toggle_play();view.next_step();assert view.index==1;view.toggle_play();assert not view.timer.isActive()
         app.processEvents();chat.grab().save('/private/tmp/sessionlens-installed-ui.png')
         print('Installed UI verification passed: large top input, answer rendering, original evidence')
         chat.close();return 0

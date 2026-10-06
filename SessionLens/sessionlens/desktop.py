@@ -221,7 +221,7 @@ class Runtime:
             startup_checked=False
             while not self.stop.is_set():
                 try:
-                    self.update(knowledge='正在整理项目背景')
+                    self.update(knowledge_phase='正在整理项目背景')
                     if not startup_checked:
                         import faulthandler
                         trace=(self.root/'project-startup-stack.txt').open('w');os.chmod(self.root/'project-startup-stack.txt',0o600)
@@ -230,7 +230,7 @@ class Runtime:
                         finally:faulthandler.cancel_dump_traceback_later();trace.close()
                         startup_checked=True
                     else:projects.sync(source,limit=2)
-                    self.update(knowledge='正在整理关键词索引')
+                    self.update(knowledge_phase='正在整理关键词索引')
                     index.sync(source);state=index.status()
                     text=('知识索引达到大小预算，整理已暂停；原始采集继续' if state['paused'] else
                           f'知识库可检索 {state["indexedTasks"]} 个任务 · 证据整理完成 {state["readyTasks"]} 个 · 待整理 {state["pendingTasks"]} 个')

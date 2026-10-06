@@ -38,8 +38,11 @@ def candidate_root(path):
     root='/'.join(parts[:i+1]);return root or None
 
 class ProjectInventory:
-    def __init__(self,path,filesystem=True):
-        self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True);self.filesystem=filesystem;self.checked=set()
+    def __init__(self,path,filesystem=True,read_only=False):
+        self.path=Path(path);self.filesystem=filesystem;self.checked=set()
+        if read_only:
+            self.db=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True,timeout=1);return
+        self.path.parent.mkdir(parents=True,exist_ok=True)
         self.db=sqlite3.connect(self.path,timeout=1);self.db.execute('PRAGMA journal_mode=WAL');os.chmod(self.path,0o600)
         self.db.executescript('''
           CREATE TABLE IF NOT EXISTS inventory_state(name TEXT PRIMARY KEY,value INTEGER);
@@ -132,7 +135,7 @@ class ProjectInventory:
         projects=[]
         for group in groups.values():
             if not group['files']:continue # a manifest alone is not development
-            group['fileCount']=len(group.pop('files'));group['taskIds']=sorted({links.get(t,t) for t in group['taskIds']});group['taskCount']=len(group['taskIds'])
+            group['fileCount']=len(group.pop('files'));group['taskIds']=sorted({links.get(t,t) for t in group['taskIds'] if links.get(t,t) in dates});group['taskCount']=len(group['taskIds'])
             group['lastUpdated']=max((dates.get(t) or '' for t in group['taskIds']),default='');projects.append(group)
         # Same-name copies need identity review, even when both have manifests.
         names={}

@@ -83,4 +83,5 @@ def project(db,task_id):
         frame['returnIds']=[r['id'] for c in related for r in c['returns']]
     finals=[{'id':e['id'],'text':event_text(e)[:16000]} for e in events if category(e)=='Agent 回复']
     context=[{'id':e['id'],'kind':category(e),'text':event_text(e)[:12000]} for e in events if category(e) in ('用户提问','会话背景')]
-    return {'taskId':task_id,'source':task[0],'session':task[1],'prompt':task[2],'updated':task[3],'calls':calls,'reasoning':reasoning,'frames':frames,'replies':finals,'context':context,'total':count,'included':len(events),'requirements':requirements,'plans':plans,'messageGraph':graph}
+    from .interactions import task_interactions
+    return {'taskId':task_id,'source':task[0],'session':task[1],'prompt':task[2],'updated':task[3],'calls':calls,'reasoning':reasoning,'frames':frames,'replies':finals,'context':context,'total':count,'included':len(events),'requirements':requirements,'plans':plans,'messageGraph':graph,'interactions':task_interactions(db,task_id)}

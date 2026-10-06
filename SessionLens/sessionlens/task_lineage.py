@@ -6,6 +6,7 @@ this projection never invents a final specification from conflicting user turns.
 import re,hashlib,json
 
 VERSION = 1
+CLASSIFIER_VERSION = 4
 LABELS = {'request': '原始需求', 'discussion': '继续讨论', 'revision': '调整要求',
           'approval': '确认方案', 'execution': '开始执行', 'resume': '恢复任务',
           'unresolved': '所指任务待确认'}
@@ -58,7 +59,8 @@ def initialize(db):
       LEFT JOIN task_executions x ON x.event=s.event;
     ''')
     version = db.execute("SELECT value FROM task_link_meta WHERE name='version'").fetchone()
-    if version and version[0] == VERSION: return
+    if version and version[0] == VERSION:
+        refresh_classifier(db);return
     with db:
         # No deletion/reindex of raw events, legacy projection, marks or chats.
         for table in ('task_groups', 'task_links', 'task_executions', 'task_link_queue','task_step_owners'):
@@ -67,6 +69,16 @@ def initialize(db):
         db.execute('INSERT INTO task_step_owners SELECT event,task,task FROM task_steps')
         db.execute('INSERT INTO task_link_queue SELECT source,session,max(last_row) FROM tasks GROUP BY source,session')
         db.execute("INSERT OR REPLACE INTO task_link_meta VALUES('version',?)", (VERSION,))
+    refresh_classifier(db)
+
+def refresh_classifier(db):
+    row=db.execute("SELECT value FROM task_link_meta WHERE name='classifier_version'").fetchone()
+    if row and row[0]==CLASSIFIER_VERSION:return
+    # Preserve existing groups while re-evaluating their compact relations.
+    # Raw records, manual overrides and semantic reviews remain untouched.
+    with db:
+        db.execute('INSERT INTO task_link_queue SELECT source,session,max(last_row) FROM tasks GROUP BY source,session ON CONFLICT(source,session) DO UPDATE SET updated=max(updated,excluded.updated)')
+        db.execute("INSERT OR REPLACE INTO task_link_meta VALUES('classifier_version',?)",(CLASSIFIER_VERSION,))
 
 
 def enqueue(db, source, session, seq):
@@ -97,9 +109,10 @@ def classify(text, active, roots):
     clean = _compact(text)
     execution = clean in {'做', '开始', '开始做', '做吧', '开发', '开始开发', '进入开发阶段',
                           '执行', '执行吧', '开始执行', '动手', '动手吧', '继续做', '继续推进',
-                          '继续开发', '继续执行', '继续', '推进', '继续吧'}
+                          '继续开发', '继续执行', '继续', '推进', '继续吧','干','开干','干吧','开干吧','动手做','开始干活','行干','好干','好的干','行开干','好开干'}
+    execution=execution or bool(re.fullmatch(r'(?:做|干|开干|执行)(?:我)?(?:想)?(?:看|看看|看一下)(?:效果|结果)',clean))
     approval = clean in {'好', '好的', '可以', '对', '对的', '是的', '嗯', '嗯嗯', 'ok',
-                         '确认', '就这样', '这个版本可以', '就按这个', '按这个来', '同意'}
+                         '确认', '就这样', '这个版本可以', '就按这个', '按这个来', '同意','行','行吧','好吧','可以的','没问题','收到','批准'}
     # A named resume is resolved among previous roots, before considering active.
     resume = re.match(r'^(?:回到|回头继续|接着做|继续(?:做|开发|修改)?)(.+)', clean)
     if resume and not execution:
@@ -111,6 +124,16 @@ def classify(text, active, roots):
         return None, 'unresolved', '指令没有可追溯的前置需求'
     explicit_new = bool(re.match(r'^(?:另一个任务|新任务|另外|换个任务|先不做这个|先不做了|停止这个任务)', clean))
     if explicit_new: return None, 'request', '用户明确切换任务'
+    # Feedback and elliptical questions are not new goals merely because they
+    # don't repeat the original subject. Require an existing active goal plus
+    # a reference/feedback cue, and do not absorb an explicit fresh action.
+    new_goal=bool(re.search(r'另一个(?:任务|需求|项目)|新任务|(?:创建|新建|生成|查询|查一下|帮我做一个|写一个)',clean))
+    feedback=bool(re.search(r'页面呢$|界面呢$|结果呢$|效果呢$|看不懂|没(?:有)?(?:任何)?(?:一点)?价值|什么价值|乱七八糟|别做玩具|不能认(?:真|真一点)|没有考虑|你没有|去思考',clean))
+    pointer=bool(re.search(r'这(?:个|些|一)[\u4e00-\u9fff]{0,12}(?:东西|页面|界面|需求|方案|任务|功能)|你(?:现在|目前|这次)|目前的|现在的|刚才|核心的东西',clean))
+    elliptical=bool(re.fullmatch(r'(?:页面|界面|结果|效果)呢',clean))
+    existing_revision=bool(re.search(r'把(?:现在|目前)|现有(?:界面|页面)|当前(?:界面|页面)',clean) and re.search(r'重新|重组|修改|调整',clean))
+    if active and not new_goal and (elliptical or feedback and pointer or existing_revision):
+        return active['id'],'revision' if existing_revision else 'discussion','同一会话中对现有方案的反馈或省略追问，未提出明确独立目标（初步关联）'
     reference = bool(re.match(r'^(?:严格)?(?:按(?:照)?(?:我们|刚才|上面|这|那|现有|之前)|就按|在此基础|在这个基础|这个版本|这一个版本|这个方案|这个任务|它|这次的|那次的|(?:解决|修复|处理)(?:这个|这一个|刚才的)问题)', clean))
     revision = bool(re.match(r'^(?:改成|改为|调整为|加上|增加|补上|补齐|支持|不要|不需要|只要|保留|去掉|删除|输入框|按钮|颜色|字体)', clean))
     discuss = bool(re.match(r'^(?:为什么(?:要|这样|这么)|这样(?:可以|会|能)|这个(?:可以|不行)|感觉(?:还是|不行)|不对|不认可)', clean))
