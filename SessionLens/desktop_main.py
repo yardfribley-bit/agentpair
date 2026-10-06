@@ -316,6 +316,11 @@ def main():
     from sessionlens.chat_window import ChatWindow
     chat=ChatWindow(window)
     if test:
+        from sessionlens.project_context import ProjectStore
+        from sessionlens.knowledge_index import KnowledgeIndex
+        from sessionlens.embedding_store import EmbeddingStore
+        projects=ProjectStore(root/'project_context.db');knowledge=KnowledgeIndex(root/'knowledge.db',projects=projects);vectors=EmbeddingStore(root/'embeddings.db',projects=projects)
+        vectors.close();knowledge.close();projects.close()
         if embedding_test:
             from sessionlens.embedding import load
             directory=sys.argv[sys.argv.index('--self-test-embedding')+1]

@@ -71,6 +71,27 @@ class LiveUiTests(unittest.TestCase):
             with patch.object(chat,'send') as send:
                 chat.evidence(QUrl('inspect-task:'+ids[1]));send.assert_called_once_with(selected_task=ids[1])
             chat.close()
+    def test_project_relation_display_and_manual_independent_mode(self):
+        from sessionlens.chat_window import ChatWindow
+        from sessionlens.project_context import ProjectStore
+        from sessionlens.assistant import packet_for_task
+        from sessionlens.task_presentation import project
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QDialog,QComboBox,QPushButton
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);window=Window(root);chat=ChatWindow(window);log=root/'task.jsonl'
+            rows=[{'type':'message','role':'user','sessionId':'s','cwd':'/repo/atlas','git':{'repository_url':'https://github.com/team/atlas'},'content':'修改项目说明'},
+                  {'type':'function_call','sessionId':'s','name':'Bash','arguments':{'command':'git status'}}]
+            log.write_text(''.join(json.dumps(r)+'\n' for r in rows));c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True);c.db.close();task=window.store.tasks()[0][0]
+            store=ProjectStore(root/'project_context.db',filesystem=False);ctx=store.resolve(window.store.db,task)
+            packet=packet_for_task(window.store.db,task,project_context=ctx);view=project(window.store.db,task);view['projectContext']=ctx
+            q='项目说明修改了什么';chat.input.setPlainText(q);chat.messages=[{'question':q,'taskId':task,'packet':packet,'presentation':view,'understanding':{'overview':{'text':'记录显示读取了仓库状态。','basis':'recorded','evidenceRefs':['E001']},'steps':[]}}]
+            chat.render();chat.refresh_knowledge();self.assertIn('atlas',chat.task_view.project_label.text());self.assertIn('github.com/team/atlas',chat.task_view.project_label.text());self.assertGreater(chat.project_scope.count(),2)
+            def save():
+                dialog=next(w for w in self.app.topLevelWidgets() if isinstance(w,QDialog) and w.windowTitle()=='修正项目关联')
+                dialog.findChildren(QComboBox)[0].setCurrentIndex(1);next(b for b in dialog.findChildren(QPushButton) if b.text()=='保存关联').click()
+            QTimer.singleShot(0,save);chat.correct_project();store.refresh_overrides();self.assertEqual(store.resolve(window.store.db,task)['mode'],'independent')
+            self.assertEqual(chat.input.toPlainText(),q);self.assertIn('项目关联已更新',chat.answer.toPlainText());store.close();chat.close()
 
     def test_chat_preserves_collection_window_and_restores_conversation(self):
         from sessionlens.chat_window import ChatWindow

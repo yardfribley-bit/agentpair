@@ -2,7 +2,7 @@
 import html,json,sqlite3,threading,uuid
 from pathlib import Path
 from PySide6.QtCore import QObject,Signal,Qt,QUrl,QTimer
-from PySide6.QtWidgets import QMainWindow,QWidget,QHBoxLayout,QVBoxLayout,QLabel,QPushButton,QPlainTextEdit,QComboBox,QTextBrowser,QListWidget,QSplitter,QDialog,QStackedWidget,QScrollArea
+from PySide6.QtWidgets import QMainWindow,QWidget,QHBoxLayout,QVBoxLayout,QLabel,QPushButton,QPlainTextEdit,QComboBox,QTextBrowser,QListWidget,QSplitter,QDialog,QStackedWidget,QScrollArea,QFormLayout,QLineEdit
 from .knowledge import ask,answer_mismatch
 from .task_view import TaskView,task_title
 from .supervision import event_text
@@ -33,10 +33,12 @@ class ChatWindow(QMainWindow):
         self.composer=QWidget();self.composer.setObjectName('assistantComposer');self.composer.setStyleSheet('QWidget#assistantComposer{background:white;border:1px solid #E6E8EC;border-radius:12px;}')
         cv=QVBoxLayout(self.composer);cv.setContentsMargins(20,16,20,16);prompt=QLabel('你想了解什么？');prompt.setStyleSheet('font-size:17px;font-weight:600');prompt.hide()
         self.input=QPlainTextEdit();self.input.setFixedHeight(72);self.input.setStyleSheet('QPlainTextEdit{border:0;background:transparent;font-size:16px;padding:6px;}');self.input.setPlaceholderText('描述你想找的任务，或者直接问：当时为什么这样修改？用了什么工具？最后做成了吗？');cv.addWidget(self.input)
-        row=QHBoxLayout();hint=QLabel('发送相关证据给已配置的模型分析');hint.setWordWrap(True);hint.setStyleSheet('color:#667589;font-size:12px');row.addWidget(hint,1);self.send_button=QPushButton('查询');self.send_button.setMinimumWidth(88);self.send_button.clicked.connect(self.send);row.insertWidget(0,self.send_button);cv.addLayout(row);m.addWidget(self.composer)
+        row=QHBoxLayout();hint=QLabel('发送相关证据给已配置的模型分析');hint.setWordWrap(True);hint.setStyleSheet('color:#667589;font-size:12px');row.addWidget(hint,1);self.send_button=QPushButton('查询');self.send_button.setMinimumWidth(88);self.send_button.clicked.connect(self.send);row.insertWidget(0,self.send_button)
+        self.project_scope=QComboBox();self.project_scope.addItem('全部任务',None);self.project_scope.addItem('未关联项目','__unlinked__');row.insertWidget(1,self.project_scope);cv.addLayout(row);m.addWidget(self.composer);self.project_catalog_seen=None
         self.status=QLabel('从你的任务记录中寻找答案');self.status.setWordWrap(True);m.addWidget(self.status)
         self.split=QSplitter(Qt.Horizontal);self.split.setChildrenCollapsible(False);self.answer=QTextBrowser();self.answer.setOpenLinks(False);self.answer.anchorClicked.connect(self.evidence);self.results=QStackedWidget();self.results.addWidget(self.answer);self.task_view=TaskView();self.task_view.contentChanged.connect(lambda:QTimer.singleShot(0,self.fit_result));self.task_view.evidenceRequested.connect(lambda ref:self.evidence(QUrl("proof:"+str(len(self.messages)-1)+":"+ref)));self.results.addWidget(self.task_view);self.split.addWidget(self.results)
         self.task_view.associationRequested.connect(self.correct_association)
+        self.task_view.projectRequested.connect(self.correct_project)
         proof_panel=QWidget();pv=QVBoxLayout(proof_panel);pv.setContentsMargins(0,0,0,0);pr=QHBoxLayout();pr.addWidget(QLabel('原始依据'));pr.addStretch();close=QPushButton('收起');close.clicked.connect(proof_panel.hide);pr.addWidget(close);pv.addLayout(pr);self.proof=QTextBrowser();self.proof.setMinimumWidth(240);pv.addWidget(self.proof);self.proof_panel=proof_panel;self.split.addWidget(proof_panel);proof_panel.hide();m.addWidget(self.split,1)
         foot=QHBoxLayout();self.collection_status=QLabel('本地任务库 · 采集状态可查看');foot.addWidget(self.collection_status,1);view=QPushButton('查看采集进度');view.clicked.connect(self.open_collection);foot.addWidget(view);m.addLayout(foot);self.results.setSizePolicy(__import__('PySide6.QtWidgets',fromlist=['QSizePolicy']).QSizePolicy.Expanding,__import__('PySide6.QtWidgets',fromlist=['QSizePolicy']).QSizePolicy.Minimum);main_scroll=QScrollArea();main_scroll.setWidgetResizable(True);main_scroll.setFrameShape(QScrollArea.NoFrame);main_scroll.setWidget(main);outer.addWidget(main_scroll,1)
         self.signals=Signals(self);self.signals.progress.connect(self.status.setText);self.signals.ready.connect(self.received);self.signals.failed.connect(self.failed)
@@ -47,6 +49,16 @@ class ChatWindow(QMainWindow):
         if runtime:
             with runtime.lock:text=runtime.status.get('knowledge','任务知识库正在准备…')
             self.collection_status.setText(text)
+        path=self.root/'project_context.db'
+        if path.exists() and not self.busy:
+            try:
+                with sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=.1) as db:
+                    rows=db.execute('SELECT DISTINCT p.id,p.name,p.repository FROM project_catalog p JOIN project_tasks t ON t.project=p.id ORDER BY p.name').fetchall()
+                if rows!=self.project_catalog_seen:
+                    selected=self.project_scope.currentData();self.project_scope.blockSignals(True);self.project_scope.clear();self.project_scope.addItem('全部任务',None);self.project_scope.addItem('未关联项目','__unlinked__')
+                    for ident,name,repo in rows:self.project_scope.addItem(name,ident)
+                    index=self.project_scope.findData(selected);self.project_scope.setCurrentIndex(max(0,index));self.project_scope.blockSignals(False);self.project_catalog_seen=rows
+            except sqlite3.Error:pass
     def fit_result(self):
         if self.results.currentWidget()==self.task_view:self.split.setMinimumHeight(max(300,self.task_view.layout().totalHeightForWidth(max(720,self.results.width()))))
     def resizeEvent(self,event):
@@ -68,6 +80,27 @@ class ChatWindow(QMainWindow):
         location=QLabel('原始记录保存在本机：'+str(self.root/'collector.db'));location.setWordWrap(True);layout.addWidget(location)
         row=QHBoxLayout();settings=QPushButton('上报与采集设置');settings.clicked.connect(lambda:(dialog.accept(),self.collector.configure()));row.addWidget(settings);done=QPushButton('关闭');done.clicked.connect(dialog.accept);row.addWidget(done);layout.addLayout(row);dialog.exec()
     def prefill(self,question):self.input.setPlainText(question);self.input.setFocus()
+    def correct_project(self):
+        if self.busy or not self.messages:return
+        result=self.messages[-1];task=result.get('taskId')
+        if not task:return
+        context=result.get('packet',{}).get('projectContext') or {};items=context.get('projects',[]);first=items[0] if items else {}
+        dialog=QDialog(self);dialog.setWindowTitle('修正项目关联');dialog.resize(640,320);form=QFormLayout(dialog)
+        form.addRow(QLabel('调整历史任务的知识归属，原始证据保留。项目名、目录或仓库至少填写一项。'))
+        mode=QComboBox();mode.addItem('关联到项目','linked');mode.addItem('设为独立任务','independent');mode.addItem('恢复自动判断','automatic');form.addRow('归属',mode)
+        name=QLineEdit(first.get('name',''));directory=QLineEdit(first.get('root') or '');repo=QLineEdit(first.get('repository') or '')
+        form.addRow('项目名称',name);form.addRow('项目目录',directory);form.addRow('仓库地址',repo);status=QLabel('');status.setWordWrap(True);form.addRow(status)
+        row=QHBoxLayout();save=QPushButton('保存关联');cancel=QPushButton('取消');row.addWidget(save);row.addWidget(cancel);form.addRow(row);cancel.clicked.connect(dialog.reject)
+        def apply():
+            from .project_context import ProjectStore
+            store=None
+            try:
+                store=ProjectStore(self.root/'project_context.db');store.set_override(task,mode.currentData(),name.text(),directory.text(),repo.text())
+            except (ValueError,OSError,sqlite3.Error) as error:status.setText(str(error));return
+            finally:
+                if store:store.close()
+            result['selectionMismatch']='项目关联已更新，请重新查询当前任务';self.render();dialog.accept();self.refresh_knowledge()
+        save.clicked.connect(apply);dialog.exec()
     def correct_association(self):
         if self.busy or not self.messages:return
         from .task_lineage import history,set_override
@@ -163,10 +196,13 @@ class ChatWindow(QMainWindow):
         self.busy=True;self.send_button.setEnabled(False);self.chats.setEnabled(False);self.pending=q;self.status.setText('正在查找相关工作记录…')
         self.source.setEnabled(False);self.period.setEnabled(False)
         source=self.source.currentData();days=self.period.currentData()
+        project_id=self.project_scope.currentData();self.project_scope.setEnabled(False)
+        if history and history[-1].get('projectScope')!=project_id:history=[]
         self.render()
         def work():
             config={**self.collector.config.get('model',{}),'embedding':self.collector.config.get('embedding',{})}
-            try:self.signals.ready.emit(ask(self.root,config,q,history,self.signals.progress.emit,source=source,days=days,selected_task=selected_task))
+            try:
+                result=ask(self.root,config,q,history,self.signals.progress.emit,source=source,days=days,selected_task=selected_task,project_id=project_id);result['projectScope']=project_id;self.signals.ready.emit(result)
             except Exception as exc:self.signals.failed.emit(str(exc)[:300])
         threading.Thread(target=work,daemon=True).start()
     def received(self,result):
@@ -175,7 +211,7 @@ class ChatWindow(QMainWindow):
         self.messages.append(result);self.finish('回答已完成 · 点击引用核对依据')
     def failed(self,error):self.messages.append({'question':self.pending,'error':error});self.finish('本次未能完成回答，可补充信息后重试')
     def finish(self,status):
-        self.busy=False;self.source.setEnabled(True);self.period.setEnabled(True);self.send_button.setEnabled(True);self.chats.setEnabled(True);self.status.setText(status)
+        self.busy=False;self.source.setEnabled(True);self.period.setEnabled(True);self.project_scope.setEnabled(True);self.send_button.setEnabled(True);self.chats.setEnabled(True);self.status.setText(status)
         self.cache.execute('INSERT OR REPLACE INTO chats VALUES(?,?,?,?)',(self.chat_id,self.messages[0]['question'][:30],json.dumps(self.messages,ensure_ascii=False),__import__('time').time_ns()));self.cache.commit();self.refresh_chats();self.render()
         self.answer.scrollToAnchor('answer-'+str(len(self.messages)-1))
     def evidence(self,url):

@@ -57,6 +57,13 @@ class Runtime:
         self.destination=hashlib.sha256((config.get('endpoint','')+'\0'+token).encode()).hexdigest()
     def update(self,**v):
         with self.lock:self.status.update(v)
+        if 'knowledge' in v or 'embedding_error' in v:
+            # Small private support status, without source records or model keys.
+            state={k:self.status.get(k) for k in ('knowledge','embedding_error','embedding_state')}
+            try:
+                path=self.root/'knowledge-status.json';stage=self.root/'knowledge-status.tmp'
+                stage.write_text(json.dumps(state,ensure_ascii=False));os.chmod(stage,0o600);stage.replace(path)
+            except OSError:pass
     def start(self):
         for fn in (self.collect,self.upload,self.project,self.knowledge):
             t=threading.Thread(target=fn,daemon=True);t.start();self.threads.append(t)
@@ -178,19 +185,33 @@ class Runtime:
 
     def knowledge(self):
         from .knowledge_index import KnowledgeIndex
-        index=None;source=None;vectors=None;engine=None
+        index=None;source=None;vectors=None;engine=None;projects=None
         try:
-            index=KnowledgeIndex(self.root/'knowledge.db',max_bytes=self.config.get('knowledge',{}).get('maxBytes',256*1024*1024))
+            from .project_context import ProjectStore
+            projects=ProjectStore(self.root/'project_context.db')
+            index=KnowledgeIndex(self.root/'knowledge.db',max_bytes=self.config.get('knowledge',{}).get('maxBytes',256*1024*1024),projects=projects)
             source=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True,timeout=1)
             if self.config.get('embedding',{}).get('enabled'):
                 try:
                     from .embedding import load
                     from .embedding_store import EmbeddingStore
                     self.update(knowledge='正在后台加载本机语义模型…')
-                    engine=load(self.config['embedding']);vectors=EmbeddingStore(self.root/'embeddings.db')
-                except (ImportError,OSError,ValueError,sqlite3.Error) as exc:self.update(embedding_error='本机语义检索暂不可用：'+str(exc)[:160])
+                    engine=load(self.config['embedding']);vectors=EmbeddingStore(self.root/'embeddings.db',projects=projects)
+                except (ImportError,OSError,ValueError,sqlite3.Error,RuntimeError) as exc:self.update(embedding_error='本机语义检索暂不可用：'+str(exc)[:160])
+            self.update(knowledge='本机模型初始化结束，准备整理项目背景')
+            startup_checked=False
             while not self.stop.is_set():
                 try:
+                    self.update(knowledge='正在整理项目背景')
+                    if not startup_checked:
+                        import faulthandler
+                        trace=(self.root/'project-startup-stack.txt').open('w');os.chmod(self.root/'project-startup-stack.txt',0o600)
+                        faulthandler.dump_traceback_later(25,file=trace)
+                        try:projects.sync(source,limit=2)
+                        finally:faulthandler.cancel_dump_traceback_later();trace.close()
+                        startup_checked=True
+                    else:projects.sync(source,limit=2)
+                    self.update(knowledge='正在整理关键词索引')
                     index.sync(source);state=index.status()
                     text=('知识索引达到大小预算，整理已暂停；原始采集继续' if state['paused'] else
                           f'知识库可检索 {state["indexedTasks"]} 个任务 · 证据整理完成 {state["readyTasks"]} 个 · 待整理 {state["pendingTasks"]} 个')
@@ -201,10 +222,11 @@ class Runtime:
                     elif self.config.get('embedding',{}).get('enabled'):
                         self.update(knowledge=text+' · '+self.status.get('embedding_error','语义检索未就绪'))
                 except sqlite3.Error as exc:self.update(knowledge='知识索引等待重试：'+str(exc))
-                except (ValueError,OSError) as exc:self.update(knowledge='本机语义整理等待重试：'+str(exc)[:160])
+                except (ValueError,OSError,TypeError,AttributeError,KeyError) as exc:self.update(knowledge='本机知识整理等待重试：'+type(exc).__name__+' '+str(exc)[:160])
                 self.stop.wait(1 if engine else .5)
-        except (sqlite3.Error,OSError,ValueError) as exc:self.update(knowledge='知识索引暂不可用：'+str(exc))
+        except (sqlite3.Error,OSError,ValueError,TypeError,AttributeError,KeyError,RuntimeError) as exc:self.update(knowledge='知识索引暂不可用：'+type(exc).__name__+' '+str(exc))
         finally:
             if index:index.close()
             if source:source.close()
             if vectors:vectors.close()
+            if projects:projects.close()

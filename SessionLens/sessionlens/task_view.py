@@ -33,6 +33,7 @@ class Brain(QWidget):
 class TaskView(QWidget):
     evidenceRequested=Signal(str)
     associationRequested=Signal()
+    projectRequested=Signal()
     contentChanged=Signal()
     def __init__(self,parent=None):
         super().__init__(parent);self.data={};self.index=0;self.position=0;self.key='overview'
@@ -40,6 +41,8 @@ class TaskView(QWidget):
         v=QVBoxLayout(self);v.setAlignment(Qt.AlignTop);v.setContentsMargins(0,0,0,0);v.setSpacing(14)
         self.heading=label('', 'font-size:15px;font-weight:600;');v.addWidget(self.heading)
         self.original_task=label('');self.original_task.hide();self.meta=label('','font-size:12px;color:#61748c;');meta_row=QHBoxLayout();meta_row.addWidget(self.meta,1);self.delivered=label('');self.trust=label('');meta_row.addWidget(self.delivered);meta_row.addWidget(self.trust);v.addLayout(meta_row)
+        project_row=QHBoxLayout();self.project_label=label('未关联项目','font-size:12px;color:#61748c;');project_row.addWidget(self.project_label,1)
+        self.project_button=QPushButton('修正项目关联');self.project_button.clicked.connect(lambda:self.projectRequested.emit());project_row.addWidget(self.project_button);v.addLayout(project_row)
         self.requirement_toolbar=QWidget();requirement_row=QHBoxLayout(self.requirement_toolbar);requirement_row.setContentsMargins(0,0,0,0)
         self.requirement_button=QPushButton('查看需求与确认过程');self.requirement_button.clicked.connect(self.requirement_original);requirement_row.addWidget(self.requirement_button);self.requirement_button.hide()
         self.association_button=QPushButton('修正任务关联');self.association_button.clicked.connect(lambda:self.associationRequested.emit());requirement_row.addWidget(self.association_button);self.association_button.hide();requirement_row.addStretch();v.addWidget(self.requirement_toolbar);self.requirement_toolbar.hide()
@@ -66,6 +69,13 @@ class TaskView(QWidget):
         self.stop();self.result=result;self.data=result['presentation'];self.index=0;self.position=0
         d=self.data;self.heading.hide();self.heading.setText('对应任务 · '+short(d['prompt'],55));self.original_task.setText('用户原话：“'+short(d['prompt'],180)+'”');self.meta.setText({'workbuddy':'WorkBuddy','codex':'Codex'}.get(d['source'],d['source'])+' · '+task_title(d['prompt'])+' · '+str(d.get('updated',''))[:10]+' · 目标：'+short(d['prompt'],24))
         self.meta.setToolTip(d['prompt']);self.make_steps();self.selected_step=0;self.set_status()
+        context=d.get('projectContext') or result.get('packet',{}).get('projectContext') or {}
+        items=context.get('projects',[])
+        if context.get('mode')=='independent':self.project_label.setText('独立任务')
+        elif items:
+            self.project_label.setText('\n'.join(('项目：' if p['role']=='target' else '参考项目：')+p['name']+(' · 仓库：'+p['repository'].removeprefix('https://') if p.get('repository') else ' · 未记录仓库')+(' · 分支（日志）：'+p['branch'] if p.get('branch') else '') for p in items))
+        else:self.project_label.setText('未关联项目')
+        self.project_label.setToolTip('工作目录（运行环境）：'+str(context.get('workingDirectory') or '未记录')+'\n'+ '\n'.join('关联依据：'+{'current_filesystem':'当前本机仓库配置检测','recorded':'日志记录','user_confirmed':'用户确认'}.get(p['basis'],p['basis']) for p in items))
         history=d.get('requirements',[]);changes=sum(r['kind']=='revision' for r in history)
         self.requirement_button.setVisible(len(history)>1)
         self.association_button.setVisible(bool(history))

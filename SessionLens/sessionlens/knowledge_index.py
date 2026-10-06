@@ -25,7 +25,8 @@ def fingerprint(row):
     return hashlib.sha256(json.dumps([VERSION,row[1],row[2],row[3],row[7],row[8]],ensure_ascii=False).encode()).hexdigest()
 
 class KnowledgeIndex:
-    def __init__(self,path,max_bytes=256*1024*1024):
+    def __init__(self,path,max_bytes=256*1024*1024,projects=None):
+        self.projects=projects
         self.path=Path(path);self.path.parent.mkdir(parents=True,exist_ok=True);self.max_bytes=int(max_bytes)
         if self.max_bytes<=0:raise ValueError('知识索引大小预算必须大于零')
         self.db=sqlite3.connect(self.path,timeout=3);os.chmod(self.path,0o600)
@@ -83,6 +84,9 @@ class KnowledgeIndex:
                 if old and old[0]!=fp:self.db.execute('DELETE FROM kb_tasks WHERE id=?',(ident,))
                 self.db.execute('INSERT INTO kb_tasks VALUES(?,?,?,?,?,?,?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,state=excluded.state,revision=excluded.revision,ready=0',(*row[:6],row[6],row[7],fp,cursor))
                 goal=row[3]+'\n'+row[8]
+                if self.projects:
+                    from .project_context import index_text
+                    goal=index_text(self.projects.resolve(source,ident))+'\n'+goal
                 self._chunk('task:'+ident,ident,ident,ident,'任务目标',0,goal)
                 selected=source.execute('SELECT event,turn_event,kind,seq,substr(excerpt,1,2001) FROM linked_task_steps WHERE task=? AND seq>? AND seq<=? ORDER BY seq LIMIT ?',(ident,cursor,row[6],step_limit)).fetchall()
                 for event,turn,kind,seq,text in selected:

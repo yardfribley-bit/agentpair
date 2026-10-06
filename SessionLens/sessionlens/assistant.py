@@ -49,7 +49,7 @@ def focus_evidence(db,task,question,facets):
         if previous:paired.append(previous[0])
     return list(dict.fromkeys(ids+paired))[:48]
 
-def packet_for_task(db,task_id,question=None,facets=None):
+def packet_for_task(db,task_id,question=None,facets=None,project_context=None):
     task_id=resolve(db,task_id);steps=step_table(db)
     task=db.execute('SELECT source,session,prompt,last_row FROM '+task_table(db)+' WHERE id=?',(task_id,)).fetchone()
     if not task:raise ValueError('任务不存在')
@@ -95,7 +95,7 @@ def packet_for_task(db,task_id,question=None,facets=None):
             'requirementHistory':requirement_history,'totalRequirementTurns':len(requirements),
             'executionLinks':execution_links,'messageRelations':message_relations,'reasoningLinks':reasoning_links,
             'messageRelationCoverage':'selected_records','messageRelationGaps':len(graph['gaps']),
-            'questionFacets':facets,'focusedEvidenceRefs':[refs[x] for x in focus if x in refs]}
+            'questionFacets':facets,'focusedEvidenceRefs':[refs[x] for x in focus if x in refs],'projectContext':project_context}
 
 def combine_packets(packets):
     """Bounded comparison evidence; preserve ownership and globally unique refs."""
@@ -116,6 +116,7 @@ def combine_packets(packets):
         tasks.append({k:packet.get(k) for k in ('taskId','source','sessionId','prompt','revision','lineageSignature','totalRecords')})
         tasks[-1]['includedRecords']=len(selected)
         tasks[-1]['prompt']=tasks[-1]['prompt'][:1200]
+        tasks[-1]['projectContext']=packet.get('projectContext')
         for row in packet.get('messageRelations',[]):
             if row['fromRef'] in mapping and row['toRef'] in mapping:relations.append({**row,'fromRef':mapping[row['fromRef']],'toRef':mapping[row['toRef']],'taskId':packet['taskId']})
         for row in packet.get('executionLinks',[]):
