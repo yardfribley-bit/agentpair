@@ -28,10 +28,15 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
     credentials=CredentialStore(Path(engine.db).parent/'credentials')
     devices=DeviceStore(Path(engine.db).parent/'devices.db')
     from .session_lens import SessionStore
-    session_lens=SessionStore(Path(engine.db).parent/'session-lens.db')
+    session_path=Path(engine.db).parent/'sessionlens.db'
+    if not session_path.exists():session_path=Path(engine.db).parent/'session-lens.db'
+    session_lens=SessionStore(session_path)
     mobile_auth=MobileAuth(devices)
     accounts=Accounts(Path(engine.db).parent/'accounts.db', username)
     engine.accounts=accounts
+    from .cloud_workflow import CloudWorkflow
+    cloud_workflow=CloudWorkflow(engine,cloud_console)
+    engine.cloud_workflow=cloud_workflow
     class Handler(BaseHTTPRequestHandler):
         def respond(self, status, data, cookie=False):
             body=json.dumps(data,ensure_ascii=False).encode()
@@ -501,6 +506,12 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     accounts.logout(self.cookie_token())
                     self.send_response(200); self.send_header('Set-Cookie','agentpair=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/'); self.headers_common(2); self.end_headers(); self.wfile.write(b'{}'); return
                 parts=self.path.split('/')
+                if len(parts)==6 and parts[1:3]==['api','tasks'] and parts[4]=='cloud' and parts[5] in ('confirm','resume'):
+                    if not self.admin():self.respond(403,{'error':'Administrator required'});return
+                    if not cloud_console:self.respond(503,{'error':'Cloud provider not configured'});return
+                    self.visible_task(parts[3])
+                    action=getattr(cloud_workflow,parts[5])(parts[3],data)
+                    self.respond(202,{'action':action,'task':self.visible_task(parts[3])});return
                 if len(parts)==5 and parts[1:3]==['api','tasks'] and parts[4] in ('messages','cancel'):
                     task=self.visible_task(parts[3])
                     if not self.task_access(task,write=True):raise PermissionError('只能操作自己的任务')

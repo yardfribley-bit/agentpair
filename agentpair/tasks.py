@@ -16,6 +16,53 @@ class Conflict(ValueError): pass
 class Limit(ValueError): pass
 
 
+_PAUSE_STATUSES = {
+    'missing_user_input': 'needs_information',
+    'needs_information': 'needs_information',
+    'unsupported_capability': 'unsupported_capability',
+    'awaiting_confirmation': 'awaiting_confirmation',
+}
+
+
+def _blocking_reason(answer):
+    """Only explicit external blockers stop rework; unknown checks can be repaired."""
+    if not isinstance(answer, dict):
+        return None
+    decision = answer.get('decision', {})
+    sources = [answer]
+    if isinstance(decision, dict):
+        sources.append(decision)
+    for source in sources:
+        reason = source.get('blockingReason')
+        if (isinstance(reason, dict) and isinstance(reason.get('type'), str)
+                and reason['type'] in _PAUSE_STATUSES):
+            return copy.deepcopy(reason)
+        if source.get('requiresUserInput') is True:
+            return {'type': 'missing_user_input'}
+    # decide() also emits needs_information for unknown evidence checks. That
+    # action alone does not say that another Driver attempt is impossible.
+    action = decision.get('action') if isinstance(decision, dict) else None
+    if action in ('unsupported_capability', 'awaiting_confirmation'):
+        return {'type': action}
+    return None
+
+
+def _plan_blocking_reason(plan, task):
+    reason = _blocking_reason(plan)
+    if reason:
+        return reason
+    tool = plan.get('tool', {}) if isinstance(plan, dict) else {}
+    if (isinstance(tool, dict) and tool.get('name') == 'none'
+            and plan.get('executionMode') == 'cloud_driver'
+            and task.get('engineeringMethod', 'local') == 'local'):
+        return {'type': 'unsupported_capability',
+                'requiredExecutionMode': 'cloud_driver',
+                'engineeringMethod': 'local',
+                'executionProfile': task.get('executionProfile', 'none'),
+                'message': '本轮计划需要独立云端 Driver，当前任务采用本地协作，无法执行该计划。'}
+    return None
+
+
 def _review_has_unresolved_gap(review):
     """A passing prose review cannot override explicit missing-evidence claims."""
     if not isinstance(review, dict):
@@ -204,12 +251,13 @@ class TaskEngine:
         with self.lock:
             task = self._load(tid)
             if task['status'] != 'queued': return
-            task['status']='running'; self._save(task)
+            task['status']='running'; task.pop('blockingReason', None); self._save(task)
         deadline = time.monotonic()+(max(self.deadline,1800) if task.get('engineeringMethod')=='parallel' else self.deadline)
         outputs = {}
         try:
             stages=[('plan','navigator'),('driver','driver'),('review','navigator')]
             attempts=0
+            blocking_reason=None
             for stage, role in stages:
                 self._guard(tid, deadline)
                 job_id=uuid.uuid4().hex
@@ -220,6 +268,9 @@ class TaskEngine:
                 envelope = {'mode':stage, 'task':{k:task[k] for k in ('title','adapter','target','round')},
                             'history':task['messages'], 'outputs':outputs}
                 envelope['task'].update(id=tid,jobId=job_id,engineeringMethod=task.get('engineeringMethod','local'),executionProfile=task.get('executionProfile','none'))
+                cloud_workflow = getattr(self, 'cloud_workflow', None)
+                if cloud_workflow and not task.get('securityEvidence'):
+                    envelope['task']['cloudCapabilities'] = cloud_workflow.capabilities()
                 if task.get('securityEvidence'):
                     envelope['task']['securityEvidence']=task['securityEvidence']
                 estimate = self.backend.estimate(envelope)
@@ -271,6 +322,22 @@ class TaskEngine:
                         task['events'].append({'at':now(),'round':task['round'],'kind':'tool_result','stage':stage,
                             'role':role,'jobId':job_id,'text':evidence_text,'evidence':evidence})
                     self._save(task)
+                if stage == 'plan' and cloud_workflow and cloud_workflow.prepare(tid, answer['answer'], outputs):
+                    return
+                blocking_reason = (_plan_blocking_reason(answer['answer'], task) if stage == 'plan'
+                                   else _blocking_reason(answer['answer']))
+                if blocking_reason:
+                    with self.lock:
+                        task = self._load(tid)
+                        task['events'].append({'at': now(), 'round': task['round'], 'kind': 'paused',
+                            'stage': stage, 'reason': blocking_reason,
+                            'text': blocking_reason.get('message') or {
+                                'needs_information': '本轮需要补充用户信息，已暂停执行。',
+                                'unsupported_capability': '当前执行能力不足，已暂停执行。',
+                                'awaiting_confirmation': '本轮等待确认，已暂停执行。',
+                            }[_PAUSE_STATUSES[blocking_reason['type']]]})
+                        self._save(task)
+                    break
                 if stage=='review':
                     review=answer['answer']
                     verdict=review.get('verdict')
@@ -313,12 +380,16 @@ class TaskEngine:
                 task = self._load(tid)
                 if task['status']=='cancelling': raise InterruptedError('Cancelled')
                 task['results'].append({'round':task['round'],'outputs':outputs})
-                final_review=outputs['review']['answer']
-                if final_review.get('verdict') == 'pass' and _review_has_unresolved_gap(final_review):
-                    final_review['verdict']='retry'
-                final_verdict=final_review.get('verdict')
-                task['status']=('completed' if final_verdict=='pass' else
-                                'needs_more_evidence' if final_verdict=='retry' else 'blocked')
+                if blocking_reason:
+                    task['blockingReason'] = blocking_reason
+                    task['status'] = _PAUSE_STATUSES[blocking_reason['type']]
+                else:
+                    final_review=outputs['review']['answer']
+                    if final_review.get('verdict') == 'pass' and _review_has_unresolved_gap(final_review):
+                        final_review['verdict']='retry'
+                    final_verdict=final_review.get('verdict')
+                    task['status']=('completed' if final_verdict=='pass' else
+                                    'needs_more_evidence' if final_verdict=='retry' else 'blocked')
                 self._save(task)
         except Exception as error:
             with self.lock:

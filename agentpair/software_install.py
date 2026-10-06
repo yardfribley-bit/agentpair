@@ -1,9 +1,32 @@
 """Versioned installation recipes and verification, not arbitrary remote commands."""
+import hashlib
 import json
 import re
 import subprocess
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlparse
+
+
+def portable_entry_point(value):
+    """Keep Windows path aliases, ADS and traversal out of trusted recipes."""
+    if not isinstance(value, str) or not 1 <= len(value) <= 240 or '\\' in value:
+        raise ValueError('Relative portable EXE entry point required (use / separators)')
+    parts = value.split('/')
+    if any(not part or part in ('.', '..') or part.endswith((' ', '.'))
+           or re.search(r'[\x00-\x1f\x7f:*?"<>|]', part)
+           or re.fullmatch(r'(CON|CONIN\$|CONOUT\$|PRN|AUX|NUL|CLOCK\$|COM[0-9¹²³]|LPT[0-9¹²³]) *(?:\..*)?', part, re.I)
+           for part in parts) or not value.lower().endswith('.exe'):
+        raise ValueError('Safe relative portable EXE entry point required')
+    return value
+
+
+def portable_recipe_fingerprint(recipe):
+    """Bind the receipt to the exact recipe; cache routing is not its identity."""
+    fields = ('id', 'platform', 'installer', 'url', 'sha256', 'name', 'displayName', 'version', 'entryPoint')
+    values = {**recipe, 'url': recipe.get('officialUrl') or recipe.get('url', '')}
+    body = ''.join(f'{key}:{len(str(values.get(key, "")).encode("utf-8"))}:{values.get(key, "")}\n'
+                   for key in fields)
+    return hashlib.sha256(body.encode('utf-8')).hexdigest()
 
 
 class SoftwareCatalog:
@@ -20,18 +43,28 @@ class SoftwareCatalog:
     def register(self, recipe):
         if not isinstance(recipe, dict): raise ValueError('Recipe required')
         sid = recipe.get('id', '')
-        if not re.fullmatch(r'[a-z][a-z0-9-]{2,60}', sid): raise ValueError('Invalid software id')
-        if recipe.get('platform') != 'Windows' or recipe.get('installer') not in ('inno', 'msi'):
-            raise ValueError('Windows supports Inno Setup or MSI')
+        if not isinstance(sid, str) or not re.fullmatch(r'[a-z][a-z0-9-]{2,60}', sid): raise ValueError('Invalid software id')
+        if recipe.get('platform') != 'Windows' or recipe.get('installer') not in ('inno', 'msi', 'portable_zip'):
+            raise ValueError('Windows supports Inno Setup, MSI or portable ZIP')
+        if not isinstance(recipe.get('url'), str) or re.search(r'[\x00-\x1f\x7f]', recipe['url']):
+            raise ValueError('HTTPS download URL required')
         url = urlparse(recipe.get('url', ''))
         if url.scheme != 'https' or not url.hostname or url.username or url.password or url.fragment:
             raise ValueError('HTTPS download URL required')
-        if not re.fullmatch(r'[0-9a-f]{64}', recipe.get('sha256', '')):
+        if not isinstance(recipe.get('sha256'), str) or not re.fullmatch(r'[0-9a-f]{64}', recipe['sha256']):
             raise ValueError('Pinned SHA256 required')
-        for field in ('name', 'displayName', 'version'):
-            if not isinstance(recipe.get(field), str) or not 1 <= len(recipe[field]) <= 120:
-                raise ValueError('Name, exact registry display name and version required')
-        clean = {k: recipe[k] for k in ('id', 'platform', 'installer', 'url', 'sha256', 'name', 'displayName', 'version')}
+        fields = ['id', 'platform', 'installer', 'url', 'sha256', 'name', 'version']
+        if recipe['installer'] != 'portable_zip' or 'displayName' in recipe:
+            fields.append('displayName')
+        for field in ('name', 'version', *(['displayName'] if 'displayName' in fields else [])):
+            if (not isinstance(recipe.get(field), str) or not 1 <= len(recipe[field]) <= 120
+                    or re.search(r'[\x00-\x1f\x7f]', recipe[field]) or not recipe[field].strip()):
+                raise ValueError('Name, version and (for installers) exact registry display name required')
+        if recipe['installer'] == 'portable_zip':
+            portable_entry_point(sid + '/entry.exe')
+            portable_entry_point(recipe.get('entryPoint'))
+            fields.append('entryPoint')
+        clean = {k: recipe[k] for k in fields}
         rows = json.loads(self.path.read_text()) if self.path.exists() else {}
         rows[sid] = clean
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,12 +78,36 @@ class SoftwareCatalog:
 
 
 def verify_receipt(recipe, result):
+    if not isinstance(result, dict): return False
     evidence = result.get('evidence', {})
-    return (isinstance(evidence, dict) and evidence.get('softwareId') == recipe['id']
+    base = (isinstance(evidence, dict) and evidence.get('softwareId') == recipe['id']
             and evidence.get('verified') is True and isinstance(evidence.get('installedVersion'), str)
             and bool(evidence['installedVersion'])
             and (recipe['platform'] != 'Windows' or
                  (evidence.get('sha256') == recipe['sha256'] and evidence['installedVersion'] == recipe['version'])))
+    if not base or recipe.get('installer') != 'portable_zip': return base
+    try:
+        entry = portable_entry_point(recipe.get('entryPoint'))
+        directory = PureWindowsPath(evidence.get('installDirectory', ''))
+        binary = PureWindowsPath(evidence.get('checkedBinaryPath', ''))
+        path_parts = directory.parts[1:]
+        safe_directory = (directory.is_absolute() and re.fullmatch(r'[A-Za-z]:\\', directory.anchor)
+                          and len(path_parts) >= 4 and path_parts[-3:] == ('AgentPair', 'Software', recipe['id'])
+                          and all(part not in ('.', '..') and not part.endswith((' ', '.'))
+                                  and not re.search(r'[\x00-\x1f\x7f:*?"<>|]', part) for part in path_parts))
+        return bool(safe_directory and binary == directory.joinpath(*entry.split('/'))
+                    and evidence.get('entryPoint') == entry
+                    and evidence.get('recipeFingerprint') == portable_recipe_fingerprint(recipe)
+                    and evidence.get('checkedBinary') is True
+                    and isinstance(evidence.get('checkedBinarySha256'), str)
+                    and re.fullmatch(r'[0-9a-f]{64}', evidence['checkedBinarySha256'])
+                    and type(evidence.get('selfTestExitCode')) is int and evidence['selfTestExitCode'] == 0
+                    and evidence.get('selfTestArgument') == '--self-test'
+                    and evidence.get('versionSource') == 'pinned_recipe'
+                    and evidence.get('binaryVersionVerified') is False
+                    and evidence.get('launchVerified') is False)
+    except (ValueError, TypeError):
+        return False
 
 
 def install_linux(recipe, emit, run=subprocess.run):

@@ -8,6 +8,7 @@ render=task=>{
  for(const m of task.messages.filter(m=>m.stage==='driver'&&m.round===task.round))for(const artifact of m.answer?.artifacts||[]){
   const button=el('button','下载 '+artifact.path,'secondary');button.type='button';button.onclick=()=>{const u=URL.createObjectURL(new Blob([artifact.content],{type:'text/plain;charset=utf-8'}));const a=el('a');a.href=u;a.download=artifact.path.split('/').at(-1);a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);};deliverables.append(button);
  }
+ if(task.cloudAction?.round===task.round){bench.append(el('div','CLOUD TOOLS','eyebrow'),el('h2','云工具执行现场'),el('p',task.cloudAction.finalAnswer||task.cloudAction.summary));return;}
  bench.append(el('div','DRIVER WORKSPACE','eyebrow'),el('h2','执行现场'));
  const busy=['running','queued'].includes(task.status);bench.classList.toggle('is-working',busy);
  const events=task.events.filter(e=>e.round===task.round);
