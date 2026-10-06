@@ -33,7 +33,7 @@ class AssociationSignals(QObject):
 
 class Settings(QDialog):
     def __init__(self,config,parent):
-        super().__init__(parent);self.setWindowTitle('采集与上报设置');self.resize(620,360);self.config=config
+        super().__init__(parent);self.setWindowTitle('采集与上报设置');self.resize(700,540);self.config=config
         form=QFormLayout(self);self.sources={}
         for source,title in [('codex','Codex'),('workbuddy','WorkBuddy')]:
             check=QCheckBox('采集 '+title);check.setChecked(config['sources'][source]['enabled'])
@@ -45,12 +45,15 @@ class Settings(QDialog):
         self.model_url=QLineEdit(config.get('model',{}).get('url',''));form.addRow('助手模型地址',self.model_url)
         self.model_name=QLineEdit(config.get('model',{}).get('name',''));form.addRow('助手模型名称',self.model_name)
         self.model_credential=QLineEdit(config.get('model',{}).get('credentialFile',''));form.addRow('模型密钥文件',self.model_credential)
+        self.embedding_enabled=QCheckBox('启用本机语义检索（不上传日志）');self.embedding_enabled.setChecked(config.get('embedding',{}).get('enabled',False));form.addRow(self.embedding_enabled)
+        self.embedding_directory=QLineEdit(config.get('embedding',{}).get('directory',str(state_root()/'models/bge-small-zh-v1.5')));form.addRow('本地 embedding 模型目录',self.embedding_directory)
         hint=QLabel('目录以分号分隔。开启上报后，会发送所选日志的完整记录。\n未配置接口和令牌时，仅保存在本机；关闭应用停止采集。');hint.setWordWrap(True);form.addRow(hint)
         buttons=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel);buttons.accepted.connect(self.accept);buttons.rejected.connect(self.reject);form.addRow(buttons)
     def result_config(self):
         result=dict(self.config)
         result.update({'sources':{s:{'enabled':c.isChecked(),'roots':[x.strip() for x in p.text().split(';') if x.strip()]} for s,(c,p) in self.sources.items()},'endpoint':self.endpoint.text().strip(),'assistant':{'url':self.assistant_url.text().strip(),'tokenFile':self.assistant_token.text().strip()}})
         model=dict(self.config.get('model',{}));model.update(url=self.model_url.text().strip(),name=self.model_name.text().strip(),credentialFile=self.model_credential.text().strip());result['model']=model
+        embedding=dict(self.config.get('embedding',{}));embedding.update(enabled=self.embedding_enabled.isChecked(),provider='local-onnx',directory=self.embedding_directory.text().strip());result['embedding']=embedding
         return result
 
 class Window(QMainWindow):
@@ -299,7 +302,8 @@ class Window(QMainWindow):
         self.store.close();event.accept()
 
 def main():
-    test='--self-test' in sys.argv
+    embedding_test='--self-test-embedding' in sys.argv
+    test='--self-test' in sys.argv or embedding_test
     query_test='--verify-assistant' in sys.argv
     conversation_test='--verify-conversation' in sys.argv
     verify='--verify-ui' in sys.argv or query_test or conversation_test
@@ -311,7 +315,15 @@ def main():
     window=Window(root)
     from sessionlens.chat_window import ChatWindow
     chat=ChatWindow(window)
-    if test:chat.close();print('SessionLens desktop self-test passed');return 0
+    if test:
+        if embedding_test:
+            from sessionlens.embedding import load
+            directory=sys.argv[sys.argv.index('--self-test-embedding')+1]
+            engine=load({'enabled':True,'directory':directory});values=engine.encode(['查询天气','生成视频'])
+            assert len(values)==2 and all(len(v)==512 for v in values)
+            assert all(abs(sum(x*x for x in v)-1)<.01 for v in values)
+            print('Packaged local embedding self-test passed: 512 dimensions, CPU, no network')
+        chat.close();print('SessionLens desktop self-test passed');return 0
     if conversation_test:
         from time import monotonic
         from sessionlens import relay_model

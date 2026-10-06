@@ -165,7 +165,8 @@ class ChatWindow(QMainWindow):
         source=self.source.currentData();days=self.period.currentData()
         self.render()
         def work():
-            try:self.signals.ready.emit(ask(self.root,self.collector.config.get('model',{}),q,history,self.signals.progress.emit,source=source,days=days,selected_task=selected_task))
+            config={**self.collector.config.get('model',{}),'embedding':self.collector.config.get('embedding',{})}
+            try:self.signals.ready.emit(ask(self.root,config,q,history,self.signals.progress.emit,source=source,days=days,selected_task=selected_task))
             except Exception as exc:self.signals.failed.emit(str(exc)[:300])
         threading.Thread(target=work,daemon=True).start()
     def received(self,result):

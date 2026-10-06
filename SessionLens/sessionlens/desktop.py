@@ -178,19 +178,33 @@ class Runtime:
 
     def knowledge(self):
         from .knowledge_index import KnowledgeIndex
-        index=None;source=None
+        index=None;source=None;vectors=None;engine=None
         try:
             index=KnowledgeIndex(self.root/'knowledge.db',max_bytes=self.config.get('knowledge',{}).get('maxBytes',256*1024*1024))
             source=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True,timeout=1)
+            if self.config.get('embedding',{}).get('enabled'):
+                try:
+                    from .embedding import load
+                    from .embedding_store import EmbeddingStore
+                    self.update(knowledge='正在后台加载本机语义模型…')
+                    engine=load(self.config['embedding']);vectors=EmbeddingStore(self.root/'embeddings.db')
+                except (ImportError,OSError,ValueError,sqlite3.Error) as exc:self.update(embedding_error='本机语义检索暂不可用：'+str(exc)[:160])
             while not self.stop.is_set():
                 try:
                     index.sync(source);state=index.status()
                     text=('知识索引达到大小预算，整理已暂停；原始采集继续' if state['paused'] else
                           f'知识库可检索 {state["indexedTasks"]} 个任务 · 证据整理完成 {state["readyTasks"]} 个 · 待整理 {state["pendingTasks"]} 个')
                     self.update(knowledge=text,knowledge_state=state)
+                    if vectors and engine:
+                        vectors.sync(source,engine,limit=2);vs=vectors.status(engine.identity)
+                        self.update(embedding_state=vs,knowledge=text+f' · 本机语义任务 {vs["readyTasks"]} 个'+(' · 向量整理达到预算，已暂停' if vs['paused'] else ''))
+                    elif self.config.get('embedding',{}).get('enabled'):
+                        self.update(knowledge=text+' · '+self.status.get('embedding_error','语义检索未就绪'))
                 except sqlite3.Error as exc:self.update(knowledge='知识索引等待重试：'+str(exc))
-                self.stop.wait(.5)
+                except (ValueError,OSError) as exc:self.update(knowledge='本机语义整理等待重试：'+str(exc)[:160])
+                self.stop.wait(1 if engine else .5)
         except (sqlite3.Error,OSError,ValueError) as exc:self.update(knowledge='知识索引暂不可用：'+str(exc))
         finally:
             if index:index.close()
             if source:source.close()
+            if vectors:vectors.close()
