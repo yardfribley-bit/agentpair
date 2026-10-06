@@ -4,10 +4,18 @@ import hashlib,json,re,sqlite3
 from pathlib import Path
 from .project_inventory import ProjectInventory,inventory_question,MARKERS
 from .database import connection
+from .task_queries import project_task_followup,TASK_REFERENCE_WORDS
 
 def matches_name(question,name):
     # Names come from the live catalogue, never a weather/video fixture.
     return bool(re.search(r'(?<![A-Za-z0-9_-])'+re.escape(name)+r'(?![A-Za-z0-9_-])',question,re.I)) if re.search(r'[a-zA-Z]',name) else name in question
+
+def previous_project_reference(question):
+    referenced=any(w in question for w in ('这个项目','该项目','它','里面','多少任务','哪些任务')) or bool(re.search(r'\b(?:this project|that project|it|its tasks|how many tasks|which tasks|what tasks)\b',question,re.I))
+    if not referenced:return False
+    from .knowledge import explicit_entities
+    generic=TASK_REFERENCE_WORDS|{'project','projects','components','modules','structure','overview','summary','summarize','tools','purpose','tell','me','worked','contains','contained','done'}
+    return not [e for e in explicit_entities(question) if e not in generic]
 
 def prepare_relations(root,source,tasks):
     """Prioritize pending compact relations for the project being queried."""
@@ -25,6 +33,7 @@ def prepare_relations(root,source,tasks):
 
 def local_project_query(root,question,source='',previous=None,selected=None):
     previous=previous or {};root=Path(root)
+    task_followup=bool(previous.get('projectDetails') and project_task_followup(question))
     agent='workbuddy' if 'workbuddy' in question.lower() else 'codex' if 'codex' in question.lower() else source or ''
     with connection((root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=1) as db:
         path=root/'project_inventory.db'
@@ -46,9 +55,10 @@ def local_project_query(root,question,source='',previous=None,selected=None):
                             'SELECT id,prompt,updated,last_row FROM task_groups WHERE id IN ('+marks+') ORDER BY updated DESC,last_row DESC LIMIT 2',batch))
                     item['latestTasks']=[{'taskId':r[0],'prompt':r[1],'updated':r[2]} for r in sorted(latest,key=lambda r:(r[2],r[3]),reverse=True)[:2]]
                 return {'question':question,'projectInventory':snapshot,'queryKind':'project_inventory','engine':'sessionlens.local_projects.v1'}
-            elif not named and previous.get('projectDetails') and (any(w in question for w in ('这个项目','该项目','它','里面','多少任务','哪些任务')) or re.search(r'\b(?:this project|that project|it|its tasks|how many tasks|which tasks|what tasks)\b',question,re.I)):
+            elif not named and previous.get('projectDetails') and (task_followup or previous_project_reference(question)):
                 named=[p for p in snapshot['projects'] if p['id']==previous['projectDetails']['id'] and p['state']!='excluded']
-            summary_question=any(w in question for w in ('多少','几个','哪些任务','什么任务','内容','里面','模块','结构','开发情况','做了什么','做过什么','开发过程','项目介绍','项目概况','介绍一下','项目名称','职责','哪些工具','什么时候','什么项目','用来','干什么','做什么')) or bool(re.search(r'\b(?:how many|tasks?|components?|modules?|structure|overview|summary|summarize|tools?|when|purpose|tell me|worked on|contains?)\b',question,re.I))
+                if task_followup and not named:return {'question':question,'projectChoices':[],'projectMessage':'项目归属已变化，请从项目总览重新选择。'}
+            summary_question=task_followup or any(w in question for w in ('多少','几个','哪些任务','什么任务','内容','里面','模块','结构','开发情况','做了什么','做过什么','开发过程','项目介绍','项目概况','介绍一下','项目名称','职责','哪些工具','什么时候','什么项目','用来','干什么','做什么')) or bool(re.search(r'\b(?:how many|tasks?|components?|modules?|structure|overview|summary|summarize|tools?|when|purpose|tell me|worked on|contains?)\b',question,re.I))
             if not selected and not summary_question:return None
             if not named:
                 if '项目' not in question and not re.search(r'\bprojects?\b',question,re.I):return None

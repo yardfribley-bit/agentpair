@@ -14,7 +14,7 @@ try:
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication, QComboBox, QWidget
     from desktop_main import Window
-    from sessionlens.chat_window import ChatWindow
+    from sessionlens.chat_window import ChatWindow,local_query_context
 except ImportError:
     QApplication = None
 
@@ -221,6 +221,7 @@ class ChatShellTests(unittest.TestCase):
         with patch.object(self.chat, 'send') as send:
             QTest.keyClick(self.chat.input, Qt.Key_Return)
             send.assert_called_once_with()
+
             self.assertEqual(self.chat.input.toPlainText(), '核对库存摘要')
             send.reset_mock()
             self.chat.input.moveCursor(self.chat.input.textCursor().MoveOperation.End)
@@ -235,6 +236,19 @@ class ChatShellTests(unittest.TestCase):
             self.assertFalse(self.chat.composing)
             QTest.keyClick(self.chat.input, Qt.Key_Enter)
             send.assert_called_once_with()
+
+    def test_project_retry_context_is_local_and_does_not_cross_new_questions(self):
+        project={'question':'项目里完成哪些任务？','projectDetails':{'id':'orchard'},'projectScope':None}
+        question='回顾某项任务的执行过程'
+        failed={'question':question,'error':'path observation failed'}
+        choice={'question':question,'selectionNeeded':True,'options':[]}
+        messages=[project,failed,choice]
+        self.assertIs(local_query_context(messages,[],question,None),project)
+        self.assertIsNone(local_query_context(messages,[],'另一个项目怎么做的？',None))
+        self.assertIsNone(local_query_context(messages,[],question,'another-scope'))
+        self.assertIsNone(local_query_context([self.result,failed],[],question,None))
+        scoped={**choice,'projectDetails':project['projectDetails'],'projectScope':None}
+        self.assertIs(local_query_context([project,scoped],[],'这项任务有几轮沟通？',None),scoped)
 
 
 if __name__ == '__main__':

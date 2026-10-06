@@ -139,6 +139,7 @@ CATALOG = {
     '项目记录': 'Project records', '已关联的用户需求': 'Linked user request',
     '记录中的源码路径': 'Source path in the records', '根目录文件': 'Root directory files',
     '回顾某项任务的执行过程': 'Review a task process', '核对用户发言和模型调用次数': 'Check user turns and model call counts',
+    '核对某项任务的用户发言和模型调用次数': 'Check user turns and model call counts for a task',
     '当前证据未提供用户发言的细分统计。': 'These records do not break down user turns.',
     '模型 API 调用次数无法确认': 'Model API call count cannot be confirmed',
     '记录的工具调用': 'Recorded tool call', '日志中关联的工具返回': 'Tool return linked in the logs',

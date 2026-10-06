@@ -644,7 +644,7 @@ class KnowledgeView(QWidget):
         row = QHBoxLayout()
         row.setSpacing(8)
         for question in followups[:3]:
-            self._button(short(question, 55) + '  ↗', lambda checked=False, q=question: self._ask(q), row)
+            self._button(short(t(question), 55) + '  ↗', lambda checked=False, q=question: self._ask(t(q)), row)
         row.addStretch()
         self.body_layout.addLayout(row)
 

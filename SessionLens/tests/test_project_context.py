@@ -1,8 +1,9 @@
 import json,tempfile,unittest
+from unittest.mock import patch
 from pathlib import Path
 from sessionlens.core import Collector
 from sessionlens.supervision import TaskStore
-from sessionlens.project_context import ProjectStore,index_text,remote,tool_arguments
+from sessionlens.project_context import ProjectStore,index_text,remote,tool_arguments,command_paths,absolute
 from sessionlens.knowledge import candidates
 from sessionlens.embedding_store import EmbeddingStore
 from sessionlens.knowledge_index import KnowledgeIndex
@@ -75,5 +76,42 @@ class ProjectContextTests(unittest.TestCase):
         self.p.db.execute('DELETE FROM project_headers');self.p.db.execute('DELETE FROM task_contexts');self.p.db.commit()
         rows[0]['payload']['cwd']='/work/modified';source.write_text(''.join(json.dumps(r)+'\n' for r in rows),encoding='utf-8')
         value=self.p.resolve(self.s.db,task);self.assertIsNone(value['headerEvidence']);self.assertIsNone(value['workingDirectory'])
+    def test_python_templates_do_not_become_project_paths(self):
+        css='#sl-desktop{--bg:light-dark(#f7f8fa,#101721);'+'x'*300
+        program='template = """open(\''+css+'\')\nPath(\'/work/decoy/package.json\')"""\nfrom pathlib import Path\nPath("/work/actual/package.json").write_text(template)'
+        command="python3 - <<'PY'\n"+program+'\nPY'
+        self.assertEqual(command_paths(command),['/work/actual/package.json'])
+        self.p.filesystem=True
+        self.add([self.user('保存界面模板',cwd='/work/actual',repo=''),self.call({'cmd':command,'workdir':'/work/actual'})])
+        result=self.p.resolve(self.s.db,self.id('保存界面模板'))
+        self.assertEqual([p['root'] for p in result['projects']],['/work/actual'])
+        self.assertNotIn(css,json.dumps(result))
+    def test_literal_python_paths_survive_quotes_and_unicode(self):
+        import shlex
+        program='from pathlib import Path\nPath("/work/项目 空格/package.json").write_text("{}")\nopen("/work/项目 空格/README.md")\n# Path("/work/decoy/package.json")'
+        self.assertEqual(command_paths('python3 -c '+shlex.quote(program)),['/work/项目 空格/package.json','/work/项目 空格/README.md'])
+        self.assertEqual(command_paths('python.exe -u -c '+shlex.quote(program)),command_paths('python3 -c '+shlex.quote(program)))
+        self.assertEqual(command_paths('py -3 -c '+shlex.quote(program)),command_paths('python3 -c '+shlex.quote(program)))
+        self.assertEqual(command_paths("cat <<'PY'\nPath('/work/fake/package.json')\nPY"),[])
+        self.assertIsNone(absolute('template\nbody','/work'))
+        self.assertIsNone(absolute('bad\x00path','/work'))
+        self.assertEqual(absolute('项目 空格/[draft]#1.py','/work'),'/work/项目 空格/[draft]#1.py')
+    def test_filesystem_probe_error_cannot_abort_task_review(self):
+        self.p.filesystem=True
+        directory=str(self.root/('x'*300))
+        with patch.object(Path,'is_dir',side_effect=OSError(63,'File name too long')):
+            self.assertIsNone(self.p._git(directory))
+        # The failed observation must not be attributed to its parent repo.
+        self.assertIn(directory,self.p.git_cache);self.assertIsNone(self.p.git_cache[directory])
+        self.add([self.user('查看记录',cwd=str(self.root),repo=''),self.call({'file_path':directory+'/README.md'},name='Read')])
+        self.assertEqual(self.p.resolve(self.s.db,self.id('查看记录'))['mode'],'unlinked')
+    def test_parser_upgrade_refreshes_only_bounded_derived_contexts(self):
+        self.add([self.user('创建应用',repo=''),self.call({'path':'package.json'},name='Write'),self.user('查天气','weather'),self.call({'command':'curl https://weather.invalid'},'weather')])
+        for task, in self.s.db.execute('SELECT id FROM task_groups'):self.p.resolve(self.s.db,task)
+        with self.p.db:self.p.db.execute("UPDATE task_contexts SET checksum='old-parser',source_fingerprint='old-parser'")
+        originals=self.s.db.execute('SELECT id,event FROM events').fetchall()
+        self.assertEqual(self.p.sync(self.s.db,limit=1,force=True),1)
+        self.assertEqual(self.p.db.execute("SELECT count(*) FROM task_contexts WHERE source_fingerprint='old-parser'").fetchone()[0],1)
+        self.assertEqual(self.s.db.execute('SELECT id,event FROM events').fetchall(),originals)
 
 if __name__=='__main__':unittest.main()

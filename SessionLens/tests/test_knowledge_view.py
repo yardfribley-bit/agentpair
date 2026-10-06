@@ -40,3 +40,19 @@ class KnowledgeUiTests(unittest.TestCase):
             window=Window(Path(tmp));window.hide()
             with patch.object(window,'refresh') as refresh:window.periodic_refresh();refresh.assert_not_called()
             window.close()
+    def test_project_recommendations_emit_the_displayed_language(self):
+        from sessionlens.knowledge_view import KnowledgeView
+        from sessionlens.answer_presentation import present
+        from sessionlens.i18n import set_language,t
+        result={'question':'What tasks were completed in shanghai-weather?',
+                'projectDetails':{'id':'weather','name':'shanghai-weather','source':'workbuddy','tasks':[],
+                                  'taskCount':0,'taskIds':[]}}
+        view=KnowledgeView();emitted=[];view.questionRequested.connect(emitted.append)
+        self.addCleanup(view.close);self.addCleanup(set_language,'zh')
+        for lang in ('zh','en','zh'):
+            set_language(lang);view.load(result)
+            for question in present(result)['followups']:
+                translated=t(question,lang)
+                button=next(button for button in view.findChildren(QPushButton) if button.text()==translated+'  ↗')
+                button.click();self.assertEqual(emitted[-1],translated)
+        self.assertEqual(result['question'],'What tasks were completed in shanghai-weather?')

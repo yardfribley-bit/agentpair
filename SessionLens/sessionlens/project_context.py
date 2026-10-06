@@ -6,7 +6,46 @@ from urllib.parse import urlparse
 from .task_lineage import resolve,signature,step_table
 from .supervision import text_content,readable
 
-VERSION=4
+VERSION=5
+PYTHON_EXECUTABLE=r'(?:python(?:\d+(?:\.\d+)*)?|py)(?:\.exe)?'
+
+def source_fingerprint(row):
+    return hashlib.sha256(json.dumps([VERSION,list(row)],ensure_ascii=False).encode()).hexdigest()
+
+def command_paths(command):
+    """Read literal Python file arguments, never strings containing example code."""
+    command=command[:16000];sources=[];shell_lines=[];lines=command.splitlines();i=0;has_heredoc=False
+    while i<len(lines):
+        line=lines[i];shell_lines.append(line);i+=1
+        heredoc=re.search(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z_0-9]*)\2(?:\s|$)",line)
+        if not heredoc:continue
+        has_heredoc=True
+        body=[]
+        while i<len(lines):
+            value=lines[i];i+=1
+            if (value.lstrip('\t') if heredoc[1] else value)==heredoc[3]:break
+            body.append(value.lstrip('\t') if heredoc[1] else value)
+        # Other heredocs can be source templates or prose, not executed Python.
+        head=line[:heredoc.start()]
+        if re.search(r'(?:^|[\s;&|])(?:[^\s;&|]*/)?'+PYTHON_EXECUTABLE+r'(?:\s|$)',head):sources.append('\n'.join(body))
+    if not has_heredoc:sources.append(command)
+    try:words=shlex.split('\n'.join(shell_lines))
+    except ValueError:words=[]
+    for i,word in enumerate(words[:-2]):
+        if not re.fullmatch(PYTHON_EXECUTABLE,basename(word),re.I):continue
+        for j in range(i+1,min(i+6,len(words)-1)):
+            if words[j]=='-c':sources.append(words[j+1]);break
+            if not words[j].startswith('-'):break
+    paths=[]
+    for source in sources[:16]:
+        try:tree=ast.parse(source)
+        except (ValueError,SyntaxError,RecursionError):continue
+        for node in sorted((n for n in ast.walk(tree) if isinstance(n,ast.Call)),key=lambda n:(n.lineno,n.col_offset)):
+            if not isinstance(node,ast.Call) or not node.args:continue
+            func=node.func;name=func.id if isinstance(func,ast.Name) else func.attr if isinstance(func,ast.Attribute) else ''
+            value=node.args[0]
+            if name in ('Path','open') and isinstance(value,ast.Constant) and isinstance(value.value,str):paths.append(value.value)
+    return list(dict.fromkeys(paths))[:64]
 
 def tool_arguments(payload):
     value=payload.get('arguments',payload.get('input',payload.get('command',{})))
@@ -83,6 +122,8 @@ def remote(value,trusted=False):
 
 def absolute(value,base=None):
     if not isinstance(value,str) or not value or len(value)>4096 or value.startswith(('~','$','%')):return None
+    # Recorded path fields must not contain control characters or entire bodies.
+    if any(ord(c)<32 for c in value):return None
     value=value.strip()
     if len(value)>1 and value[0]==value[-1] and value[0] in ('"',"'"):value=value[1:-1]
     windows=bool(re.match(r'^[a-zA-Z]:[\\/]',value) or value.startswith('\\\\') or base and re.match(r'^[a-zA-Z]:[\\/]',base))
@@ -127,7 +168,7 @@ class ProjectStore:
             rows=source.execute('SELECT id,source,session,prompt,requirements,last_row FROM task_groups ORDER BY last_row DESC').fetchall()
             existing=dict(self.db.execute('SELECT task,source_fingerprint FROM task_contexts'));current={r[0] for r in rows}
             with self.db:self.db.executemany('DELETE FROM task_contexts WHERE task=?',[(i,) for i in existing if i not in current])
-            self.pending=deque(r[0] for r in rows if existing.get(r[0])!=hashlib.sha256(json.dumps(r[1:],ensure_ascii=False).encode()).hexdigest())
+            self.pending=deque(r[0] for r in rows if existing.get(r[0])!=source_fingerprint(r[1:]))
             self.refreshed=time.monotonic();self.refresh_overrides()
         count=0
         for _ in range(min(limit,len(self.pending))):self.resolve(source,self.pending.popleft());count+=1
@@ -195,8 +236,11 @@ class ProjectStore:
     def _git(self,directory):
         if not self.filesystem or not directory or re.match(r'^[a-z]:/',directory) and __import__('os').name!='nt':return None
         if directory in self.git_cache:return self.git_cache[directory]
-        current=Path(directory)
-        if not current.is_dir():current=current.parent
+        try:
+            current=Path(directory)
+            if not current.is_dir():current=current.parent
+        except (OSError,ValueError):
+            self.git_cache[directory]=None;return None
         found=None
         for _ in range(7):
             git=current/'.git'
@@ -225,7 +269,7 @@ class ProjectStore:
         if manual:result={**self._derive(source,task,row,checksum),**json.loads(manual),'taskId':task,'signature':checksum}
         else:result=self._derive(source,task,row,checksum)
         with self.db:
-            self.db.execute('INSERT OR REPLACE INTO task_contexts VALUES(?,?,?,?)',(task,checksum,json.dumps(result,ensure_ascii=False),hashlib.sha256(json.dumps(row,ensure_ascii=False).encode()).hexdigest()))
+            self.db.execute('INSERT OR REPLACE INTO task_contexts VALUES(?,?,?,?)',(task,checksum,json.dumps(result,ensure_ascii=False),source_fingerprint(row)))
             for project in result['projects']:
                 self.db.execute('INSERT INTO project_catalog VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,repository=excluded.repository,root=excluded.root',(project['id'],project['name'],project['repository'],project['root']))
                 self.db.execute('INSERT INTO project_tasks VALUES(?,?,?)',(task,project['id'],project['role']))
@@ -313,7 +357,7 @@ class ProjectStore:
             if w=='git' and words[i+1]=='-C':associate(absolute(words[i+2],directory),eid)
         if re.search(r'(?:^|[;&\n])\s*git\s',command):associate(directory,eid)
         files=[args.get(k) for k in ('path','file_path','filePath') if args.get(k)]
-        files+=re.findall(r'(?:Path|open)\(["\']([^"\']+)["\']',command)
+        files+=command_paths(command)
         if words and words[0] in ('cat','sed','head','tail'):files.extend(w for w in words[1:] if re.search(r'\.[a-zA-Z0-9]{1,8}$',w))
         for value in files:
             target=absolute(value,directory)

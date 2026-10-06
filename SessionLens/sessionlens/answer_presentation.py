@@ -453,7 +453,7 @@ def present(result=None):
             if isinstance(path, str):
                 view['files'].append({'path': path, 'description': '记录中的源码路径',
                                       'refs': _unique(x.get('eventId') for x in evidence if x.get('path') == path)})
-        view['followups'] = ['回顾某项任务的执行过程', '核对用户发言和模型调用次数']
+        view['followups'] = ['回顾某项任务的执行过程', '核对某项任务的用户发言和模型调用次数']
         return view
     presentation = _dict(result.get('presentation'))
     packet = _dict(result.get('packet'))

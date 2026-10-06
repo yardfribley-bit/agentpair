@@ -10,6 +10,20 @@ from .knowledge_view import KnowledgeView,ActiveStack
 from .i18n import language,set_language,t,localize_widgets
 from .database import connection
 
+def local_query_context(messages,history,question,project_scope):
+    """Keep project selection/retry context local, out of model answer history."""
+    if history:return history[-1]
+    if not messages:return None
+    latest=messages[-1]
+    if latest.get('selectionNeeded') and latest.get('projectDetails') and latest.get('projectScope')==project_scope:return latest
+    # A retry of the same failed recommendation still refers to that project.
+    # Never bridge an intervening new question or recover an unrelated task.
+    for result in reversed(messages):
+        if result.get('question')==question and (result.get('error') or result.get('selectionNeeded')):continue
+        if result.get('projectDetails') and result.get('projectScope')==project_scope and latest.get('question')==question:return result
+        break
+    return None
+
 class Signals(QObject):
     progress=Signal(str)
     ready=Signal(object)
@@ -299,16 +313,17 @@ class ChatWindow(QMainWindow):
         source=self.source.currentData();days=self.period.currentData()
         project_id=self.project_scope.currentData();self.project_scope.setEnabled(False)
         if history and history[-1].get('projectScope')!=project_id:history=[]
+        previous=local_query_context(self.messages,history,q,project_id)
         self.render()
         config={**self.collector.config.get('model',{}),'embedding':self.collector.config.get('embedding',{}),'responseLanguage':language()}
         def work():
             try:
                 from .project_queries import local_project_query
                 from .task_queries import local_task_query
-                local_task=local_task_query(self.root,q,previous=history[-1] if history else None,selected=selected_task)
+                local_task=local_task_query(self.root,q,previous=previous,selected=selected_task)
                 if local_task is not None:local_task['projectScope']=project_id;self.signals.ready.emit(local_task);return
                 if not selected_task:
-                    local=local_project_query(self.root,q,source=source,previous=history[-1] if history else None,selected=selected_project)
+                    local=local_project_query(self.root,q,source=source,previous=previous,selected=selected_project)
                     if local is not None:local['projectScope']=project_id;self.signals.ready.emit(local);return
                 result=ask(self.root,config,q,history,self.signals.progress.emit,source=source,days=days,selected_task=selected_task,project_id=project_id);result['projectScope']=project_id;self.signals.ready.emit(result)
             except Exception as exc:self.signals.failed.emit(str(exc)[:300])
