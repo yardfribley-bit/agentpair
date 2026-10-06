@@ -4,6 +4,13 @@ import json
 import urllib.request
 
 
+class CloudRejected(RuntimeError):
+    """A definite provider rejection, retaining only a non-secret numeric code."""
+    def __init__(self, action, code):
+        self.code = code if type(code) is int else None
+        super().__init__('UCloud ' + action + ' returned ' + str(self.code))
+
+
 class UCloudClient:
     def __init__(self, public_key, private_key, project_id, region='cn-bj2', transport=None):
         self.public_key=public_key
@@ -33,5 +40,5 @@ class UCloudClient:
         payload['Signature']=hashlib.sha1(raw.encode()).hexdigest()
         result=self.transport(payload)
         if result.get('RetCode')!=0:
-            raise RuntimeError('UCloud '+action+' returned '+str(result.get('RetCode')))
+            raise CloudRejected(action, result.get('RetCode'))
         return result

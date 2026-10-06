@@ -51,7 +51,7 @@ class ResourceManager:
         return {'hourlyCNY':hourly,'hostCNY':dynamic(host),'eipCNY':dynamic(net),
                 'quotedAt':self.clock().isoformat()}
 
-    def create_driver(self, config, eip, name, ssh_public_key, *, seconds=3600):
+    def create_driver(self, config, eip, name, ssh_public_key, *, seconds=3600, platform=None, purpose=None, request_id=None):
         if not 60<=seconds<=self.max_seconds: raise ValueError('Invalid lease duration')
         if not name.startswith('agentpair-driver-') or len(name)>80:
             raise ValueError('Driver name must be scoped to AgentPair')
@@ -65,12 +65,15 @@ class ResourceManager:
                'createdAt':self.clock().isoformat(),
                'expiresAt':(self.clock()+datetime.timedelta(seconds=seconds)).isoformat(),
                'price':price,'hostId':None,'region':self.api.region,
-               'projectId':self.api.project_id,'zone':config['Zone']}
+               'projectId':self.api.project_id,'zone':config['Zone'],
+               'platform':platform,'purpose':purpose,'requestId':request_id}
         self._save(lease)
         # Narrow config is assembled by the caller; only authorized key is put in cloud-init.
         import base64
         userdata='#cloud-config\nusers:\n  - default\n  - name: pair\n    lock_passwd: true\n    groups: sudo\n    sudo: ALL=(ALL) NOPASSWD:ALL\n    ssh_authorized_keys:\n      - '+ssh_public_key.strip()+'\nssh_pwauth: false\npackages: [git, python3, ca-certificates]\nwrite_files:\n  - path: /etc/agentpair-driver\n    permissions: "0444"\n    content: isolated-driver\n'
         request={**config,'Name':name,'MaxCount':1,'MinCount':1,
+                 'LoginMode':'Password',
+                 'Password':base64.b64encode(('Ap9!'+secrets.token_hex(20)).encode()).decode(),
                  'SecurityGroupId':config['SecurityGroupId'],
                  'UserData':base64.b64encode(userdata.encode()).decode(),
                  'NetworkInterface.0.EIP.Bandwidth':eip['Bandwidth'],
@@ -84,8 +87,10 @@ class ResourceManager:
             lease['state']='active'
             self._save(lease)
             return lease
-        except Exception:
-            lease['state']='reconcile_required'
+        except Exception as error:
+            from .ucloud import CloudRejected
+            lease['state']='failed' if isinstance(error,CloudRejected) else 'reconcile_required'
+            lease['errorCode']=getattr(error,'code',None)
             self._save(lease)
             raise
 

@@ -35,6 +35,10 @@ class ResourceTests(unittest.TestCase):
     def test_quote_lease_and_verified_release(self):
         r=self.manager.create_driver(self.config,self.eip,'agentpair-driver-test','ssh-ed25519 abc')
         self.assertEqual(r['price']['hourlyCNY'],.2)
+        request=next(v for a,v in self.cloud.calls if a=='CreateUHostInstance')
+        self.assertEqual(request['LoginMode'],'Password')
+        self.assertTrue(request['Password'])
+        self.assertNotIn('Password',r)
         self.assertRaises(ValueError,self.manager.create_driver,self.config,self.eip,
                           'agentpair-driver-second','ssh-ed25519 abc')
         self.assertEqual(self.manager.release(r['id'])['state'],'released')

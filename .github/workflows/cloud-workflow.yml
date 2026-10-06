@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Test task routing, confirmation and portable installation
-        run: python -m unittest test_tasks test_task_pauses test_platform tests.test_cloud_console tests.test_cloud_workflow tests.test_cloud_workflow_http tests.test_software_install tests.test_portable_software -v
+        run: python -m unittest test_tasks test_task_pauses test_platform tests.test_cloud_console tests.test_cloud_workflow tests.test_cloud_workflow_http tests.test_software_install tests.test_portable_software tests.test_platform_assistant test_resources -v
       - name: Check browser scripts
         run: node --check agentpair/web_assets/workspace.js
       - run: node --check agentpair/web_assets/software.js

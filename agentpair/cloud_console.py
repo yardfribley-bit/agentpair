@@ -90,22 +90,46 @@ class CloudConsole:
             if path.exists():
                 existing=json.loads(path.read_text())
                 if existing.get('system')!=system or existing.get('sizing')!=sizing:raise ValueError('Creation request configuration changed')
-                if existing.get('leaseId'):return self._public_lease(self._lease(existing['leaseId']))
+                if existing.get('leaseId') and existing.get('state')=='created':return self._public_lease(self._lease(existing['leaseId']))
                 raise RuntimeError('Creation already attempted; reconcile its result before retrying')
             if not self.reaper_ready():raise RuntimeError('Expiry cleanup service is not running')
             if self.manager.max_seconds<3600:raise ValueError('Configured lease duration is below one hour')
             record={'system':system,'sizing':sizing,'state':'pending'}
             path.write_text(json.dumps(record));path.chmod(0o600)
             try:
-                result=self._create(system,max_hourly_cny,sizing)
+                result=self._create(system,max_hourly_cny,sizing,request_id)
                 record.update(state='created',leaseId=result['id'])
                 path.write_text(json.dumps(record))
                 return result
-            except Exception:
-                record['state']='reconcile_required';path.write_text(json.dumps(record))
+            except Exception as error:
+                from .ucloud import CloudRejected
+                record['state']='failed' if isinstance(error,CloudRejected) else 'reconcile_required'
+                record['errorCode']=getattr(error,'code',None)
+                matches=[r for r in self.manager.records() if r.get('requestId')==request_id]
+                if len(matches)==1:record['leaseId']=matches[0]['id']
+                path.write_text(json.dumps(record))
                 raise
 
-    def _create(self, system, max_hourly_cny, sizing=None):
+    def creation_status(self, request_id):
+        import re
+        if not isinstance(request_id,str) or not re.fullmatch(r'[a-zA-Z0-9-]{16,64}',request_id):
+            raise ValueError('Invalid creation request ID')
+        path=self.manager.directory.parent/'cloud-create-requests'/(request_id+'.json')
+        record=json.loads(path.read_text())
+        result={k:record.get(k) for k in ('state','leaseId','errorCode')}
+        if record.get('state')!='reconcile_required' or not record.get('leaseId'):return result
+        lease=self._lease(record['leaseId'])
+        rows=self.manager.api.call('DescribeUHostInstance',Limit=100).get('UHostSet',[])
+        matches=[r for r in rows if r.get('Name')==lease['name']]
+        if len(matches)==1:
+            lease.update(hostId=matches[0]['UHostId'],state='active')
+            self.manager._save(lease)
+            record['state']='created';path.write_text(json.dumps(record))
+            return dict(result,state='created')
+        # Absence after a network failure is not proof that dispatch cannot arrive late.
+        return dict(result,observedHosts=len(matches))
+
+    def _create(self, system, max_hourly_cny, sizing=None, request_id=None):
         if type(max_hourly_cny) not in (float,int) or not math.isfinite(max_hourly_cny) or max_hourly_cny<=0:
             raise ValueError('Confirm a positive hourly price limit')
         config,eip=self._plan(system,sizing)
@@ -114,7 +138,8 @@ class CloudConsole:
             raise ValueError('Current quote exceeds the confirmed price')
         if system=='Linux':
             lease=self.manager.create_driver(config,eip,'agentpair-driver-'+secrets.token_hex(6),
-                                             self.cloud['sshPublicKey'],seconds=3600)
+                                             self.cloud['sshPublicKey'],seconds=3600,platform='linux',
+                                             purpose='Admin machine console',request_id=request_id)
             lease.update(platform='linux',purpose='Admin machine console')
             self.manager._save(lease)
             return self._public_lease(lease)
@@ -123,7 +148,7 @@ class CloudConsole:
         now=self.manager.clock();lease={'id':secrets.token_hex(12),'name':'agentpair-driver-windows-'+secrets.token_hex(4),
             'state':'creating','createdAt':now.isoformat(),'expiresAt':(now+datetime.timedelta(hours=1)).isoformat(),
             'price':price,'hostId':None,'region':self.manager.api.region,'projectId':self.manager.api.project_id,
-            'zone':config['Zone'],'platform':'windows','purpose':'Admin machine console'}
+            'zone':config['Zone'],'requestId':request_id,'platform':'windows','purpose':'Admin machine console'}
         self.manager._save(lease)
         firewall=self.manager.api.call('CreateFirewall',Name='agentpair-console-'+lease['id'][:8],
             **{'Rule.0':'TCP|3389|0.0.0.0/0|ACCEPT|HIGH|PublicRDP',

@@ -297,8 +297,20 @@ class CloudWorkflow:
             with self.engine.lock:
                 task = self.engine._load(tid)
                 if task['round'] == task['cloudAction']['round'] and task['status'] not in ('cancelled', 'cancelling'):
-                    self._save(tid, 'interrupted', '云操作未取得完整回执（' + type(error).__name__
-                               + '）。请先核对已有机器与安装状态，不能重复开机或宣称安装成功。')
+                    from .ucloud import CloudRejected
+                    reference={}
+                    if hasattr(self.console,'creation_status'):
+                        try:
+                            receipt=self.console.creation_status(task['cloudAction']['requestId'])
+                            if receipt.get('leaseId'):reference['leaseId']=receipt['leaseId']
+                        except Exception:
+                            receipt={}
+                    else:receipt={}
+                    if isinstance(error,CloudRejected):
+                        self._save(tid,'failed','云厂商拒绝了创建请求（错误码 '+str(error.code)+'）。本次没有创建成功，我会保留这次操作记录。',**reference)
+                    else:
+                        suffix='当前核对未找到该机器。' if receipt.get('observedHosts')==0 else ''
+                        self._save(tid,'interrupted','这次操作没有取得完整回执。'+suffix+'我已保留原创建请求，避免重复开机；需要核验这次操作。',**reference)
         finally:
             with self.lock:
                 self.active.discard(tid)

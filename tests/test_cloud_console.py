@@ -57,6 +57,29 @@ class CloudConsoleTests(unittest.TestCase):
         self.assertEqual(rows[0]['state'],'reconcile_required')
         self.assertEqual(rows[0]['dedicatedFirewallId'],'firewall-test')
 
+    def test_linux_failure_keeps_request_bound_and_visible(self):
+        self.api.fail_create=True
+        with self.assertRaises(RuntimeError):self.console.create('Linux',0.51,'request-linux-failure')
+        rows=self.console.list()
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['platform'],'linux')
+        record=json.loads((Path(self.tmp.name)/'cloud-create-requests/request-linux-failure.json').read_text())
+        self.assertEqual(record['leaseId'],rows[0]['id'])
+        with self.assertRaises(RuntimeError):self.console.create('Linux',0.51,'request-linux-failure')
+        self.assertEqual(sum(a=='CreateUHostInstance' for a,_ in self.api.calls),1)
+
+    def test_definite_rejection_does_not_occupy_quota_or_replay(self):
+        from agentpair.ucloud import CloudRejected
+        original=self.api.call
+        def call(action,**values):
+            if action=='CreateUHostInstance':raise CloudRejected(action,8031)
+            return original(action,**values)
+        self.api.call=call
+        with self.assertRaises(CloudRejected):self.console.create('Linux',0.51,'request-rejected-linux')
+        self.assertEqual(self.console.list()[0]['state'],'failed')
+        self.assertEqual(self.console.creation_status('request-rejected-linux')['errorCode'],8031)
+        with self.assertRaises(RuntimeError):self.console.create('Linux',0.51,'request-rejected-linux')
+
     def test_linux_quote_uses_ubuntu_and_omits_creation_fields(self):
         result=self.console.quote('Linux')
         self.assertEqual(result['system'],'Linux')

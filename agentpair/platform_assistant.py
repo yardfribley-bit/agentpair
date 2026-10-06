@@ -55,7 +55,18 @@ class PlatformAssistant:
                 latest = next((m.get('text', '') for m in reversed(task['messages']) if m['role']=='user'), '')
                 if previous and any(word in latest for word in ('创建了吗','开好了吗','创建成功','那台','这台','开机了吗')):
                     target = next((r for r in rows if r['id']==previous.get('leaseId')), None)
-                    if target:
+                    if target and target.get('state')=='active':
+                        info=self.cloud.login(target['id'])
+                        text=('这次机器已创建，实际登录验证通过。' if info.get('loginState')=='ssh_authenticated' else '这次机器已创建，仍在初始化，暂未验证登录。')
+                        result['items']=[r for r in result['items'] if r['id']==target['id']]
+                    elif target and target.get('state')=='failed':
+                        text='这次创建失败，没有取得有效的机器回执。'+previous.get('finalAnswer','')
+                        result['items']=[r for r in result['items'] if r['id']==target['id']]
+                    elif target and target.get('state')=='reconcile_required':
+                        receipt=self.cloud.creation_status(previous['requestId'])
+                        text=('云端核对已找到这次机器，需要继续验证登录。' if receipt.get('state')=='created' else '这次没有创建成功回执；最新云端核对未找到该机器，系统没有重复创建。')
+                        result['items']=[r for r in result['items'] if r['id']==target['id']]
+                    elif target:
                         text = ('这次的机器已经释放。' if target['state']=='released' else
                                 '这次的机器已取得创建回执，编号 '+target['id']+'。当前操作状态：'+previous.get('finalAnswer', previous.get('state','待核对')))
                         result['items'] = [r for r in result['items'] if r['id']==target['id']]
