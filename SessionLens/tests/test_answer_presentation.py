@@ -245,7 +245,7 @@ class AnswerPresentationTests(unittest.TestCase):
                 {'type': 'function_call', 'name': 'Write', 'sessionId': 'arbitrary', 'arguments': {'file_path': '/repo/ArbitraryDelta/pyproject.toml', 'content': '[project]'}},
             ]
             log = root / 'records.jsonl'
-            log.write_text(''.join(json.dumps(row) + '\n' for row in records))
+            log.write_text(''.join(json.dumps(row) + '\n' for row in records),encoding='utf-8')
             collector = Collector(root / 'collector.db')
             collector.scan(log, source='workbuddy')
             collector.db.close()

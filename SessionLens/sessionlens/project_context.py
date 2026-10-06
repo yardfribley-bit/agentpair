@@ -202,7 +202,7 @@ class ProjectStore:
             git=current/'.git'
             try:
                 if git.is_file():
-                    with git.open() as file:pointer=file.read(2048).strip()
+                    with git.open(encoding='utf-8') as file:pointer=file.read(2048).strip()
                     if not pointer.startswith('gitdir:'):break
                     git=(current/pointer[7:].strip()).resolve()
                 if git.is_dir():

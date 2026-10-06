@@ -16,7 +16,7 @@ class ProjectQueryTests(unittest.TestCase):
                 {'type':'function_call','name':'Write','sessionId':session,'arguments':{'file_path':directory+'/src/login.py','content':'print(1)'}},
                 {'type':'function_call','name':'Write','sessionId':session,'arguments':{'file_path':directory+'/pyproject.toml','content':'[project]'}}]
         if source=='codex':values=[{'type':'session_meta','payload':{'id':session}}]+[{'type':'response_item','payload':v} for v in values]
-        log=self.root/(source+'-'+session+'.jsonl');log.write_text(''.join(json.dumps(v)+'\n' for v in values));self.c.scan(log,source=source);self.tasks.advance();self.tasks.advance(realtime=True);self.tasks.repair_links(10)
+        log=self.root/(source+'-'+session+'.jsonl');log.write_text(''.join(json.dumps(v)+'\n' for v in values),encoding='utf-8');self.c.scan(log,source=source);self.tasks.advance();self.tasks.advance(realtime=True);self.tasks.repair_links(10)
         while self.inventory.sync(self.tasks.db,1000):pass
         self.inventory.sync(self.tasks.db,1000,live=True)
     def test_arbitrary_project_name_task_content_tools_and_followup(self):

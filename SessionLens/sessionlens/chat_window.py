@@ -8,6 +8,7 @@ from .task_view import TaskView,task_title
 from .supervision import event_text
 from .knowledge_view import KnowledgeView,ActiveStack
 from .i18n import language,set_language,t,localize_widgets
+from .database import connection
 
 class Signals(QObject):
     progress=Signal(str)
@@ -199,7 +200,7 @@ class ChatWindow(QMainWindow):
     def open_chat(self,index):
         if self.busy or index<0:return
         self.chat_id=self.chat_rows[index][0];self.messages=json.loads(self.cache.execute('SELECT content FROM chats WHERE id=?',(self.chat_id,)).fetchone()[0])
-        with sqlite3.connect(self.root/'collector.db',timeout=10) as db:
+        with connection(self.root/'collector.db',timeout=10) as db:
             for result in self.messages:
                 mismatch=answer_mismatch(db,result)
                 if mismatch:result['selectionMismatch']=mismatch
@@ -353,7 +354,7 @@ class ChatWindow(QMainWindow):
             self.status.setText('这条记录不在本次回答的引用摘录里；可在对应步骤查看原始参数与返回。');return
         self.stop_playback()
         from .message_graph import bounded_event
-        with sqlite3.connect(self.root/'collector.db') as db:e=bounded_event(db,f['eventId'])
+        with connection(self.root/'collector.db') as db:e=bounded_event(db,f['eventId'])
         if not e:self.status.setText('这条原始记录暂不可用；回答引用的摘录仍保存在本次对话中。');return
         esc=html.escape;loc=e.get('evidence',{})
         owner=next((x['title'] for x in r.get('retrieved',[]) if x.get('taskId')==f.get('taskId')),None)

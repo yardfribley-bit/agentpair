@@ -9,10 +9,10 @@ from sessionlens.task_lineage import set_override
 class KnowledgeIndexTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.log=self.root/'log.jsonl'
-        self.log.write_text('');self.collector=Collector(self.root/'collector.db');self.store=TaskStore(self.root/'collector.db');self.index=KnowledgeIndex(self.root/'knowledge.db')
+        self.log.write_text('',encoding='utf-8');self.collector=Collector(self.root/'collector.db');self.store=TaskStore(self.root/'collector.db');self.index=KnowledgeIndex(self.root/'knowledge.db')
     def tearDown(self):self.index.close();self.store.close();self.collector.db.close();self.tmp.cleanup()
     def add(self,records):
-        with self.log.open('a') as file:file.write(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records))
+        with self.log.open('a',encoding='utf-8') as file:file.write(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records))
         self.collector.scan(self.log,source='workbuddy');self.store.advance(2000,realtime=True);self.store.repair_links(10)
     def fill(self):
         self.index.sync(self.store.db,force=True)

@@ -23,7 +23,7 @@ class KnowledgeUiTests(unittest.TestCase):
             root=Path(tmp);window=Window(root);window.config['ui']={'language':'zh'};chat=ChatWindow(window);c=Collector(root/'collector.db');log=root/'s.jsonl'
             rows=[{'type':'message','role':'user','sessionId':'s','content':t} for t in ('写一个登录页面','好的','行','干')]
             rows+=[{'type':'function_call','sessionId':'s','name':'Write','callId':'c','arguments':{'file_path':'/work/login/main.py'}},{'type':'function_call_result','sessionId':'s','callId':'c','output':'written'}]
-            log.write_text(''.join(json.dumps(r)+'\n' for r in rows));c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.store.repair_links(10)
+            log.write_text(''.join(json.dumps(r)+'\n' for r in rows),encoding='utf-8');c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.store.repair_links(10)
             task=window.store.tasks()[0][0];q='这个任务用户发了多少轮，Agent和大模型交互了多少次？';chat.input.setPlainText(q)
             chat.messages=[local_task_query(root,q,selected=task)];chat.render();chat.show();self.app.processEvents()
             self.assertEqual(chat.results.currentWidget(),chat.knowledge_view);self.assertIn('4 轮用户发言',chat.knowledge_view.plain_text());self.assertIn('无法确认',chat.knowledge_view.plain_text())

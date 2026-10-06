@@ -11,10 +11,10 @@ from tests.test_embedding import FakeEmbedding
 class ProjectContextTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.log=self.root/'log.jsonl'
-        self.log.write_text('');self.c=Collector(self.root/'collector.db');self.s=TaskStore(self.root/'collector.db');self.p=ProjectStore(self.root/'project_context.db',filesystem=False)
+        self.log.write_text('',encoding='utf-8');self.c=Collector(self.root/'collector.db');self.s=TaskStore(self.root/'collector.db');self.p=ProjectStore(self.root/'project_context.db',filesystem=False)
     def tearDown(self):self.p.close();self.s.close();self.c.db.close();self.tmp.cleanup()
     def add(self,records):
-        with self.log.open('a') as f:f.write(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records))
+        with self.log.open('a',encoding='utf-8') as f:f.write(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records))
         self.c.scan(self.log,source='workbuddy');self.s.advance(1000,realtime=True);self.s.repair_links(10)
     def user(self,text,session='s',cwd='/work/atlas',repo='https://github.com/team/atlas.git'):
         return {'type':'message','role':'user','content':text,'sessionId':session,'cwd':cwd,'git':{'repository_url':repo,'branch':'feature/a'}}
@@ -42,7 +42,7 @@ class ProjectContextTests(unittest.TestCase):
     def test_current_git_target_has_provenance_and_supports_two_repositories(self):
         a=self.root/'alpha';b=self.root/'beta'
         for directory in (a,b):
-            (directory/'.git').mkdir(parents=True);(directory/'.git/config').write_text('[remote "origin"]\nurl = https://user:password@github.com/team/'+directory.name+'.git\n')
+            (directory/'.git').mkdir(parents=True);(directory/'.git/config').write_text('[remote "origin"]\nurl = https://user:password@github.com/team/'+directory.name+'.git\n',encoding='utf-8')
         self.p.filesystem=True;self.add([self.user('修改两个仓库',cwd=str(a),repo='https://github.com/team/alpha'),self.call({'path':str(a/'README.md')},name='Edit'),self.call({'path':str(b/'app.py')},name='Write')])
         value=self.p.resolve(self.s.db,self.id('修改两个仓库'));self.assertEqual(len(value['projects']),2)
         self.assertTrue(all(p['basis']=='current_filesystem' for p in value['projects']));self.assertTrue(all(p['repository'] is None for p in value['projects']));self.assertNotIn('password',json.dumps(value));self.assertNotIn('user:',json.dumps(value))
@@ -69,11 +69,11 @@ class ProjectContextTests(unittest.TestCase):
     def test_modified_source_header_is_not_used_as_historical_evidence(self):
         rows=[{'type':'session_meta','payload':{'id':'coded','cwd':'/work/atlas','git':{'repository_url':'https://github.com/team/atlas'}}},
               {'type':'response_item','payload':{'type':'message','role':'user','content':[{'text':'查天气'}]}}]
-        source=self.root/'rollout.jsonl';source.write_text(''.join(json.dumps(r)+'\n' for r in rows));self.c.scan(source,source='codex');self.s.advance(1000,realtime=True);self.s.repair_links(10)
+        source=self.root/'rollout.jsonl';source.write_text(''.join(json.dumps(r)+'\n' for r in rows),encoding='utf-8');self.c.scan(source,source='codex');self.s.advance(1000,realtime=True);self.s.repair_links(10)
         task=self.s.db.execute("SELECT id FROM tasks WHERE source='codex'").fetchone()[0]
         self.assertTrue(self.p.resolve(self.s.db,task)['headerEvidence'])
         self.p.db.execute('DELETE FROM project_headers');self.p.db.execute('DELETE FROM task_contexts');self.p.db.commit()
-        rows[0]['payload']['cwd']='/work/modified';source.write_text(''.join(json.dumps(r)+'\n' for r in rows))
+        rows[0]['payload']['cwd']='/work/modified';source.write_text(''.join(json.dumps(r)+'\n' for r in rows),encoding='utf-8')
         value=self.p.resolve(self.s.db,task);self.assertIsNone(value['headerEvidence']);self.assertIsNone(value['workingDirectory'])
 
 if __name__=='__main__':unittest.main()

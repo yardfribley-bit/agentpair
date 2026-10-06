@@ -10,7 +10,7 @@ class Response:
 class RelayTests(unittest.TestCase):
  def test_deepseek_short_query_disables_extra_thinking_and_retries_truncation(self):
   with tempfile.TemporaryDirectory() as tmp:
-   secret=Path(tmp)/'key';secret.write_text('{"apiKey":"test"}')
+   secret=Path(tmp)/'key';secret.write_text('{"apiKey":"test"}',encoding='utf-8')
    config={'url':'https://example.com/v1/chat/completions','name':'deepseek-v4-flash','credentialFile':str(secret)}
    values=[Response({'choices':[{'finish_reason':'length','message':{'content':''}}]}),Response({'choices':[{'finish_reason':'stop','message':{'content':'{"terms":["SSH"]}'}}]})]
    with patch('sessionlens.relay_model.urllib.request.build_opener') as opener:

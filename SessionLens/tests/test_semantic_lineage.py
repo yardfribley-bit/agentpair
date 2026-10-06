@@ -31,7 +31,7 @@ class SemanticLineageTests(unittest.TestCase):
             root=Path(tmp);path=root/'collector.db';log=root/'log.jsonl'
             records=[{'type':'message','role':'user','sessionId':'s','content':s} for s in ('设计会员管理页面','采用第二种，邮箱登录','这版顺眼了，可以动手了')]
             records.append({'type':'function_call','sessionId':'s','name':'Write','callId':'c','arguments':{'path':'members.py'}})
-            log.write_text(''.join(json.dumps(r)+'\n' for r in records));collector=Collector(path);collector.scan(log,source='workbuddy');collector.db.close();store=TaskStore(path);store.advance()
+            log.write_text(''.join(json.dumps(r)+'\n' for r in records),encoding='utf-8');collector=Collector(path);collector.scan(log,source='workbuddy');collector.db.close();store=TaskStore(path);store.advance()
             turns=context_for_task(store.db,store.tasks()[0][0]);ids=[t['turnId'] for t in turns]
             origin=store.db.execute("SELECT id FROM tasks WHERE prompt='设计会员管理页面'").fetchone()[0]
             self.assertEqual(len(context_for_task(store.db,origin)),3)
@@ -51,7 +51,7 @@ class SemanticLineageTests(unittest.TestCase):
             root=Path(tmp);path=root/'collector.db';log=root/'log.jsonl'
             records=[{'type':'message','role':'user','sessionId':'s','content':s} for s in ('设计库存工具','使用后一种','可以落地了')]
             records.append({'type':'message','role':'user','sessionId':'other','content':'另一会话的私有内容'})
-            log.write_text(''.join(json.dumps(r)+'\n' for r in records));collector=Collector(path);collector.scan(log,source='workbuddy');collector.db.close();store=TaskStore(path);store.advance();store.repair_links(2)
+            log.write_text(''.join(json.dumps(r)+'\n' for r in records),encoding='utf-8');collector=Collector(path);collector.scan(log,source='workbuddy');collector.db.close();store=TaskStore(path);store.advance();store.repair_links(2)
             ids=[r[0] for r in store.db.execute("SELECT t.id FROM tasks t JOIN events e ON t.id=e.id WHERE t.session='s' ORDER BY e.rowid")]
             set_override(store.db,ids[1],None)
             turns=context_for_task(store.db,ids[2]);self.assertNotIn('另一会话的私有内容',str(turns))
@@ -72,7 +72,7 @@ class SemanticLineageTests(unittest.TestCase):
             records.append({'type':'function_call','sessionId':'s','name':'Bash','callId':'read','arguments':{'command':'read analysis.docx'}})
             user('上海天气');reply('查上海天气，是另一个目标。')
             records.append({'type':'message','role':'user','sessionId':'other','content':'另一个会话'})
-            log.write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records));c=Collector(root/'collector.db');c.scan(log,source='workbuddy');c.db.close();store=TaskStore(root/'collector.db');store.advance();store.repair_links(4)
+            log.write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records),encoding='utf-8');c=Collector(root/'collector.db');c.scan(log,source='workbuddy');c.db.close();store=TaskStore(root/'collector.db');store.advance();store.repair_links(4)
             ids=[r[0] for r in store.db.execute("SELECT t.id FROM tasks t JOIN events e ON e.id=t.id WHERE t.session='s' ORDER BY e.rowid")]
             untouched=store.db.execute('SELECT * FROM cursors').fetchall();raw=store.db.execute('SELECT id,event FROM events ORDER BY rowid').fetchall()
             links=[self.link('T001'),self.link('T002','T001','resume'),self.link('T003','T002','revision'),self.link('T004','T003','resume'),self.link('T005')]

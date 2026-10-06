@@ -7,7 +7,7 @@ _cache={};_cache_lock=threading.Lock()
 class LocalEmbedding:
     def __init__(self,config):
         self.directory=Path(config['directory']).expanduser().resolve()
-        manifest=json.loads((self.directory/'manifest.json').read_text())
+        manifest=json.loads((self.directory/'manifest.json').read_text(encoding='utf-8'))
         if manifest.get('pooling')!='cls' or manifest.get('dimensions')!=512:raise ValueError('本地 embedding 模型清单不兼容')
         self.max_tokens=max(32,min(512,int(config.get('maxTokens',256))))
         self.threads=max(1,min(2,int(config.get('threads',1))))

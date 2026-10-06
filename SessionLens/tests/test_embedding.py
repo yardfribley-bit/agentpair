@@ -15,11 +15,11 @@ class FakeEmbedding:
 
 class EmbeddingTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.log=self.root/'log.jsonl';self.log.write_text('')
+        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.log=self.root/'log.jsonl';self.log.write_text('',encoding='utf-8')
         self.c=Collector(self.root/'collector.db');self.s=TaskStore(self.root/'collector.db');self.v=EmbeddingStore(self.root/'embeddings.db');self.engine=FakeEmbedding()
     def tearDown(self):self.v.close();self.s.close();self.c.db.close();self.tmp.cleanup()
     def add(self,records):
-        with self.log.open('a') as f:f.write(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records))
+        with self.log.open('a',encoding='utf-8') as f:f.write(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records))
         self.c.scan(self.log,source='workbuddy');self.s.advance(1000,realtime=True);self.s.repair_links(10)
     def user(self,text,session):return {'type':'message','role':'user','sessionId':session,'content':text}
     def test_local_vectors_batch_restart_identity_filter_and_raw_unchanged(self):

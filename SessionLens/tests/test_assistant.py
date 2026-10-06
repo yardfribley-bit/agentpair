@@ -15,7 +15,7 @@ class AssistantTests(unittest.TestCase):
     {'type':'reasoning','sessionId':'s','content':[],'rawContent':[{'text':'直接请求失败后改用本地接口'}]},
     {'type':'function_call','sessionId':'s','name':'Bash','callId':'c','message':{'usage':{'tokens':123}},'arguments':'{"command":"curl http://localhost:3000/api/weather?days=7"}'},
     {'type':'function_call_result','sessionId':'s','callId':'c','output':{'text':'temperature_2m=20.1'}}]
-   log.write_text(''.join(json.dumps(r)+'\n' for r in records));c=Collector(path);c.scan(log,source='workbuddy');c.db.close();store=TaskStore(path);store.advance();packet=packet_for_task(store.db,store.tasks()[0][0]);store.close()
+   log.write_text(''.join(json.dumps(r)+'\n' for r in records),encoding='utf-8');c=Collector(path);c.scan(log,source='workbuddy');c.db.close();store=TaskStore(path);store.advance();packet=packet_for_task(store.db,store.tasks()[0][0]);store.close()
    self.assertIn('改用本地接口',packet['fragments'][1]['text']);self.assertIn('days=7',packet['fragments'][2]['text']);self.assertNotIn('tokens',packet['fragments'][2]['text']);self.assertEqual(packet['fragments'][2]['callId'],packet['fragments'][3]['callId'])
    q,clean=prepare({'question':'为什么这么做','packet':packet});answer={'overview':{'text':'改用本地接口','basis':'recorded','evidenceRefs':['E002']},'steps':[{'title':'调用','text':'查询七天','basis':'recorded','evidenceRefs':['E003']}],'gaps':[]};validate_understanding(answer,clean)
    answer['steps'][0]['evidenceRefs']=['E999']

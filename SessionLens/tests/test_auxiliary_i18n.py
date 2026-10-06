@@ -53,7 +53,7 @@ class AuxiliaryLanguageTests(unittest.TestCase):
             values = [{'type': 'message', 'sessionId': 'lang', 'role': 'user', 'content': raw_request},
                       {'type': 'function_call', 'sessionId': 'lang', 'name': 'Probe', 'callId': 'language-call',
                        'arguments': {'command': 'printf "原始中文"'}}]
-            log.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in values))
+            log.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in values),encoding='utf-8')
             collector = Collector(root / 'collector.db')
             collector.scan(log, source='workbuddy')
             collector.db.close()
@@ -85,7 +85,7 @@ class AuxiliaryLanguageTests(unittest.TestCase):
                        'arguments': {'file_path': '/repo/保存/src/check.py', 'content': 'print("保存")'}},
                       {'type': 'function_call', 'sessionId': 'project-language', 'name': 'Write',
                        'arguments': {'file_path': '/repo/保存/pyproject.toml', 'content': '[project]'}}]
-            log.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in values))
+            log.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in values),encoding='utf-8')
             collector = Collector(root / 'collector.db')
             collector.scan(log, source='workbuddy')
             collector.db.close()

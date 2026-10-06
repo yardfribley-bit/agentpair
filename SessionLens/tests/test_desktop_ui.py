@@ -25,11 +25,11 @@ class LiveUiTests(unittest.TestCase):
     def test_monitor_switch_and_follow_new_task(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);log=root/'task.jsonl';window=Window(root)
-            log.write_text(json.dumps({'type':'message','sessionId':'s','role':'user','content':'上海天气'})+'\n');c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.reload()
+            log.write_text(json.dumps({'type':'message','sessionId':'s','role':'user','content':'上海天气'})+'\n',encoding='utf-8');c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.reload()
             self.assertTrue(window.live.isEnabled());self.assertTrue(window.live.isChecked());self.assertIn('上海天气',window.middle.toPlainText())
             window.history.click();window.search.setText('查上海天气');window.reload();self.assertEqual(window.task_list.count(),1)
             window.live.click();self.assertEqual(window.mode,'live')
-            with log.open('a') as f:f.write(json.dumps({'type':'message','sessionId':'s','role':'user','content':'新的任务'})+'\n')
+            with log.open('a',encoding='utf-8') as f:f.write(json.dumps({'type':'message','sessionId':'s','role':'user','content':'新的任务'})+'\n')
             c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.refresh();self.assertIn('新的任务',window.middle.toPlainText());self.assertTrue(window.selected_event)
             window.close();c.db.close()
 
@@ -62,7 +62,7 @@ class LiveUiTests(unittest.TestCase):
                   {'type':'message','sessionId':'s','role':'assistant','content':'已经分析了发布方案。'},
                   {'type':'message','sessionId':'s','role':'user','content':'再分析一下'},
                   {'type':'message','sessionId':'s','role':'assistant','content':'Interrupted by user'}]
-            log.write_text(''.join(json.dumps(r)+'\n' for r in rows));c=Collector(root/'collector.db');c.scan(log,source='workbuddy');c.db.close()
+            log.write_text(''.join(json.dumps(r)+'\n' for r in rows),encoding='utf-8');c=Collector(root/'collector.db');c.scan(log,source='workbuddy');c.db.close()
             with patch('sessionlens.relay_model.call') as model:
                 window=Window(root);window.store.advance();window.set_mode('history');window.reload();model.assert_not_called()
             ids=[r[0] for r in window.store.db.execute('SELECT t.id FROM tasks t JOIN events e ON e.id=t.id ORDER BY e.rowid')]
@@ -87,7 +87,7 @@ class LiveUiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);window=Window(root);chat=ChatWindow(window);log=root/'task.jsonl'
             rows=[{'type':'message','role':'user','sessionId':str(n),'content':'检查日报接口 '+str(n)} for n in range(3)]
-            log.write_text(''.join(json.dumps(r)+'\n' for r in rows));c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.store.repair_links(10);c.db.close()
+            log.write_text(''.join(json.dumps(r)+'\n' for r in rows),encoding='utf-8');c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.store.repair_links(10);c.db.close()
             tasks=window.store.tasks();packet=combine_packets([packet_for_task(window.store.db,t[0]) for t in tasks]);ids=[t[0] for t in tasks]
             chat.messages=[{'question':'比较这几次接口检查','taskId':ids[0],'retrievedTaskIds':ids,'packet':packet,'retrieved':[{'taskId':t[0],'title':t[3],'source':t[1],'updated':t[4]} for t in tasks],
                             'understanding':{'overview':{'text':'这里只比较本次检索到的三次任务。','basis':'recorded','evidenceRefs':['E001']},'steps':[],'gaps':[]}}]
@@ -108,7 +108,7 @@ class LiveUiTests(unittest.TestCase):
             root=Path(tmp);window=Window(root);chat=ChatWindow(window);log=root/'task.jsonl'
             rows=[{'type':'message','role':'user','sessionId':'s','cwd':'/repo/atlas','git':{'repository_url':'https://github.com/team/atlas'},'content':'修改项目说明'},
                   {'type':'function_call','sessionId':'s','name':'Bash','arguments':{'command':'git status'}}]
-            log.write_text(''.join(json.dumps(r)+'\n' for r in rows));c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True);c.db.close();task=window.store.tasks()[0][0]
+            log.write_text(''.join(json.dumps(r)+'\n' for r in rows),encoding='utf-8');c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True);c.db.close();task=window.store.tasks()[0][0]
             store=ProjectStore(root/'project_context.db',filesystem=False);ctx=store.resolve(window.store.db,task)
             packet=packet_for_task(window.store.db,task,project_context=ctx);view=project(window.store.db,task);view['projectContext']=ctx
             q='项目说明修改了什么';chat.input.setPlainText(q);chat.messages=[{'question':q,'taskId':task,'packet':packet,'presentation':view,'understanding':{'overview':{'text':'记录显示读取了仓库状态。','basis':'recorded','evidenceRefs':['E001']},'steps':[]}}]
@@ -173,7 +173,7 @@ class LiveUiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             window=Window(Path(tmp));chat=ChatWindow(window)
             log=Path(tmp)/'task.jsonl'
-            log.write_text(json.dumps({'type':'message','sessionId':'a','role':'user','content':'生成 SSH 视频'})+'\n'+json.dumps({'type':'message','sessionId':'b','role':'user','content':'上海天气'})+'\n')
+            log.write_text(json.dumps({'type':'message','sessionId':'a','role':'user','content':'生成 SSH 视频'})+'\n'+json.dumps({'type':'message','sessionId':'b','role':'user','content':'上海天气'})+'\n',encoding='utf-8')
             collector=Collector(Path(tmp)/'collector.db');collector.scan(log,source='workbuddy');window.store.advance(realtime=True)
             video=window.store.db.execute("SELECT id FROM tasks WHERE prompt='生成 SSH 视频'").fetchone()[0]
             result={'question':'查上海天气调用哪些工具','taskId':video,'presentation':{'taskId':video,'prompt':'生成 SSH 视频'}}
@@ -226,7 +226,7 @@ class LiveUiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);window=Window(root);chat=ChatWindow(window);log=root/'task.jsonl'
             records=[{'type':'message','role':'user','content':s,'sessionId':'s'} for s in ('设计会员管理页面','手机号登录，会员表格','做')]
-            log.write_text(''.join(json.dumps(r)+'\n' for r in records));c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True)
+            log.write_text(''.join(json.dumps(r)+'\n' for r in records),encoding='utf-8');c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True)
             task=window.store.db.execute("SELECT id FROM task_groups WHERE prompt='手机号登录，会员表格'").fetchone()[0]
             q='会员登录为什么这样做';chat.input.setPlainText(q)
             chat.messages=[{'question':q,'taskId':task,'presentation':project(window.store.db,task),'packet':packet_for_task(window.store.db,task),'understanding':{'overview':{'text':'需求讨论之后开始执行。','evidenceRefs':[]},'steps':[]}}]

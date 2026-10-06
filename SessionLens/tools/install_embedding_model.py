@@ -17,7 +17,7 @@ def install(folder):
         print(local,target.stat().st_size,'bytes',flush=True)
     manifest={'name':'bge-small-zh-v1.5-int8','repository':REPOSITORY,'revision':REVISION,'files':hashes,
               'dimensions':512,'pooling':'cls','queryInstruction':'为这个句子生成表示以用于检索相关文章：','license':'MIT'}
-    path=folder/'manifest.json';path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2));os.chmod(path,0o600)
+    path=folder/'manifest.json';path.write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8');os.chmod(path,0o600)
     return manifest
 
 if __name__=='__main__':

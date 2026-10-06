@@ -62,7 +62,7 @@ class MessageGraphTests(unittest.TestCase):
                      record('o3','function_call_result','c3',callId='c',output='视频生成完成'),
                      record('u2','message','o3',role='user',content='查上海天气'),
                      record('c4','function_call','u2',callId='d',name='WebSearch',arguments={'query':'上海天气'})]
-            log.write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records))
+            log.write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in records),encoding='utf-8')
             collector=Collector(dbpath);collector.scan(log,source='workbuddy');collector.db.close()
             store=TaskStore(dbpath);store.advance();task=store.db.execute("SELECT id FROM tasks WHERE prompt='生成五秒 SSH 动画'").fetchone()[0]
             turns=context_for_task(store.db,task)
@@ -89,7 +89,7 @@ class MessageGraphTests(unittest.TestCase):
             records=[{'type':'message','role':'user','content':'读文件','sessionId':'s'},
                      {'type':'reasoning','content':'先读文档','sessionId':'s'},
                      {'type':'function_call','name':'Read','callId':'c','arguments':{'path':'a.md'},'sessionId':'s'}]
-            log.write_text(''.join(json.dumps(r)+'\n' for r in records));collector=Collector(path);collector.scan(log,source='workbuddy');collector.db.close()
+            log.write_text(''.join(json.dumps(r)+'\n' for r in records),encoding='utf-8');collector=Collector(path);collector.scan(log,source='workbuddy');collector.db.close()
             store=TaskStore(path);store.advance();task=store.tasks()[0][0]
             self.assertEqual(project(store.db,task)['calls'][0]['decisionLink']['basis'],'sequence_candidate')
             self.assertFalse(packet_for_task(store.db,task)['reasoningLinks']);store.close()

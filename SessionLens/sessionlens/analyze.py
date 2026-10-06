@@ -74,7 +74,8 @@ class ReportBackend:
         password=os.environ.get('SESSIONLENS_SSH_PASSWORD')
         if not password:raise RuntimeError('Server SSH credential required')
         remote = """import json,sys,urllib.request
-config=json.load(open('/etc/agentpair/private.json'))
+with open('/etc/agentpair/private.json',encoding='utf-8') as config_file:
+ config=json.load(config_file)
 payload=json.load(sys.stdin)
 req=urllib.request.Request('https://aigc.gether.net/v1/chat/completions',data=json.dumps(payload).encode(),headers={'Authorization':'Bearer '+config['relayToken'],'Content-Type':'application/json'})
 try:

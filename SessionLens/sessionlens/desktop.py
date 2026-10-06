@@ -10,6 +10,7 @@ import urllib.request
 from urllib.parse import urlparse
 
 from .core import Collector
+from .database import connection
 
 LABELS=['用户提问','Agent 回复','解题思路','工具调用','工具返回','会话背景','用量与状态','暂未识别']
 
@@ -62,7 +63,7 @@ class Runtime:
             state={k:self.status.get(k) for k in ('knowledge','embedding_error','embedding_state')}
             try:
                 path=self.root/'knowledge-status.json';stage=self.root/'knowledge-status.tmp'
-                stage.write_text(json.dumps(state,ensure_ascii=False));os.chmod(stage,0o600);stage.replace(path)
+                stage.write_text(json.dumps(state,ensure_ascii=False),encoding='utf-8');os.chmod(stage,0o600);stage.replace(path)
             except OSError:pass
     def start(self):
         for fn in (self.collect,self.upload,self.project,self.knowledge,self.inventory):
@@ -175,7 +176,7 @@ class Runtime:
         finally:store.close()
     def snapshot(self):
         with self.lock:status=dict(self.status)
-        with sqlite3.connect(self.path,timeout=1) as db:
+        with connection(self.path,timeout=1) as db:
             status['categories']=db.execute('SELECT source,category,count(*) FROM display_index GROUP BY source,category').fetchall()
             status['saved']=db.execute('SELECT count(*) FROM events').fetchone()[0]
             status['ack']=db.execute('SELECT count(*) FROM deliveries WHERE destination=?',(self.destination,)).fetchone()[0]
@@ -224,7 +225,7 @@ class Runtime:
                     self.update(knowledge_phase='正在整理项目背景')
                     if not startup_checked:
                         import faulthandler
-                        trace=(self.root/'project-startup-stack.txt').open('w');os.chmod(self.root/'project-startup-stack.txt',0o600)
+                        trace=(self.root/'project-startup-stack.txt').open('w',encoding='utf-8');os.chmod(self.root/'project-startup-stack.txt',0o600)
                         faulthandler.dump_traceback_later(25,file=trace)
                         try:projects.sync(source,limit=2)
                         finally:faulthandler.cancel_dump_traceback_later();trace.close()

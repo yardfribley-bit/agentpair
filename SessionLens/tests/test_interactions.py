@@ -10,7 +10,7 @@ class InteractionTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.log=self.root/'s.jsonl';self.c=Collector(self.root/'collector.db');self.s=TaskStore(self.root/'collector.db')
     def tearDown(self):self.s.close();self.c.db.close();self.tmp.cleanup()
     def add(self,rows,source='workbuddy'):
-        self.log.write_text(''.join(json.dumps({'sessionId':'s',**r},ensure_ascii=False)+'\n' for r in rows));self.c.scan(self.log,source=source);self.s.advance(realtime=True);self.s.advance()
+        self.log.write_text(''.join(json.dumps({'sessionId':'s',**r},ensure_ascii=False)+'\n' for r in rows),encoding='utf-8');self.c.scan(self.log,source=source);self.s.advance(realtime=True);self.s.advance()
         while self.s.repair_links(2):pass
     def user(self,text):return {'type':'message','role':'user','content':text}
     def test_confirmations_join_goal_and_count_all_not_sampled_messages(self):

@@ -19,7 +19,7 @@ class LineageTests(unittest.TestCase):
         if self.store:self.store.close()
         self.collector.db.close();self.temp.cleanup()
     def ingest(self,records,source='workbuddy'):
-        with self.log.open('a') as f:
+        with self.log.open('a',encoding='utf-8') as f:
             for record in records:f.write(json.dumps({'sessionId':'s',**record},ensure_ascii=False)+'\n')
         self.collector.scan(self.log,source=source)
         if not self.store:self.store=TaskStore(self.path)

@@ -6,7 +6,7 @@ this projection never invents a final specification from conflicting user turns.
 import re,hashlib,json
 
 VERSION = 1
-CLASSIFIER_VERSION = 4
+CLASSIFIER_VERSION = 5
 LABELS = {'request': '原始需求', 'discussion': '继续讨论', 'revision': '调整要求',
           'approval': '确认方案', 'execution': '开始执行', 'resume': '恢复任务',
           'unresolved': '所指任务待确认'}
@@ -92,6 +92,7 @@ def _compact(text):
 def _topics(text):
     # Remove conversational glue before comparing topics, never tool outputs.
     text = re.sub(r'(?i)workbuddy|codex|agent|请|帮我|然后|现在|之前|这个|那个|一下|任务|问题|继续|方案|怎么|如何|为什么|设计|执行|实现|开发|修改|生成|创建|查一下|查询|做一个', ' ', text)
+    text = re.sub(r'\b(?:please|help|then|now|previous|this|that|task|question|continue|plan|how|why|design|execute|implement|develop|modify|generate|create|search|the|a|an|to|for|it|work|working|on)\b', ' ', text, flags=re.I)
     words = set(re.findall(r'[a-zA-Z][a-zA-Z0-9_.-]{2,}', text.lower()))
     for phrase in re.findall(r'[\u4e00-\u9fff]+', text):
         words.update(phrase[i:i+2] for i in range(len(phrase)-1))
@@ -107,14 +108,18 @@ def _topic_match(text, target):
 def classify(text, active, roots):
     """Conservative reference resolution. Return a root, role and auditable reason."""
     clean = _compact(text)
+    english = re.sub(r'[.!?]+$', '', text.strip().lower()).strip()
     execution = clean in {'做', '开始', '开始做', '做吧', '开发', '开始开发', '进入开发阶段',
                           '执行', '执行吧', '开始执行', '动手', '动手吧', '继续做', '继续推进',
                           '继续开发', '继续执行', '继续', '推进', '继续吧','干','开干','干吧','开干吧','动手做','开始干活','行干','好干','好的干','行开干','好开干'}
     execution=execution or bool(re.fullmatch(r'(?:做|干|开干|执行)(?:我)?(?:想)?(?:看|看看|看一下)(?:效果|结果)',clean))
+    execution=execution or english in {'go ahead','do it','implement it','proceed','continue','continue working','start implementation','build it','please proceed','please do it'}
     approval = clean in {'好', '好的', '可以', '对', '对的', '是的', '嗯', '嗯嗯', 'ok',
                          '确认', '就这样', '这个版本可以', '就按这个', '按这个来', '同意','行','行吧','好吧','可以的','没问题','收到','批准'}
+    approval=approval or english in {'yes','okay','looks good','approved','agreed','sounds good','that works','sure'}
     # A named resume is resolved among previous roots, before considering active.
     resume = re.match(r'^(?:回到|回头继续|接着做|继续(?:做|开发|修改)?)(.+)', clean)
+    if not resume:resume=re.match(r'^(?:go back to|return to|resume|continue working on|continue with)\s+(.+)',english)
     if resume and not execution:
         matches = [r for r in roots if _topic_match(resume[1], r['requirements'])]
         if len(matches) == 1: return matches[0]['id'], 'resume', '用户明确恢复此前主题'
@@ -123,6 +128,7 @@ def classify(text, active, roots):
         if active: return active['id'], 'execution' if execution else 'approval', '承接同一会话当前方案的简短指令'
         return None, 'unresolved', '指令没有可追溯的前置需求'
     explicit_new = bool(re.match(r'^(?:另一个任务|新任务|另外|换个任务|先不做这个|先不做了|停止这个任务)', clean))
+    explicit_new=explicit_new or bool(re.match(r'^(?:new task|another task|switch tasks|stop this task)\b',english))
     if explicit_new: return None, 'request', '用户明确切换任务'
     # Feedback and elliptical questions are not new goals merely because they
     # don't repeat the original subject. Require an existing active goal plus
@@ -137,8 +143,11 @@ def classify(text, active, roots):
     reference = bool(re.match(r'^(?:严格)?(?:按(?:照)?(?:我们|刚才|上面|这|那|现有|之前)|就按|在此基础|在这个基础|这个版本|这一个版本|这个方案|这个任务|它|这次的|那次的|(?:解决|修复|处理)(?:这个|这一个|刚才的)问题)', clean))
     revision = bool(re.match(r'^(?:改成|改为|调整为|加上|增加|补上|补齐|支持|不要|不需要|只要|保留|去掉|删除|输入框|按钮|颜色|字体)', clean))
     discuss = bool(re.match(r'^(?:为什么(?:要|这样|这么)|这样(?:可以|会|能)|这个(?:可以|不行)|感觉(?:还是|不行)|不对|不认可)', clean))
+    reference=reference or bool(re.match(r'^(?:follow|use|implement) (?:this|that|the previous) (?:plan|design|approach)\b',english))
+    revision=revision or bool(re.match(r'^(?:change|adjust|replace|remove|keep|update) (?:this|that|the current)\b',english))
+    discuss=discuss or bool(re.match(r'^(?:why (?:this|that) (?:change|approach|decision)|why did you do that|explain this (?:change|approach)|this (?:does not|doesn.t) work)\b',english))
     if active and (reference or revision or discuss):
-        role = 'execution' if reference and re.search(r'开发|开始做|进行开发|执行', clean) else 'revision' if revision or reference else 'discussion'
+        role = 'execution' if reference and (re.search(r'开发|开始做|进行开发|执行', clean) or english.startswith('implement ')) else 'revision' if revision or reference else 'discussion'
         return active['id'], role, '用户明确承接或修改当前方案'
     return None, 'request', '独立需求；没有足够的承接证据'
 

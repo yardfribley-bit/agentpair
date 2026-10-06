@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,Q
 from .project_inventory import ProjectInventory
 from .supervision import event_text
 from .i18n import language,t,localize_widgets
+from .database import connection
 
 def task_preview(text):
     # Keep useful host/user context in summaries; conceal the password tail.
@@ -88,7 +89,7 @@ class ProjectWindow(QDialog):
         if index>=0:self.taskRequested.emit(self.detail['tasks'][index]['taskId'])
     def proof(self,index):
         if index<0:return
-        with sqlite3.connect((self.root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=.2) as source:
+        with connection((self.root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=.2) as source:
             ident=self.detail['evidence'][index]['eventId'];row=source.execute('SELECT CASE WHEN length(event)<=262144 THEN event END FROM events WHERE id=?',(ident,)).fetchone()
             excerpt=source.execute('SELECT substr(excerpt,1,16000) FROM task_steps WHERE event=?',(ident,)).fetchone() if row and not row[0] else None
         text=event_text(json.loads(row[0]))[:16000] if row and row[0] else t('大记录仅展示索引摘录：')+'\n'+excerpt[0] if excerpt else t('原始证据暂不可用')

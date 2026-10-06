@@ -11,7 +11,7 @@ class QuestionEvidenceTests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name);self.log=self.root/'log.jsonl'
     def tearDown(self):self.tmp.cleanup()
     def load(self,rows):
-        self.log.write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in rows));c=Collector(self.root/'collector.db');c.scan(self.log,max_records=2000,source='workbuddy');c.db.close();s=TaskStore(self.root/'collector.db');s.advance(2000);s.repair_links(10);return s
+        self.log.write_text(''.join(json.dumps(r,ensure_ascii=False)+'\n' for r in rows),encoding='utf-8');c=Collector(self.root/'collector.db');c.scan(self.log,max_records=2000,source='workbuddy');c.db.close();s=TaskStore(self.root/'collector.db');s.advance(2000);s.repair_links(10);return s
     def test_middle_specific_call_and_return_are_selected_with_requirement(self):
         rows=[{'type':'message','role':'user','sessionId':'s','content':'检查接口兼容性'}]
         for n in range(180):

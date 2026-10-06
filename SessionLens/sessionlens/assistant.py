@@ -8,6 +8,7 @@ import urllib.request
 from urllib.parse import urlparse
 from .supervision import event_text
 from .task_lineage import task_table,step_table,resolve,history,execution_map,exists,signature
+from .database import connection
 
 VERSION=7
 
@@ -150,10 +151,10 @@ def run(root,config,task_id,question,progress=lambda text:None,packet=None):
     if not endpoint or not tokenfile:raise ValueError('尚未配置 AgentPair 分析服务，请打开采集状态 / 设置')
     token=Path(tokenfile).read_text(encoding='utf-8').strip()
     if packet is None:
-        with sqlite3.connect(Path(root)/'collector.db',timeout=10) as db:packet=packet_for_task(db,task_id)
+        with connection(Path(root)/'collector.db',timeout=10) as db:packet=packet_for_task(db,task_id)
     body={'question':question,'packet':packet}
     key=hashlib.sha256((endpoint+'\n'+json.dumps(body,ensure_ascii=False,sort_keys=True)).encode()).hexdigest()
-    with sqlite3.connect(Path(root)/'assistant.db') as cache:
+    with connection(Path(root)/'assistant.db') as cache:
         cache.execute('CREATE TABLE IF NOT EXISTS answers(id TEXT PRIMARY KEY,task TEXT,question TEXT,result TEXT)')
         row=cache.execute('SELECT result FROM answers WHERE id=?',(key,)).fetchone()
         if row:progress('已读取这份任务记录的分析');return json.loads(row[0])
@@ -162,7 +163,7 @@ def run(root,config,task_id,question,progress=lambda text:None,packet=None):
         result=request_json(endpoint+'/jobs/'+job['id'],token)
         if result['status']=='completed':
             result['packet']=packet;result['question']=question;result['taskId']=task_id
-            with sqlite3.connect(Path(root)/'assistant.db') as cache:cache.execute('INSERT OR REPLACE INTO answers VALUES(?,?,?,?)',(key,task_id,question,json.dumps(result,ensure_ascii=False)))
+            with connection(Path(root)/'assistant.db') as cache:cache.execute('INSERT OR REPLACE INTO answers VALUES(?,?,?,?)',(key,task_id,question,json.dumps(result,ensure_ascii=False)))
             return result
         if result['status'] in ('failed','needs_attention','cancelled','interrupted'):raise RuntimeError(result.get('error','分析未通过复核，请稍后重试'))
         progress(result.get('stage','正在分析').replace('DeepSeek','助手'));time.sleep(1)

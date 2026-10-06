@@ -52,10 +52,10 @@ def run(collector,config,dataset,folder):
     report={'scope':'offline task-goal retrieval; not answer accuracy or full-history completeness','corpusTasks':len(rows),'corpusSha256':corpus_hash,
             'model':engine.name,'modelIdentity':engine.identity,'dimensions':engine.dimensions,'datasetSha256':hashlib.sha256(json.dumps(dataset,ensure_ascii=False,sort_keys=True).encode()).hexdigest(),
             'vectorBuildSeconds':round(build_seconds,3),'vectorBytes':vectors.status()['bytes'],'networkRequests':0,'summary':summary,'cases':results}
-    path=folder/'results.json';path.write_text(json.dumps(report,ensure_ascii=False,indent=2));os.chmod(path,0o600)
+    path=folder/'results.json';path.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8');os.chmod(path,0o600)
     print(json.dumps({k:v for k,v in report.items() if k!='cases'},ensure_ascii=False),flush=True)
     vectors.close();lexical.close();source.close();return report
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--collector',required=True);parser.add_argument('--config',required=True);parser.add_argument('--dataset',required=True);parser.add_argument('--output',required=True);args=parser.parse_args()
-    run(args.collector,json.loads(Path(args.config).read_text()),json.loads(Path(args.dataset).read_text()),args.output)
+    run(args.collector,json.loads(Path(args.config).read_text(encoding='utf-8')),json.loads(Path(args.dataset).read_text(encoding='utf-8')),args.output)

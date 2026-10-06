@@ -3,6 +3,7 @@ from collections import Counter
 import hashlib,json,re,sqlite3
 from pathlib import Path
 from .project_inventory import ProjectInventory,inventory_question,MARKERS
+from .database import connection
 
 def matches_name(question,name):
     # Names come from the live catalogue, never a weather/video fixture.
@@ -15,7 +16,7 @@ def prepare_relations(root,source,tasks):
     rows=source.execute('SELECT DISTINCT q.source,q.session FROM task_link_queue q JOIN task_groups g ON g.source=q.source AND g.session=q.session WHERE g.id IN ('+marks+') LIMIT 4',tasks[:500]).fetchall()
     if not rows:return
     from .task_lineage import rebuild_session
-    with sqlite3.connect(Path(root)/'collector.db',timeout=.3) as writer:
+    with connection(Path(root)/'collector.db',timeout=.3) as writer:
         for provider,session in rows:
             count=writer.execute('SELECT count(*) FROM task_steps s JOIN tasks t ON t.id=s.task WHERE t.source=? AND t.session=?',(provider,session)).fetchone()[0]
             if count<=10000:
@@ -25,7 +26,7 @@ def prepare_relations(root,source,tasks):
 def local_project_query(root,question,source='',previous=None,selected=None):
     previous=previous or {};root=Path(root)
     agent='workbuddy' if 'workbuddy' in question.lower() else 'codex' if 'codex' in question.lower() else source or ''
-    with sqlite3.connect((root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=1) as db:
+    with connection((root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=1) as db:
         path=root/'project_inventory.db'
         if not path.exists():return {'question':question,'projectChoices':[],'projectMessage':'项目知识正在准备中，采集记录仍保留在本机。'} if '项目' in question or re.search(r'\bprojects?\b',question,re.I) else None
         store=ProjectInventory(path,filesystem=False,read_only=True)

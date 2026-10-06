@@ -50,7 +50,7 @@ class LanguageShellTests(unittest.TestCase):
         self.assertEqual(self.chat.input.toPlainText(), draft)
         self.assertEqual(self.chat.send_button.text(), 'Ask')
         self.assertIn('Ask about a project', self.chat.input.placeholderText())
-        saved=json.loads((self.root/'settings.json').read_text())
+        saved=json.loads((self.root/'settings.json').read_text(encoding='utf-8'))
         self.assertEqual(saved['ui']['language'], 'en')
         self.assertEqual(saved['model'], self.config['model'])
         self.assertEqual(saved['sources'], self.config['sources'])

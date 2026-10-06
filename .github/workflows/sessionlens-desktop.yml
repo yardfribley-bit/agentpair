@@ -10,6 +10,8 @@ jobs:
       matrix:
         os: [macos-14, windows-2022]
     runs-on: ${{ matrix.os }}
+    env:
+      PYTHONIOENCODING: utf-8
     defaults:
       run:
         working-directory: SessionLens

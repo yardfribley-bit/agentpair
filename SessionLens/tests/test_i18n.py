@@ -112,7 +112,7 @@ class I18nTests(unittest.TestCase):
                 {'type': 'function_call', 'name': 'Write', 'arguments': {'file_path': '/work/orchard-kit/pyproject.toml', 'content': '[project]'}},
             ]
             log = root / 'records.jsonl'
-            log.write_text(''.join(json.dumps({'sessionId': 's', **row}, ensure_ascii=False) + '\n' for row in rows))
+            log.write_text(''.join(json.dumps({'sessionId': 's', **row}, ensure_ascii=False) + '\n' for row in rows),encoding='utf-8')
             collector.scan(log, source='workbuddy')
             store.advance()
             store.advance(realtime=True)

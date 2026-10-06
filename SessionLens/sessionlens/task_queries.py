@@ -5,6 +5,7 @@ from .task_lineage import resolve,task_table
 from .interactions import task_interactions,interaction_question
 from .task_presentation import project
 from .assistant import packet_for_task
+from .database import connection
 from .i18n import answer_language,t
 
 def local_task_query(root,question,previous=None,selected=None):
@@ -19,7 +20,7 @@ def local_task_query(root,question,previous=None,selected=None):
             return {'question':question,'selectionNeeded':True,'options':[{'taskId':t['taskId'],'title':t['prompt'],'source':previous['projectDetails']['source'],'updated':t['updated']} for t in previous['projectDetails']['tasks'][:12]],'selectionMessage':'这个项目有多项任务，请确认你指的是哪一项。'}
         return None
     if not selected and not (any(w in question for w in ('这次','这个','该任务','这项','它','用户','模型','对话','交互')) or re.search(r'\b(?:this|that|it|its|user|model|conversation|interaction|turns?)\b',question,re.I)):return None
-    with sqlite3.connect((Path(root)/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=1) as db:
+    with connection((Path(root)/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=1) as db:
         db.execute('BEGIN');task=resolve(db,selected or previous_task)
         row=db.execute('SELECT source,prompt FROM '+task_table(db)+' WHERE id=?',(task,)).fetchone()
         if not row or explicit and explicit!=row[0]:return None

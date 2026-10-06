@@ -4,11 +4,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 from .assistant import NoRedirect
 from .i18n import answer_language
+from .database import connection
 
 def call(config,system,data,max_tokens=7000,_retried=False):
     url=config.get('url','');parsed=urlparse(url)
     if parsed.scheme!='https' or not parsed.netloc or parsed.username or parsed.password:raise ValueError('请配置 HTTPS 模型接口')
-    secret=json.loads(Path(config['credentialFile']).read_text())['apiKey']
+    secret=json.loads(Path(config['credentialFile']).read_text(encoding='utf-8'))['apiKey']
     payload={'model':config['name'],'temperature':0,'max_tokens':max_tokens,'response_format':{'type':'json_object'},'messages':[{'role':'system','content':system},{'role':'user','content':json.dumps(data,ensure_ascii=False)}]}
     if 'deepseek' in config.get('name','').lower():payload['thinking']={'type':'disabled'}
     req=urllib.request.Request(url,json.dumps(payload,ensure_ascii=False).encode(),{'Authorization':'Bearer '+secret,'Content-Type':'application/json'})
@@ -30,7 +31,7 @@ def answer(root,config,question,packet,history):
         return call(config,system+'\n\n'+instruction,data)
     body={'question':question,'records':packet,'history':[{'question':r.get('question'),'answer':r.get('understanding',{}).get('overview',{}).get('text','')[:600]} for r in history[-2:]]}
     key=hashlib.sha256(json.dumps({'v':7,'url':config['url'],'model':config['name'],'language':response_language,'body':body},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
-    with sqlite3.connect(Path(root)/'assistant.db') as db:
+    with connection(Path(root)/'assistant.db') as db:
         db.execute('CREATE TABLE IF NOT EXISTS relay_answers(id TEXT PRIMARY KEY,result TEXT)')
         cached=db.execute('SELECT result FROM relay_answers WHERE id=?',(key,)).fetchone()
     if cached:return json.loads(cached[0])
@@ -54,7 +55,7 @@ def answer(root,config,question,packet,history):
             validate(corrected,refs)
         result=corrected
     result['qualityAudit']={'reviewed':True,'issuesCorrected':review.get('issues',[])}
-    with sqlite3.connect(Path(root)/'assistant.db') as db:db.execute('INSERT OR REPLACE INTO relay_answers VALUES(?,?)',(key,json.dumps(result,ensure_ascii=False)))
+    with connection(Path(root)/'assistant.db') as db:db.execute('INSERT OR REPLACE INTO relay_answers VALUES(?,?)',(key,json.dumps(result,ensure_ascii=False)))
     return result
 
 

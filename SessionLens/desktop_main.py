@@ -13,6 +13,7 @@ from sessionlens.supervision import TaskStore,describe,event_text
 from sessionlens.assistant import run as run_assistant
 from sessionlens.desktop import Runtime,defaults,state_root,LABELS
 from sessionlens.i18n import language,t,localize_widgets
+from sessionlens.database import connection
 
 STYLE='''QWidget {font-family: Arial; font-size:14px; color:#233247; background:#F7F8FA;} QMainWindow {background:#F7F8FA;} QLabel {background:transparent;} QLabel#title {font-size:28px;font-weight:700;} QLabel#sub {color:#6a7a91;} QGroupBox {background:white;border:1px solid #E6E8EC;border-radius:10px;margin-top:12px;padding:18px;} QGroupBox::title {subcontrol-origin:margin;left:16px;padding:0 5px;font-weight:600;} QPushButton {background:#1769ef;color:white;border:0;border-radius:6px;padding:10px 16px;} QPushButton:checked {background:#e9f0fb;color:#275eb2;border:1px solid #275eb2;} QPushButton:disabled {background:#9aaac3;} QTextBrowser,QListWidget,QLineEdit,QPlainTextEdit,QTableWidget {background:white;border:1px solid #E6E8EC;border-radius:5px;padding:5px;} QListWidget::item:selected {background:#e9f0fb;color:#202d3d;} QTextBrowser {padding:14px;} QHeaderView::section {background:#edf2fa;padding:9px;border:0;font-weight:600;} QProgressBar {border:0;background:#e4eaf5;height:8px;border-radius:4px;text-align:center;} QProgressBar::chunk {background:#1769ef;border-radius:4px;}'''
 
@@ -120,7 +121,7 @@ class Window(QMainWindow):
         def work():
             from sessionlens.semantic_lineage import refine
             try:
-                with sqlite3.connect(self.root/'collector.db',timeout=10) as db:
+                with connection(self.root/'collector.db',timeout=10) as db:
                     root=refine(db,model,task,'核对这些轮次是否延续同一用户目标，保留中断、重试和不同任务的边界。',self.association_signals.progress.emit,turn_ids=scope)
                 self.association_signals.result.emit({'task':task,'root':root,'scope':scope})
             except Exception as exc:self.association_signals.failed.emit(str(exc)[:250])
@@ -256,7 +257,7 @@ class Window(QMainWindow):
         content=dialogue_html+'<hr>'+content
         if row[0] not in self.answers and (self.root/'assistant.db').exists():
             try:
-                with sqlite3.connect(self.root/'assistant.db') as cache:saved=cache.execute('SELECT result FROM answers WHERE task=? ORDER BY rowid DESC LIMIT 1',(row[0],)).fetchone()
+                with connection(self.root/'assistant.db') as cache:saved=cache.execute('SELECT result FROM answers WHERE task=? ORDER BY rowid DESC LIMIT 1',(row[0],)).fetchone()
                 if saved:self.answers[row[0]]=json.loads(saved[0])
             except (sqlite3.Error,ValueError):pass
         answer=self.answers.get(row[0])
@@ -326,7 +327,7 @@ class Window(QMainWindow):
         if self.selected_event:self.store.mark(self.selected_event);self.mark.setText('取消待核实标记' if self.store.marked(self.selected_event) else '标记待核实');localize_widgets(self.mark)
     def details(self):
         if not self.selected_event:return
-        with sqlite3.connect(self.root/'collector.db') as db:record=db.execute('SELECT event FROM events WHERE id=?',(self.selected_event,)).fetchone()
+        with connection(self.root/'collector.db') as db:record=db.execute('SELECT event FROM events WHERE id=?',(self.selected_event,)).fetchone()
         dialog=QDialog(self);dialog.setWindowTitle('采集原文与证据来源');dialog.resize(900,600);v=QVBoxLayout(dialog);text=QPlainTextEdit();text.setReadOnly(True);raw=record[0]
         text.setPlainText(raw[:100000] if len(raw)>100000 else json.dumps(json.loads(raw),ensure_ascii=False,indent=2));v.addWidget(text);export=QPushButton('导出完整记录');v.addWidget(export)
         def save():
@@ -362,7 +363,7 @@ def main():
     from sessionlens.chat_window import ChatWindow
     chat=ChatWindow(window)
     if answer_view_test:
-        index=sys.argv.index('--verify-knowledge-view');result=json.loads(Path(sys.argv[index+1]).read_text());output=Path(sys.argv[index+2])
+        index=sys.argv.index('--verify-knowledge-view');result=json.loads(Path(sys.argv[index+1]).read_text(encoding='utf-8'));output=Path(sys.argv[index+2])
         # Render caller-owned recorded results locally; no model or retrieval.
         window.config['model']={};chat.messages=[result];chat.input.setPlainText(result.get('question',''));chat.render();chat.show();app.processEvents()
         assert chat.results.currentWidget()==chat.knowledge_view
@@ -383,7 +384,7 @@ def main():
         def check_project_query():
             if chat.busy and monotonic()-started<30:return
             timer.stop();value=chat.messages[-1] if chat.messages else {'error':'query timeout'}
-            output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(value,ensure_ascii=False,indent=2));os.chmod(output,0o600)
+            output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8');os.chmod(output,0o600)
             chat.grab().save(str(output.with_suffix('.png')))
             passed=value.get('engine') in ('sessionlens.local_projects.v1','sessionlens.local_tasks.v1')
             print('SessionLens product project query '+('passed' if passed else 'failed')+': '+question,flush=True)
@@ -422,7 +423,7 @@ def main():
     if conversation_test:
         from time import monotonic
         from sessionlens import relay_model
-        fixture_data=json.loads(Path(sys.argv[sys.argv.index('--verify-conversation')+1]).read_text())
+        fixture_data=json.loads(Path(sys.argv[sys.argv.index('--verify-conversation')+1]).read_text(encoding='utf-8'))
         fixture=fixture_data['steps'] if isinstance(fixture_data,dict) else fixture_data
         output=Path(sys.argv[sys.argv.index('--verify-conversation')+2])
         original_answer=relay_model.answer
@@ -472,7 +473,7 @@ def main():
             chat.grab().save(str(output.with_suffix(''))+'-'+str(state['index'])+'.png')
             print('Conversation step '+str(state['index']+1)+(' passed' if success else ' failed'),flush=True)
             if success and state['index']+1<len(fixture):state['index']+=1;submit();return
-            timer.stop();output.write_text(json.dumps(state['results'],ensure_ascii=False));chat.close();app.exit(0 if success else 1)
+            timer.stop();output.write_text(json.dumps(state['results'],ensure_ascii=False),encoding='utf-8');chat.close();app.exit(0 if success else 1)
         timer.timeout.connect(check_conversation);submit();timer.start(250);return app.exec()
     if query_test:
         from time import monotonic
@@ -488,7 +489,7 @@ def main():
             if chat.busy and monotonic()-started<240:return
             timer.stop()
             success=bool(chat.messages and not chat.messages[-1].get('error') and chat.input.toPlainText()==question and chat.results.currentWidget()==chat.knowledge_view)
-            if chat.messages:output.write_text(json.dumps(chat.messages[-1],ensure_ascii=False))
+            if chat.messages:output.write_text(json.dumps(chat.messages[-1],ensure_ascii=False),encoding='utf-8')
             chat.grab().save('/private/tmp/sessionlens-query-ui.png')
             print('Installed assistant query '+('passed' if success else 'failed'),flush=True)
             if not success and chat.messages:print(chat.messages[-1].get('error','界面显示失败'),flush=True)
@@ -496,7 +497,7 @@ def main():
         timer.timeout.connect(check_query);timer.start(250);return app.exec()
     if verify:
         from PySide6.QtCore import QUrl
-        result_path=Path(sys.argv[sys.argv.index('--verify-ui')+1]);result=json.loads(result_path.read_text())
+        result_path=Path(sys.argv[sys.argv.index('--verify-ui')+1]);result=json.loads(result_path.read_text(encoding='utf-8'))
         chat.messages=[result];chat.input.setPlainText(result['question']);chat.render();chat.show();app.processEvents()
         assert chat.input.height()>=72
         assert chat.input.toPlainText()==result['question']
