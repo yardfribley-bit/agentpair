@@ -265,23 +265,24 @@ class ChatWindow(QMainWindow):
         # Show only the latest question here. A failed/new query must not leave
         # the previous task at the top of the visible answer panel.
         for n,r in list(enumerate(self.messages))[-1:]:
-            content+='<a name="answer-'+str(n)+'"></a><hr><h3>你</h3><p>'+esc(r['question'])+'</p><h3>SessionLens</h3>'
-            if r.get('error'):content+='<p>'+esc(r['error'])+'</p>';continue
+            content+='<a name="answer-'+str(n)+'"></a><hr><h3>'+esc(t('你'))+'</h3><p>'+esc(r['question'])+'</p><h3>SessionLens</h3>'
+            if r.get('error'):content+='<p>'+esc(t(r['error']))+'</p>';continue
             value=r['understanding']
             for block in [value['overview']]+value['steps']:
                 if block.get('title'):content+='<h3>'+esc(block['title'])+'</h3>'
-                content+='<p>'+esc(({'inferred':'推断：','unknown':'记录未能确认：'}.get(block['basis'],''))+block['text'])+'</p>'
-                content+='<p>'+ '　'.join(f'<a href="proof:{n}:{ref}">{ref} 查看依据</a>' for ref in block['evidenceRefs'])+'</p>'
+                content+='<p>'+esc(t({'inferred':'推断：','unknown':'记录未能确认：'}.get(block['basis'],''))+block['text'])+'</p>'
+                content+='<p>'+ '　'.join(f'<a href="proof:{n}:{ref}">{ref} '+esc(t('查看依据'))+'</a>' for ref in block['evidenceRefs'])+'</p>'
             for gap in value.get('gaps',[]):content+='<p style="color:#88663b">'+esc(str(gap))+'</p>'
             if r.get('packet',{}).get('scope')=='multiple':
-                content+='<h3>本次参考的任务</h3>'
+                content+='<h3>'+esc(t('本次参考的任务'))+'</h3>'
                 for item in r.get('retrieved',[]):
-                    content+='<p><b>'+esc(item['source']+' · '+str(item.get('updated',''))[:16].replace('T',' '))+'</b><br>'+esc(item['title'][:140])+f'<br><a href="inspect-task:{esc(item["taskId"])}">查看这次任务过程</a></p>'
-                content+='<p style="color:#758397">最多比较 3 个检索到的任务，受所选来源、时间和当前整理进度限制。</p>'
+                    content+='<p><b>'+esc(item['source']+' · '+str(item.get('updated',''))[:16].replace('T',' '))+'</b><br>'+esc(item['title'][:140])+f'<br><a href="inspect-task:{esc(item["taskId"])}">'+esc(t('查看这次任务过程'))+'</a></p>'
+                content+='<p style="color:#758397">'+esc(t('最多比较 3 个检索到的任务，受所选来源、时间和当前整理进度限制。'))+'</p>'
             content+='<p style="color:#758397">'+esc(' · '.join(x['source']+' / '+x['title'] for x in r.get('retrieved',[])))+'</p>'
             packet=r.get('packet',{});fragments=packet.get('fragments',[])
-            content+='<p style="color:#758397">本次读取 '+str(len(fragments))+' / '+str(packet.get('totalRecords',len(fragments)))+' 条记录'+('，部分正文已截取' if any(f.get('truncated') for f in fragments) else '')+'；引用可核对原文。</p>'
-            content+='<p style="color:#758397">已参考 '+str(len(r.get('retrievedTaskIds',[])))+' 个任务 · 当前已整理知识库中的相关证据</p>'
+            coverage=('Read '+str(len(fragments))+' / '+str(packet.get('totalRecords',len(fragments)))+' records'+('; some excerpts are truncated' if any(f.get('truncated') for f in fragments) else '')+'. Check citations against original records.' if language()=='en' else '本次读取 '+str(len(fragments))+' / '+str(packet.get('totalRecords',len(fragments)))+' 条记录'+('，部分正文已截取' if any(f.get('truncated') for f in fragments) else '')+'；引用可核对原文。')
+            count=len(r.get('retrievedTaskIds',[]));scope_note=f'Referenced {count} tasks · Relevant evidence in the current local index' if language()=='en' else f'已参考 {count} 个任务 · 当前已整理知识库中的相关证据'
+            content+='<p style="color:#758397">'+esc(coverage)+'</p><p style="color:#758397">'+esc(scope_note)+'</p>'
         if self.busy:content+='<hr><h3>你</h3><p>'+esc(self.pending)+'</p><p style="color:#758397">正在查找与核对记录…</p>'
         self.answer.setHtml(content)
     def send(self,selected_task=None,selected_project=None):
@@ -351,14 +352,14 @@ class ChatWindow(QMainWindow):
         if int(n)>=len(self.messages):return
         r=self.messages[int(n)];f=next((x for x in r.get('packet',{}).get('fragments',[]) if x['evidenceId']==ref),None)
         if not f:
-            self.status.setText('这条记录不在本次回答的引用摘录里；可在对应步骤查看原始参数与返回。');return
+            self.status.setText(t('这条记录不在本次回答的引用摘录里；可在对应步骤查看原始参数与返回。'));return
         self.stop_playback()
         from .message_graph import bounded_event
         with connection(self.root/'collector.db') as db:e=bounded_event(db,f['eventId'])
-        if not e:self.status.setText('这条原始记录暂不可用；回答引用的摘录仍保存在本次对话中。');return
+        if not e:self.status.setText(t('这条原始记录暂不可用；回答引用的摘录仍保存在本次对话中。'));return
         esc=html.escape;loc=e.get('evidence',{})
         owner=next((x['title'] for x in r.get('retrieved',[]) if x.get('taskId')==f.get('taskId')),None)
-        self.proof.setHtml('<h3>'+esc(ref)+' · 原始证据</h3>'+('<p>大记录仅显示已索引摘录，完整原文仍保留在本机。</p>' if e.get('_bodyTruncated') else '')+('<p>所属任务：'+esc(owner[:160])+'</p>' if owner else '')+'<p>'+esc(str(e.get('name') or e['kind']))+'</p><pre style="white-space:pre-wrap">'+esc(event_text(e)[:20000])+'</pre><hr><p>'+esc(str(loc.get('path','')))+ '</p><p>字节 '+str(loc.get('byteStart'))+'–'+str(loc.get('byteEnd'))+'</p>');self.proof_panel.show();self.split.setSizes([650,350])
+        self.proof.setHtml('<h3>'+esc(ref)+' · '+esc(t('原始证据'))+'</h3>'+('<p>'+esc(t('大记录仅显示已索引摘录，完整原文仍保留在本机。'))+'</p>' if e.get('_bodyTruncated') else '')+('<p>'+esc(t('所属任务：'))+esc(owner[:160])+'</p>' if owner else '')+'<p>'+esc(str(e.get('name') or e['kind']))+'</p><pre style="white-space:pre-wrap">'+esc(event_text(e)[:20000])+'</pre><hr><p>'+esc(str(loc.get('path','')))+ '</p><p>'+esc(t('字节'))+' '+str(loc.get('byteStart'))+'–'+str(loc.get('byteEnd'))+'</p>');self.proof_panel.show();self.split.setSizes([650,350])
     def closeEvent(self,event):
         self.knowledge_timer.stop()
         self.stop_playback()

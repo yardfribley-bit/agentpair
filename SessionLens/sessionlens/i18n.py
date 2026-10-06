@@ -44,6 +44,15 @@ CATALOG = {
     '向量整理达到预算，已暂停': 'Vector index budget reached; indexing paused',
     '语义检索未就绪': 'Semantic search is not ready',
     '历史整理中': 'Organizing history', '仅本地保存': 'Saved locally',
+    '本地采集运行中': 'Local collection is running', '正在读取日志': 'Reading logs', '仅本地': 'Local only',
+    '你': 'You', '推断：': 'Inferred: ', '记录未能确认：': 'Not confirmed by records: ',
+    '本次参考的任务': 'Tasks referenced in this answer', '查看这次任务过程': 'View this task process',
+    '大记录仅显示已索引摘录，完整原文仍保留在本机。': 'Large records show indexed excerpts; complete originals remain on this device.',
+    '原始证据': 'Original evidence',
+    '所属任务：': 'Task: ',
+    '最多比较 3 个检索到的任务，受所选来源、时间和当前整理进度限制。': 'Compares up to three retrieved tasks, limited by the selected source, time range and current indexing progress.',
+    '这条记录不在本次回答的引用摘录里；可在对应步骤查看原始参数与返回。': 'This record is not in the cited excerpts. Inspect original parameters and returns in the corresponding step.',
+    '这条原始记录暂不可用；回答引用的摘录仍保存在本次对话中。': 'This original record is unavailable; its cited excerpt remains saved in this conversation.',
     '采集尚未启动': 'Collection has not started', '当前机器上的日志 → 本地任务库 → 平台接收': 'Device logs → Local task history → Platform',
     '已整理内容：用户提问、回复、已记录的思路、工具调用与结果': 'Indexed: user questions, replies, recorded reasoning, tool calls and results',
     '上报与采集设置': 'Upload and collection settings', '关闭': 'Close', '取消': 'Cancel',
@@ -202,6 +211,7 @@ CATALOG = {
 }
 
 _PATTERNS = [
+    (r'原始记录保存在本机：(.+)', lambda m: 'Original records are stored on this device: ' + m[1]),
     (r'知识库可检索 (\d+) 个任务', lambda m: f'{m[1]} searchable tasks'),
     (r'证据整理完成 (\d+) 个', lambda m: f'{m[1]} tasks with indexed evidence'),
     (r'待整理 (\d+) 个', lambda m: f'{m[1]} tasks pending indexing'),
