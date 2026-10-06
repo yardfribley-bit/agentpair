@@ -195,7 +195,7 @@ class PlatformTests(unittest.TestCase):
         (assets/('SessionLens-Windows-'+'A'*64+'.zip')).write_bytes(b'test fixture')
         with patch('agentpair.platform.ASSETS',assets):
             with self.assertRaises(urllib.error.HTTPError) as error:
-                self.client.open(self.url+'/downloads/SessionLens-Windows-'+'a'*64+'.zip')
+                self.client.open(self.url+'/downloads/SessionLens-Windows-'+'b'*64+'.zip')
             self.assertEqual(error.exception.code,503);error.exception.close()
             suffixes=['A'*64+'.zip','a'*63+'.zip','a'*65+'.zip','g'*64+'.zip',
                       'a'*64+'.ZIP','a'*64+'.zip/extra','../SessionLens-Windows.zip',
