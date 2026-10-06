@@ -73,7 +73,7 @@ class ResourceManager:
         userdata='#cloud-config\nusers:\n  - default\n  - name: pair\n    lock_passwd: true\n    groups: sudo\n    sudo: ALL=(ALL) NOPASSWD:ALL\n    ssh_authorized_keys:\n      - '+ssh_public_key.strip()+'\nssh_pwauth: false\npackages: [git, python3, ca-certificates]\nwrite_files:\n  - path: /etc/agentpair-driver\n    permissions: "0444"\n    content: isolated-driver\n'
         request={**config,'Name':name,'MaxCount':1,'MinCount':1,
                  'LoginMode':'Password',
-                 'Password':base64.b64encode(('Ap9!'+secrets.token_hex(20)).encode()).decode(),
+                 'Password':base64.b64encode(('Ap9!'+secrets.token_hex(10)).encode()).decode(),
                  'SecurityGroupId':config['SecurityGroupId'],
                  'UserData':base64.b64encode(userdata.encode()).decode(),
                  'NetworkInterface.0.EIP.Bandwidth':eip['Bandwidth'],
