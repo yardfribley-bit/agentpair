@@ -269,6 +269,9 @@ class TaskEngine:
                             'history':task['messages'], 'outputs':outputs}
                 envelope['task'].update(id=tid,jobId=job_id,engineeringMethod=task.get('engineeringMethod','local'),executionProfile=task.get('executionProfile','none'))
                 cloud_workflow = getattr(self, 'cloud_workflow', None)
+                platform_assistant = getattr(self, 'platform_assistant', None)
+                if platform_assistant and not task.get('securityEvidence'):
+                    envelope['task']['platformCapabilities'] = platform_assistant.capabilities()
                 if cloud_workflow and not task.get('securityEvidence'):
                     envelope['task']['cloudCapabilities'] = cloud_workflow.capabilities()
                 if task.get('securityEvidence'):
@@ -322,6 +325,8 @@ class TaskEngine:
                         task['events'].append({'at':now(),'round':task['round'],'kind':'tool_result','stage':stage,
                             'role':role,'jobId':job_id,'text':evidence_text,'evidence':evidence})
                     self._save(task)
+                if stage == 'plan' and platform_assistant and platform_assistant.prepare(tid, answer['answer'], outputs):
+                    return
                 if stage == 'plan' and cloud_workflow and cloud_workflow.prepare(tid, answer['answer'], outputs):
                     return
                 blocking_reason = (_plan_blocking_reason(answer['answer'], task) if stage == 'plan'

@@ -8,6 +8,7 @@ function renderDeliverables(task){
  const cloud=t=>t.cloudAction?.round===t.round?t.cloudAction:null;
  deliverables.append(el('p',cloud(task)?.finalAnswer||review?.answer?.finalAnswer||task.blockingReason?.message||'本轮结果尚未交付，可在下方查看协作进度。','final-answer'));
  renderCloudAction(task,deliverables);
+ const platform=task.platformResult;if(platform?.round===task.round){const list=el('div',null,'platform-results');for(const item of platform.items||[]){const row=el('div',null,'cloud-task-receipt');row.append(el('strong',item.name||item.deviceName||item.label||item.session||item.id||'记录'));for(const [key,label] of Object.entries({state:'状态',online:'最近在线',lastSeen:'最近心跳',expiresAt:'到期',recentCalls:'最近模型调用',events:'事件',tools:'工具调用',device:'设备',session:'会话',label:'发现'})){if(item[key]!=null)row.append(el('span',label+'：'+(key==='lastSeen'?new Date(item[key]*1000).toLocaleString():String(item[key]))));}list.append(row);}for(const link of platform.links||[]){const a=el('a',link.label);a.href=link.url;list.append(a);}deliverables.append(list);}
  const download=(text,name)=>{const url=URL.createObjectURL(new Blob([text],{type:'text/plain;charset=utf-8'})),a=el('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
  const addCode=(answer,label)=>{if(typeof answer?.code!=='string'||!answer.code.trim())return;
   const block=el('details'),heading=el('summary',label+' · 代码建议（未运行）'),pre=el('pre',answer.code),button=el('button','下载代码','secondary');button.type='button';
@@ -49,8 +50,8 @@ function applyAccess(){
   $('new-task').classList.toggle('hidden',!csrf);
   $('reply-form').classList.toggle('hidden',!canWrite);
   if(!csrf)$('create').classList.add('hidden');
-  document.querySelector('.hero h1').textContent=csrf?'把需求变成可验收的成果':'查看成果，了解协作过程';
-  document.querySelector('.hero p').textContent=csrf?'写清目标、约束和通过标准，再选择工程方法。':'从左侧选择任务，先看结果和交付物，再展开协作与证据。';
+  document.querySelector('.hero h1').textContent=csrf?'你的 AgentPair 平台助手':'查看成果，了解协作过程';
+  document.querySelector('.hero p').textContent=csrf?'用对话管理云机器、设备、模型数据、安全审计和会话，也可以提出编程与其他任务。':'从左侧选择任务，先看结果和交付物，再展开协作与证据。';
 }
 $('open-login').onclick=()=>{$('login').classList.remove('hidden');$('username').focus();};
 $('close-login').onclick=()=>{$('login').classList.add('hidden');};
@@ -71,7 +72,7 @@ const methodInfo=el('p',null,'notice'),methodOptions={
  pair:['云端结对 · 1 台 Driver','Navigator 规划复核、Driver 独立处理。最多占用 1 台云 Driver，优先复用现有租约；约 ¥0.15/小时（参考报价），模型费用另计。可额外选择实验性隔离构建/测试；尚待真实云机验收，不在线安装项目依赖。'],
  parallel:['并行方案探索与评审 · 2 台 Driver','适合技术路线不确定、希望比较两种方案的任务。A/B 独立探索后交换发现，交叉复核并分别修订，Navigator（C）统一验收。最多占用 2 台云 Driver，优先复用；合计约 ¥0.30/小时（参考报价）。基础流程约 8 次生成调用（规划、A/B 各探索/复核/修订、最终验收），另有决策调用与可能的返工，模型费用随之增加。当前代码产物为建议，未执行测试。']};
 for(const [value,[label]] of Object.entries(methodOptions)){const option=el('option',label);option.value=value;methodSelect.append(option);}
-methodLabel.firstChild.textContent='3 · 工程方法与资源';methodLabel.append(methodSelect);acceptanceLabel.after(methodLabel,methodInfo);
+methodLabel.firstChild.textContent='高级 · 通用任务执行方式';methodLabel.append(methodSelect);acceptanceLabel.after(methodLabel,methodInfo);
 const delivery=el('div',null,'delivery-note');delivery.append(el('h3','4 · 交付位置'),el('p','保存在本任务「成果与代码」中。云端执行任务提供代码补丁、构建/测试日志和退出码；未选择执行环境时仅提供建议。不会自动提交 GitHub 或导出安装包。'));$('create-form').append(delivery);
 const submit=$('create-form').querySelector('button.primary');$('create-form').append(submit);submit.textContent='发布任务并开始协作';
 const executionLabel=el('label','执行环境（必须同时选择云端结对）'),executionSelect=el('select');executionSelect.id='execution-profile';for(const [value,label] of [['none','只分析，不运行代码'],['python','隔离 Python：编译检查 + unittest'],['node','隔离 Node：npm build + test（依赖须已具备）']]){const option=el('option',label);option.value=value;executionSelect.append(option);}executionLabel.append(executionSelect);submit.before(executionLabel);

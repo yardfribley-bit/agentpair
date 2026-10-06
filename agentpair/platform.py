@@ -38,6 +38,8 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
     from .cloud_workflow import CloudWorkflow
     cloud_workflow=CloudWorkflow(engine,cloud_console)
     engine.cloud_workflow=cloud_workflow
+    from .platform_assistant import PlatformAssistant
+    engine.platform_assistant=PlatformAssistant(engine,devices,session_lens,cloud_console)
     class Handler(BaseHTTPRequestHandler):
         def respond(self, status, data, cookie=False):
             body=json.dumps(data,ensure_ascii=False).encode()
