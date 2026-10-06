@@ -147,8 +147,13 @@ class PortablePowerShellTests(unittest.TestCase):
         source = self.root / 'software-install.ps1'
         source.write_text(SCRIPT.read_text(encoding='utf-8-sig'), encoding='utf-8-sig')
         path.write_text("$ErrorActionPreference='Stop'\n. " + ps_quote(source) + '\n' + code, encoding='utf-8-sig')
+        environment = os.environ.copy()
+        if os.name == 'nt' and Path(POWERSHELL).name.lower() == 'powershell.exe':
+            # A pwsh CI shell exports its own PS7 module paths. A separately
+            # launched Windows PowerShell 5.1 must build its normal defaults.
+            environment = {key: value for key, value in environment.items() if key.upper() != 'PSMODULEPATH'}
         return subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-File', str(path)],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, text=True, timeout=30, env=environment)
 
     def extract(self, limits=''):
         return self.run_ps('Expand-AgentPairPortableZip ' + ps_quote(self.archive) + ' ' + ps_quote(self.destination)
@@ -161,6 +166,28 @@ class PortablePowerShellTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), hashlib.sha256(b'inert fixture').hexdigest())
         self.assertEqual((self.destination / 'SessionLens' / 'assets' / 'file.txt').read_bytes(), b'data')
+
+    def test_file_hash_uses_framework_stream_and_releases_file_handle(self):
+        payload = self.root / 'payload.bin'
+        contents = bytes(range(256)) * 16384
+        payload.write_bytes(contents)
+        result = self.run_ps("function Get-FileHash {throw 'Get-FileHash must not be required'}\n"
+                             + 'Get-AgentPairFileSha256 ' + ps_quote(payload) + '\n'
+                             + '[IO.File]::AppendAllText(' + ps_quote(payload) + ",'tail')")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), hashlib.sha256(contents).hexdigest())
+        self.assertEqual(payload.read_bytes(), contents + b'tail')
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell module paths are Windows-specific')
+    def test_windows_powershell_has_its_native_module_path(self):
+        if Path(POWERSHELL).name.lower() != 'powershell.exe':
+            self.skipTest('Windows PowerShell 5.1 is unavailable')
+        result = self.run_ps("if($PSVersionTable.PSVersion.Major -ne 5){throw 'Expected Windows PowerShell 5.1'}\n"
+                             + "$native=Join-Path $PSHOME 'Modules'\n"
+                             + "if($env:PSModulePath.Split(';') -notcontains $native){throw 'Native module path missing'}\n"
+                             + '(Get-Command Get-FileHash -ErrorAction Stop).Name')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), 'Get-FileHash')
 
     def test_rejects_unsafe_names_before_writing_any_file(self):
         names = ('../escape.exe', '/escape.exe', 'C:/escape.exe', 'C:escape.exe',

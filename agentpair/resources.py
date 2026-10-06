@@ -30,7 +30,10 @@ class ResourceManager:
         tmp=p.with_suffix('.tmp')
         tmp.write_text(json.dumps(lease,ensure_ascii=False,indent=2))
         os.chmod(tmp,0o600)
-        if os.geteuid()==0:
+        # POSIX root preserves the lease directory's owner for the reaper.
+        # Windows has no Unix effective uid; it keeps the file's inherited ACL.
+        geteuid=getattr(os,'geteuid',None)
+        if geteuid is not None and geteuid()==0:
             owner=self.directory.stat()
             os.chown(tmp,owner.st_uid,owner.st_gid)
         tmp.replace(p)

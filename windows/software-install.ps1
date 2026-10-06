@@ -49,6 +49,20 @@ function Get-AgentPairPortableFingerprint($recipe) {
     finally {$hasher.Dispose()}
 }
 
+function Get-AgentPairFileSha256([string]$path) {
+    # Use the framework stream directly, including on Windows PowerShell 5.1
+    # hosts whose inherited PSModulePath does not expose Get-FileHash.
+    $stream=$null;$hasher=$null
+    try {
+        $stream=[IO.File]::OpenRead($path)
+        $hasher=[Security.Cryptography.SHA256]::Create()
+        return ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-','').ToLowerInvariant()
+    } finally {
+        if($hasher){$hasher.Dispose()}
+        if($stream){$stream.Dispose()}
+    }
+}
+
 function Test-AgentPairPortableTarget([string]$target, [string]$softwareId) {
     Assert-AgentPairNoReparse $target $true
     if(-not (Test-Path -LiteralPath $target)) {return $false}
@@ -137,7 +151,7 @@ function Expand-AgentPairPortableZip([string]$archivePath, [string]$destination,
         }
         $binary=Join-Path $root $entryPoint.Replace('/',[IO.Path]::DirectorySeparatorChar)
         if((Get-Item -LiteralPath $binary).Length -eq 0) {throw 'Portable EXE entry point is empty'}
-        return (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+        return Get-AgentPairFileSha256 $binary
     } catch {
         if($created -and (Test-Path -LiteralPath $root)) {
             Assert-AgentPairNoReparse $root $true
@@ -150,7 +164,7 @@ function Expand-AgentPairPortableZip([string]$archivePath, [string]$destination,
 function Invoke-AgentPairPortableSelfTest([string]$binary, [string]$expectedHash, [string]$logDirectory, $report) {
     Assert-AgentPairNoReparse $binary
     if(-not (Test-Path -LiteralPath $binary -PathType Leaf) -or
-       (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
+       (Get-AgentPairFileSha256 $binary) -ne $expectedHash) {
         throw 'Portable binary verification failed before self-test'
     }
     $stdout=Join-Path $logDirectory 'self-test.stdout.log';$stderr=Join-Path $logDirectory 'self-test.stderr.log'
@@ -175,7 +189,7 @@ function Invoke-AgentPairPortableSelfTest([string]$binary, [string]$expectedHash
         $child.WaitForExit()
         if($child.ExitCode -isnot [int]) {throw 'Portable self-test exit code unavailable'}
         if($child.ExitCode -ne 0) {throw ('Portable self-test failed: '+$child.ExitCode)}
-        if((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
+        if((Get-AgentPairFileSha256 $binary) -ne $expectedHash) {
             throw 'Portable binary changed during self-test'
         }
         return $child.ExitCode
@@ -300,7 +314,7 @@ function Invoke-SoftwareInstall($recipe, $report) {
                 $fallback.GetAwaiter().GetResult()
             }
         } finally {$client.Dispose()}
-        $hash=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        $hash=Get-AgentPairFileSha256 $file
         if($hash -ne $recipe.sha256) {throw 'Installer SHA256 mismatch; not executed'}
         if($portable) {return Invoke-AgentPairPortableInstall $recipe $file $hash $dir $report}
         & $report @{state='running';summary='下载哈希验证通过，正在安装';stage='install';sha256=$hash}

@@ -7,6 +7,7 @@ import os
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import re
 import secrets
 import sys
 import time
@@ -103,6 +104,22 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             paths['/analysis_view.js']='analysis_view.js'
             paths.update({'/model-security':'model_security.html','/model_security.css':'model_security.css','/model_security.js':'model_security.js'})
             paths['/model_evidence_ui.js']='model_evidence_ui.js'
+            if self.path.startswith('/downloads/SessionLens-Windows-'):
+                match=re.fullmatch(r'/downloads/(SessionLens-Windows-[0-9a-f]{64}\.zip)',self.path)
+                if not match:self.respond(404,{'error':'Not found'});return
+                installer=ASSETS/match.group(1)
+                if not installer.is_file():self.respond(503,{'error':'SessionLens Windows package not published yet'});return
+                try:source=installer.open('rb')
+                except OSError:self.respond(503,{'error':'SessionLens Windows package unavailable'});return
+                with source:
+                    self.send_response(200)
+                    self.send_header('Content-Type','application/zip')
+                    self.send_header('Content-Disposition','attachment; filename="SessionLens-Windows.zip"')
+                    self.headers_common(os.fstat(source.fileno()).st_size);self.end_headers()
+                    try:
+                        while block:=source.read(1024*1024):self.wfile.write(block)
+                    except (BrokenPipeError,ConnectionResetError):pass
+                return
             if self.path=='/downloads/AppLens-macOS.zip':
                 installer=ASSETS/'AppLens-macOS.zip'
                 if not installer.is_file():self.respond(503,{'error':'Installer not published yet'});return

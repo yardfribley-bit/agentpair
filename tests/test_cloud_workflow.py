@@ -216,6 +216,16 @@ class CloudWorkflowTests(unittest.TestCase):
         self.assertEqual(self.console.create_calls[0][2], payload['requestId'])
         self.assertEqual(self.workflow.active, set())
 
+    def test_cancelled_before_worker_dispatch_never_creates_a_machine(self):
+        task = self.prepare()
+        self.workflow.confirm(task['id'], self.confirmation(task))
+        self.engine.cancel(task['id'])
+        self.workflow._run(task['id'], create=True)
+        self.assertEqual(self.engine.get(task['id'])['status'], 'cancelled')
+        self.assertEqual(self.console.create_calls, [])
+        self.assertEqual(self.console.login_calls, [])
+        self.assertEqual(self.console.install_calls, [])
+
     def test_unready_ssh_never_installs_and_resume_reuses_same_lease(self):
         self.console.login_state = 'ssh_pending'
         task = self.prepare()

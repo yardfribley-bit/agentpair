@@ -168,13 +168,29 @@ class CloudWorkflow:
 
     def _run(self, tid, create):
         try:
-            action = self.engine.get(tid)['cloudAction']
+            with self.engine.lock:
+                task = self.engine._load(tid)
+                if task['status'] in ('cancelled', 'cancelling'):
+                    raise InterruptedError('Cancelled before cloud dispatch')
+                action = copy.deepcopy(task['cloudAction'])
+                if task['round'] != action['round']:
+                    raise Conflict('Task round changed before cloud dispatch')
             recipes = self.catalog.items()
             for item in action['software']:
                 if item['id'] not in recipes or self._fingerprint(recipes[item['id']]) != item['recipeFingerprint']:
                     raise Conflict('Confirmed software recipe changed')
             if create:
                 q = action['quote']
+                # A cancellation may arrive while validating the recipes.
+                # Check immediately before dispatch; a request already in flight
+                # is reconciled using the persisted lease reference below.
+                with self.engine.lock:
+                    current = self.engine._load(tid)
+                    if current['status'] in ('cancelled', 'cancelling'):
+                        raise InterruptedError('Cancelled before cloud creation')
+                    if (current['round'] != action['round']
+                            or current['cloudAction']['requestId'] != action['requestId']):
+                        raise Conflict('Cloud request changed before creation')
                 lease = self.console.create(action['system'], q['hourlyCNY'], action['requestId'], q.get('sizing'))
                 self._record_reference(tid, leaseId=lease['id'], expiresAt=lease['expiresAt'])
                 self._save(tid, 'checking_login', '机器创建已返回，正在验证云端状态和实际 SSH 登录。',

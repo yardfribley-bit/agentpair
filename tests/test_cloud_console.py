@@ -1,8 +1,11 @@
 import datetime
 import json
+import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 
 from agentpair.cloud_console import CloudConsole
 from agentpair.resources import ResourceManager
@@ -83,6 +86,31 @@ class CloudConsoleTests(unittest.TestCase):
     def test_nonfinite_price_prevents_creation(self):
         with self.assertRaises(ValueError):self.console.create('Windows',float('nan'),'request-invalid-price')
         self.assertFalse(any(a.startswith('Create') for a,_ in self.api.calls))
+
+    def test_lease_save_without_posix_uid_does_not_assume_root(self):
+        chown=Mock(side_effect=AssertionError('Windows has no POSIX root identity'))
+        with patch('agentpair.resources.os',SimpleNamespace(chmod=os.chmod,chown=chown)):
+            lease=self.console.create('Windows',0.51,'request-without-posix-uid')
+        chown.assert_not_called()
+        self.assertEqual(self.manager.records()[0]['hostId'],lease['hostId'])
+        self.assertEqual(sum(a=='CreateUHostInstance' for a,_ in self.api.calls),1)
+
+    def test_posix_root_save_preserves_directory_owner(self):
+        chown=Mock()
+        lease={'id':'f'*24,'state':'active'}
+        with patch('agentpair.resources.os',SimpleNamespace(chmod=os.chmod,geteuid=lambda:0,chown=chown)):
+            self.manager._save(lease)
+        owner=self.manager.directory.stat()
+        chown.assert_called_once_with(self.manager.directory/('f'*24+'.tmp'),owner.st_uid,owner.st_gid)
+        self.assertEqual(self.manager.records(),[lease])
+
+    def test_nonroot_save_keeps_current_file_owner(self):
+        chown=Mock(side_effect=AssertionError('Nonroot must not change ownership'))
+        lease={'id':'e'*24,'state':'active'}
+        with patch('agentpair.resources.os',SimpleNamespace(chmod=os.chmod,geteuid=lambda:1000,chown=chown)):
+            self.manager._save(lease)
+        chown.assert_not_called()
+        self.assertEqual(self.manager.records(),[lease])
 
 
 if __name__=='__main__':unittest.main()

@@ -1,12 +1,16 @@
 import http.cookiejar
+import hashlib
+import io
 import json
 import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
 from http.server import ThreadingHTTPServer
+from unittest.mock import patch
 from agentpair.platform import handler_for
 from agentpair.tasks import TaskEngine
 from test_tasks import FakeBackend
@@ -139,10 +143,67 @@ class PlatformTests(unittest.TestCase):
             self.assertIn(b'AgentPair',response.read())
 
     def test_android_package_download_route(self):
-        with self.client.open(self.url+'/downloads/AgentPair-Android-0.1.0.apk') as response:
-            self.assertEqual(response.status,200)
-            self.assertEqual(response.headers.get_content_type(),'application/vnd.android.package-archive')
-            self.assertEqual(response.read(),(Path(__file__).parent/'agentpair/web_assets/AgentPair-Android-0.1.0.apk').read_bytes())
+        assets=Path(self.tmp.name)/'download-assets';assets.mkdir()
+        installer=assets/'AgentPair-Android-0.1.0.apk'
+        # Exercise byte delivery with a test-only ZIP, independently of release binaries.
+        with zipfile.ZipFile(installer,'w') as package:
+            package.writestr('AndroidManifest.xml','<manifest package="org.agentpair.test"/>')
+        body=installer.read_bytes()
+        with patch('agentpair.platform.ASSETS',assets):
+            with self.client.open(self.url+'/downloads/AgentPair-Android-0.1.0.apk') as response:
+                self.assertEqual(response.status,200)
+                self.assertEqual(response.headers.get_content_type(),'application/vnd.android.package-archive')
+                self.assertEqual(response.headers['Content-Length'],str(len(body)))
+                self.assertEqual(response.read(),body)
+            installer.unlink()
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.client.open(self.url+'/downloads/AgentPair-Android-0.1.0.apk')
+            self.assertEqual(error.exception.code,503);error.exception.close()
+
+    def test_sessionlens_windows_package_streams_public_fixture_in_bounded_chunks(self):
+        assets=Path(self.tmp.name)/'sessionlens-assets';assets.mkdir()
+        archive=io.BytesIO()
+        with zipfile.ZipFile(archive,'w') as package:
+            package.writestr('SessionLens/fixture.txt',b'fixture data\n'*(200000))
+        body=archive.getvalue();digest=hashlib.sha256(body).hexdigest()
+        installer=assets/('SessionLens-Windows-'+digest+'.zip');installer.write_bytes(body)
+        read_sizes=[];original_open=Path.open
+        class TrackedReader:
+            def __init__(self,source):self.source=source
+            def __enter__(self):self.source.__enter__();return self
+            def __exit__(self,*args):return self.source.__exit__(*args)
+            def fileno(self):return self.source.fileno()
+            def read(self,size=-1):read_sizes.append(size);return self.source.read(size)
+        def open_fixture(path,*args,**kwargs):
+            source=original_open(path,*args,**kwargs)
+            return TrackedReader(source) if path==installer else source
+        self.assertEqual(self.call('/api/session')['role'],'viewer')
+        with patch('agentpair.platform.ASSETS',assets), patch('pathlib.Path.open',open_fixture), \
+             patch('pathlib.Path.read_bytes',side_effect=AssertionError('Download must stream, not read the entire package')):
+            with self.client.open(self.url+'/downloads/'+installer.name) as response:
+                self.assertEqual(response.status,200)
+                self.assertEqual(response.headers.get_content_type(),'application/zip')
+                self.assertEqual(response.headers['Content-Disposition'],'attachment; filename="SessionLens-Windows.zip"')
+                self.assertEqual(response.headers['Content-Length'],str(len(body)))
+                self.assertEqual(response.read(),body)
+        self.assertGreater(len(read_sizes),2)
+        self.assertTrue(all(0<size<=1024*1024 for size in read_sizes))
+
+    def test_sessionlens_windows_package_missing_and_malformed_hash_routes(self):
+        assets=Path(self.tmp.name)/'sessionlens-assets';assets.mkdir()
+        # A malformed filename remains forbidden even if such a file exists.
+        (assets/('SessionLens-Windows-'+'A'*64+'.zip')).write_bytes(b'test fixture')
+        with patch('agentpair.platform.ASSETS',assets):
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                self.client.open(self.url+'/downloads/SessionLens-Windows-'+'a'*64+'.zip')
+            self.assertEqual(error.exception.code,503);error.exception.close()
+            suffixes=['A'*64+'.zip','a'*63+'.zip','a'*65+'.zip','g'*64+'.zip',
+                      'a'*64+'.ZIP','a'*64+'.zip/extra','../SessionLens-Windows.zip',
+                      '%2e%2e%2fSessionLens-Windows.zip']
+            for suffix in suffixes:
+                with self.subTest(suffix=suffix),self.assertRaises(urllib.error.HTTPError) as error:
+                    self.client.open(self.url+'/downloads/SessionLens-Windows-'+suffix)
+                self.assertEqual(error.exception.code,404);error.exception.close()
 
     def test_self_registration_device_isolation_and_permissions(self):
         alice=self.call('/api/register',{'username':'alice','password':'a-long-password-123'})['csrf']
