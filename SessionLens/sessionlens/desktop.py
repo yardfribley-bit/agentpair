@@ -65,7 +65,7 @@ class Runtime:
                 stage.write_text(json.dumps(state,ensure_ascii=False));os.chmod(stage,0o600);stage.replace(path)
             except OSError:pass
     def start(self):
-        for fn in (self.collect,self.upload,self.project,self.knowledge):
+        for fn in (self.collect,self.upload,self.project,self.knowledge,self.inventory):
             t=threading.Thread(target=fn,daemon=True);t.start();self.threads.append(t)
     def close(self):
         self.stop.set()
@@ -182,6 +182,25 @@ class Runtime:
             status['oversize']=db.execute('SELECT count(*) FROM display_index WHERE bytes>2096000').fetchone()[0]
             status['recent']=db.execute('SELECT e.id,i.source,i.category,i.summary,e.session FROM events e JOIN display_index i ON e.id=i.id ORDER BY e.rowid DESC LIMIT 50').fetchall()
         return status
+
+    def inventory(self):
+        from .project_inventory import ProjectInventory
+        source=store=None
+        try:
+            source=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True,timeout=1)
+            store=ProjectInventory(self.root/'project_inventory.db')
+            while not self.stop.is_set():
+                count=0
+                try:
+                    store.sync(source,limit=100,live=True)
+                    count=store.sync(source,limit=250)
+                    self.update(project_inventory='项目目录正在低速整理' if count else '项目目录已更新')
+                except sqlite3.Error as exc:self.update(project_inventory='项目目录等待重试：'+str(exc)[:120])
+                self.stop.wait(.5 if count else 2)
+        except (OSError,sqlite3.Error) as exc:self.update(project_inventory='项目目录暂不可用：'+str(exc)[:120])
+        finally:
+            if source:source.close()
+            if store:store.close()
 
     def knowledge(self):
         from .knowledge_index import KnowledgeIndex

@@ -26,6 +26,23 @@ class LiveUiTests(unittest.TestCase):
             c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.refresh();self.assertIn('新的任务',window.middle.toPlainText());self.assertTrue(window.selected_event)
             window.close();c.db.close()
 
+    def test_project_opens_old_task_beyond_recent_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));db=window.store.db
+            for i in range(105):db.execute('INSERT INTO task_groups(id,source,session,prompt,updated,state,last_row,search,requirements,turn_count) VALUES(?,?,?,?,?,?,?,?,?,?)',('project-'+str(i),'workbuddy','s'+str(i),'需求 '+str(i),f'2026-10-06T12:{i:03}','未知',i,'需求 '+str(i),'需求 '+str(i),1))
+            db.commit();window.open_project_task('project-0');self.assertEqual(window.selected,'project-0');window.refresh();self.assertEqual(window.selected,'project-0');window.close()
+
+    def test_project_question_uses_local_inventory_without_model(self):
+        from sessionlens.chat_window import ChatWindow
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            window=Window(Path(tmp));chat=ChatWindow(window);question='WorkBuddy 开发了多少项目，项目名称';chat.input.setPlainText(question)
+            class Immediate:
+                def __init__(self,target,**kwargs):self.target=target
+                def start(self):self.target()
+            with patch('sessionlens.chat_window.ask') as model,patch('sessionlens.chat_window.threading.Thread',Immediate):chat.send();model.assert_not_called()
+            self.app.processEvents();self.assertIn('已识别',chat.answer.toPlainText());self.assertEqual(chat.input.toPlainText(),question);self.assertTrue(chat.messages[-1].get('projectInventory'));chat.close()
+
     def test_history_review_is_explicit_and_preserves_selected_retry(self):
         from sessionlens.task_lineage import resolve
         from unittest.mock import patch

@@ -155,7 +155,11 @@ class Window(QMainWindow):
         text+='<p><a href="records:">'+('收起逐条记录' if self.show_records else '展开逐条记录')+'</a></p>'
         return text
     def set_mode(self,mode):
+        self.project_task=None
         self.mode=mode;self.toolbar.setVisible(mode=='history');self.live.setChecked(mode=='live');self.history.setChecked(mode=='history');self.follow.setVisible(mode=='live');self.signature=None;self.reload()
+    def open_project_task(self,identity):
+        self.search.clear();self.source.setCurrentIndex(0);self.set_mode('history')
+        self.project_task=identity;self.selected=identity;self.selected_event=None;self.signature=None;self.reload()
     def follow_changed(self):
         self.signature=None;self.reload()
     def start_local(self):
@@ -186,6 +190,10 @@ class Window(QMainWindow):
         source=['','codex','workbuddy'][self.source.currentIndex()] if self.mode=='history' else ''
         try:rows=self.store.tasks(self.search.text() if self.mode=='history' else '',source,self.mode=='live')
         except sqlite3.Error:return
+        pin=getattr(self,'project_task',None)
+        if pin and self.mode=='history' and not source and not self.search.text() and not any(r[0]==pin for r in rows):
+            pinned=self.store.db.execute('SELECT id,source,session,prompt,updated,state,last_row FROM task_groups WHERE id=?',(resolve(self.store.db,pin),)).fetchone()
+            if pinned:rows=[pinned,*rows]
         sig=(self.mode,tuple(rows),self.search.text(),source)
         if sig==self.signature:return
         self.signature=sig;old=None if self.mode=='live' and self.follow.isChecked() else resolve(self.store.db,self.selected);
@@ -306,7 +314,8 @@ def main():
     test='--self-test' in sys.argv or embedding_test
     query_test='--verify-assistant' in sys.argv
     conversation_test='--verify-conversation' in sys.argv
-    verify='--verify-ui' in sys.argv or query_test or conversation_test
+    project_test='--verify-projects' in sys.argv
+    verify='--verify-ui' in sys.argv or query_test or conversation_test or project_test
     if test or verify:os.environ['QT_QPA_PLATFORM']='offscreen'
     app=QApplication(sys.argv);app.setStyleSheet(STYLE)
     root=Path(__import__('tempfile').mkdtemp(prefix='sessionlens-test-')) if test else state_root();root.mkdir(parents=True,exist_ok=True)
@@ -315,6 +324,12 @@ def main():
     window=Window(root)
     from sessionlens.chat_window import ChatWindow
     chat=ChatWindow(window)
+    if project_test:
+        from sessionlens.project_window import ProjectWindow
+        overview=ProjectWindow(root);overview.show();app.processEvents()
+        overview.grab().save('/private/tmp/sessionlens-installed-projects.png')
+        print('Packaged project overview:',overview.counts.text(),flush=True)
+        overview.close();chat.close();return 0
     if test:
         from sessionlens.project_context import ProjectStore
         from sessionlens.knowledge_index import KnowledgeIndex

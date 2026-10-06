@@ -22,6 +22,7 @@ class ChatWindow(QMainWindow):
         brand=QLabel('SessionLens');brand.setStyleSheet('font-size:22px;font-weight:600');v.addWidget(brand);v.addWidget(QLabel('工作记忆'));v.addSpacing(18)
         assistant=QPushButton('智能助手');assistant.setChecked(True);assistant.setCheckable(True);assistant.clicked.connect(self.raise_);v.addWidget(assistant)
         records=QPushButton('历史任务');records.clicked.connect(self.open_history);v.addWidget(records)
+        projects=QPushButton('项目总览');projects.clicked.connect(self.open_projects);v.addWidget(projects)
         collection=QPushButton('采集与同步');collection.clicked.connect(self.open_collection);v.addWidget(collection)
         new=QPushButton('＋ 新对话');new.clicked.connect(self.new_chat);v.addWidget(new);v.addSpacing(20);v.addWidget(QLabel('当前任务'));self.current_task=QLabel('还没有选中任务');self.current_task.setWordWrap(True);self.current_task.setStyleSheet('background:#edf4fb;color:#1769ef;padding:10px;border-radius:8px;');v.addWidget(self.current_task);v.addSpacing(18);v.addWidget(QLabel('最近对话'))
         self.chats=QListWidget();self.chats.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff);self.chats.currentRowChanged.connect(self.open_chat);v.addWidget(self.chats,1);outer.addWidget(side)
@@ -67,6 +68,12 @@ class ChatWindow(QMainWindow):
     def open_collector(self):self.collector.show();self.collector.raise_()
     def open_history(self):
         self.collector.history.click();self.open_collector()
+    def open_projects(self):
+        from .project_window import ProjectWindow
+        dialog=ProjectWindow(self.root,self)
+        def inspect(identity):
+            self.collector.open_project_task(identity);dialog.accept();self.open_collector()
+        dialog.taskRequested.connect(inspect);dialog.exec()
     def open_collection(self):
         dialog=QDialog(self);dialog.setWindowTitle('采集与同步');dialog.resize(660,400);layout=QVBoxLayout(dialog)
         layout.addWidget(QLabel('当前机器上的日志 → 本地任务库 → 平台接收'))
@@ -139,6 +146,14 @@ class ChatWindow(QMainWindow):
             self.task_view.stop();self.split.setMinimumHeight(150);self.results.setCurrentWidget(self.answer);self.current_task.setText('正在查找相关任务');self.proof_panel.hide()
             self.answer.setHtml('<h3>正在查找这次问题的相关记录</h3><p>'+html.escape(self.pending)+'</p>');self.send_button.setText('查询中…');return
         latest=self.messages[-1] if self.messages else {}
+        if latest.get('projectInventory'):
+            from html import escape
+            snap=latest['projectInventory'];c=snap['counts'];self.task_view.stop();self.results.setCurrentWidget(self.answer);self.split.setMinimumHeight(300);self.proof_panel.hide();self.current_task.setText('项目总览')
+            self.send_button.setText('查询');self.status.setText('本机项目统计 · 点击项目查看开发依据')
+            text=f'<h3>已识别 {c["identified"]+c["confirmed"]} 个项目；待确认 {c["candidate"]} 个开发目录</h3>'
+            text+='<p>'+('本次统计已覆盖当前整理出的历史。' if snap['complete'] else '历史尚未整理完，当前数量会继续增加。')+'</p><p><a href="projects:">打开项目总览：确认、合并或排除目录 →</a></p>'
+            text+='<ol>'+''.join('<li>'+escape(p['name'])+' · '+str(p['taskCount'])+' 个任务 · '+({'confirmed':'人工确认','identified':'项目标记与源码记录','candidate':'待确认'}[p['state']])+'</li>' for p in snap['projects'] if p['state']!='excluded')+'</ol><p>'+escape(snap['coverage'])+'</p>'
+            self.answer.setHtml(text);return
         if latest.get('selectionMismatch'):
             self.task_view.stop();self.split.setMinimumHeight(150);self.results.setCurrentWidget(self.answer);self.current_task.setText('任务需要重新核对');self.proof_panel.hide();self.send_button.setText('重新查询')
             self.status.setText('此前的回答没有对应到你问的任务')
@@ -191,7 +206,7 @@ class ChatWindow(QMainWindow):
         if not q or self.busy:return
         history=[]
         for r in self.messages:
-            if r.get('error') or r.get('selectionMismatch') or r.get('selectionNeeded'):history=[]
+            if r.get('error') or r.get('selectionMismatch') or r.get('selectionNeeded') or r.get('projectInventory'):history=[]
             else:history.append(r)
         self.busy=True;self.send_button.setEnabled(False);self.chats.setEnabled(False);self.pending=q;self.status.setText('正在查找相关工作记录…')
         self.source.setEnabled(False);self.period.setEnabled(False)
@@ -202,6 +217,14 @@ class ChatWindow(QMainWindow):
         def work():
             config={**self.collector.config.get('model',{}),'embedding':self.collector.config.get('embedding',{})}
             try:
+                from .project_inventory import ProjectInventory,inventory_question
+                if not selected_task and inventory_question(q):
+                    provider='workbuddy' if 'workbuddy' in q.lower() else 'codex' if 'codex' in q.lower() else source or ''
+                    with sqlite3.connect((self.root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=1) as db:
+                        store=ProjectInventory(self.root/'project_inventory.db')
+                        try:snapshot=store.snapshot(db,provider)
+                        finally:store.close()
+                    self.signals.ready.emit({'question':q,'projectInventory':snapshot,'projectScope':project_id});return
                 result=ask(self.root,config,q,history,self.signals.progress.emit,source=source,days=days,selected_task=selected_task,project_id=project_id);result['projectScope']=project_id;self.signals.ready.emit(result)
             except Exception as exc:self.signals.failed.emit(str(exc)[:300])
         threading.Thread(target=work,daemon=True).start()
@@ -215,6 +238,7 @@ class ChatWindow(QMainWindow):
         self.cache.execute('INSERT OR REPLACE INTO chats VALUES(?,?,?,?)',(self.chat_id,self.messages[0]['question'][:30],json.dumps(self.messages,ensure_ascii=False),__import__('time').time_ns()));self.cache.commit();self.refresh_chats();self.render()
         self.answer.scrollToAnchor('answer-'+str(len(self.messages)-1))
     def evidence(self,url):
+        if url.toString()=='projects:':self.open_projects();return
         if url.toString()=='associate:':self.correct_association();return
         if url.toString()=='sample:weather':self.prefill('之前 WorkBuddy 查上海天气遇到了什么问题，后来怎么解决的？');return
         if url.toString().startswith('choose:'):

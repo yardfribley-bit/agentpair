@@ -95,6 +95,7 @@ def operation(text):
 def answer_mismatch(db,result):
     """Audit stored task binding locally; never send cached history to a model."""
     if result.get('error'):return None
+    if result.get('projectInventory'):return None # aggregate, not a single task binding
     task_id=result.get('taskId');presentation=result.get('presentation',{});packet=result.get('packet',{})
     context=packet.get('projectContext')
     if context and context.get('signature'):
