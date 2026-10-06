@@ -143,7 +143,8 @@ class PlatformAssistant:
                         item['requestIds']=list(dict.fromkeys(e.get('requestId') for e in row.get('evidence',[]) if e.get('requestId')))
                     text='已定位这项安全事件。下面列出涉及的设备、请求编号、证据强度和处理状态。'
                 else:
-                    text = f'当前安全审计中有 {len(result["items"])} 项已有发现。这是现有检测结果查询，没有启动新的模型分析；没有发现也不代表没有风险。'
+                    families={('background' if r.get('kind')=='unrelated_background' else 'credential') for r in rows}
+                    text = f'当前有 {len(families)} 类安全威胁、{len(result["items"])} 条具体发现。下方按设备列出已有发现，可继续查看证据和处理状态。'
                 result['links'] = [{'label':'查看威胁、证据和处置','url':'/model-security'+('?' + urlencode({'finding':rows[0]['id']}) if action=='security_detail' else '')}]
             else:
                 rows = self.sessions.sessions(owner)
@@ -161,7 +162,7 @@ class PlatformAssistant:
                 result['links'] = [{'label': '打开会话洞察', 'url': '/session-insights/'}]
         except (ValueError, PermissionError) as error:
             status = 'needs_information' if isinstance(error, ValueError) else 'unsupported_capability'
-            text = str(error)
+            text = ('当前账号无权执行这项操作。' if getattr(error,'errno',None) else str(error))
         except FileNotFoundError:
             status,text='unsupported_capability','访问日志暂不可读，不能确认当前访问者。'
         except Exception:

@@ -11,3 +11,21 @@ input,textarea,select{display:block;width:100%;padding:12px;border:1px solid #35
 
 /* Conversation-first platform assistant. */
 .assistant-page main{padding-bottom:230px!important}.assistant-page #deliverables,.assistant-page .assistant-dialogue,.assistant-page #create{max-width:960px;margin:24px auto!important}.assistant-dialogue{display:flex;flex-direction:column;gap:18px}.assistant-dialogue article{max-width:86%;padding:16px 20px;border-radius:12px;line-height:1.7}.dialogue-user{align-self:flex-end;background:#eaf2ff;border:1px solid #dce7fa}.dialogue-assistant{background:#fff;border:1px solid #e6e8ec}.assistant-dialogue p{white-space:pre-wrap;color:#25344b;margin:8px 0}.assistant-dialogue small{color:#6e7b90}.assistant-page #deliverables{background:#fff;border:1px solid #e6e8ec}.assistant-page #deliverables>h2{font-size:15px}.assistant-page #reply-form{position:fixed;bottom:0;left:212px;right:0;z-index:8;margin:0!important;padding:16px max(24px,calc((100vw - 1172px)/2));border-radius:0;background:#ffffffed;box-shadow:0 -5px 20px #132b4910;border-top:1px solid #e6e8ec}.assistant-page #reply{min-height:80px;max-height:160px;resize:vertical;border:1px solid #dbe2ec;border-radius:10px;background:#f7f8fa;color:#25344b}.assistant-page #reply-form label{font-size:13px}.assistant-page #reply-note{display:block;margin-top:6px;line-height:1.5}.assistant-execution-details{margin:24px;border:1px solid #e6e8ec;border-radius:12px;background:white}.assistant-execution-details>summary{padding:16px;font-size:14px;color:#52637e;cursor:pointer}.assistant-advanced{margin:16px 0}.assistant-advanced>summary{padding:10px}.assistant-privacy{font-size:11px!important;max-width:960px;margin:12px auto!important;padding:8px 14px!important}.assistant-page .team-console .tc-heading h1{font-size:20px}@media(max-width:760px){.assistant-page #reply-form{left:0;padding:12px 16px}.assistant-page #deliverables,.assistant-page .assistant-dialogue,.assistant-page #create{margin:16px!important}.assistant-dialogue article{max-width:95%}}
+
+/* Keep the latest answer above the measured composer, including zoom/resizing. */
+.assistant-page main{padding-bottom:calc(var(--composer-height,200px) + 48px)!important}
+.assistant-page #reply-form{padding:12px max(24px,calc((100vw - 1172px)/2));background:#fff}
+.assistant-page #reply{min-height:52px;max-height:100px;resize:vertical;margin:6px 0}
+.assistant-page #reply-form .actions{gap:8px;margin-top:6px}
+.assistant-page #reply-form button{padding:9px 14px;margin:0}
+.assistant-page #reply-note{display:none}
+.assistant-page #deliverables{scroll-margin-top:20px}
+.platform-results{display:grid;gap:10px;margin:12px 0}
+.cloud-task-receipt{display:flex;flex-wrap:wrap;gap:8px 16px;padding:12px;border:1px solid #e6e8ec;border-radius:10px;overflow-wrap:anywhere}
+.cloud-task-receipt strong{flex-basis:100%;font-size:14px}
+.cloud-task-receipt span{font-size:13px;line-height:1.6}
+.platform-results>a{display:block;padding:8px 0}
+.platform-next-steps{display:flex;flex-wrap:wrap;gap:8px}
+.assistant-dialogue article{max-width:92%}
+.assistant-dialogue h3,#deliverables h3{font-size:14px;margin:16px 0 8px}
+@media(max-width:760px){.assistant-page #reply-form{left:0;padding:10px 16px}}
