@@ -35,6 +35,15 @@ class PlatformAssistantTests(unittest.TestCase):
             self.assertTrue(task['messages'][-1]['answer']['platformEvidence']['items'])
         self.assertNotIn('secret',str(self.query('machines')['platformResult']))
 
+    def test_access_audit_is_admin_only(self):
+        self.assertEqual(self.query('access_audit',owner='alice')['status'],'unsupported_capability')
+        from unittest.mock import patch
+        with patch('agentpair.access_audit.recent_access',return_value={'items':[], 'basis':'HTTP记录','windowMinutes':10}):
+            task=self.query('access_audit')
+        self.assertEqual(task['status'],'completed')
+        self.assertIn('0 个HTTP访问来源',task['platformResult']['summary'])
+        self.assertEqual(task['platformResult']['basis'],'HTTP记录')
+
     def test_detail_queries_and_conversation_actions(self):
         device=self.query('device_detail',deviceId='device-1')
         self.assertEqual(device['status'],'completed')

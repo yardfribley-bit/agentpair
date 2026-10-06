@@ -6,7 +6,7 @@ from .tasks import now
 
 
 class PlatformAssistant:
-    ACTIONS = ('machines', 'devices', 'model_data', 'security', 'sessions', 'session_detail', 'release_machine', 'device_detail', 'model_calls', 'security_detail', 'session_upload_status')
+    ACTIONS = ('machines', 'devices', 'model_data', 'security', 'sessions', 'session_detail', 'release_machine', 'device_detail', 'model_calls', 'security_detail', 'session_upload_status', 'access_audit')
 
     def __init__(self, engine, devices, sessions, cloud):
         self.engine, self.devices, self.sessions, self.cloud = engine, devices, sessions, cloud
@@ -78,6 +78,13 @@ class PlatformAssistant:
                         }.get(previous.get('state'), '需要进一步核对当前操作记录。')
                         result['items'] = []
                 result['links'] = [{'label': '查看云机器', 'url': '/cloud-machines'}]
+            elif action=='access_audit':
+                if owner!='admin':raise PermissionError('访问审计需要管理员账号')
+                from .access_audit import recent_access
+                data=recent_access(minutes=tool.get('minutes',10))
+                result['items']=data['items'];result['coverage']=data['basis'];result['windowMinutes']=data['windowMinutes']
+                text='最近 '+str(data['windowMinutes'])+' 分钟观察到 '+str(len(data['items']))+' 个HTTP访问来源。IP尚未关联账号，不能据此确认具体是谁或仍然在线。'
+                result['links']=[]
             elif action=='session_upload_status':
                 selected=tool.get('deviceId')
                 if selected and owner!='admin' and selected not in {r['id'] for r in self.devices.list(owner)}:
@@ -155,6 +162,8 @@ class PlatformAssistant:
         except (ValueError, PermissionError) as error:
             status = 'needs_information' if isinstance(error, ValueError) else 'unsupported_capability'
             text = str(error)
+        except FileNotFoundError:
+            status,text='unsupported_capability','访问日志暂不可读，不能确认当前访问者。'
         except Exception:
             status, text = 'failed', '平台数据暂时读取失败，本次未执行任何修改。请稍后重试。'
         if status=='completed':
@@ -174,6 +183,7 @@ class PlatformAssistant:
             saved = self.engine._load(tid)
             if saved['status'] in ('cancelling', 'cancelled'): return True
             result['summary'] = text
+            result['basis']=result.get('coverage') or {'security':'已有审计发现，未启动新分析','security_detail':'已有发现与请求记录，未验证凭据是否仍有效','sessions':'已接收的会话记录','session_detail':'已接收的会话和工具配对记录','devices':'设备注册记录与心跳','device_detail':'设备注册记录与心跳','model_data':'最近模型数据查询窗口','model_calls':'最近模型调用查询窗口','machines':'机器租约记录，登录状态单独核验'}.get(action,'平台真实查询结果')
             saved['platformResult'] = dict(result, round=saved['round'])
             saved['status'] = status
             saved['messages'].append({'role': 'navigator', 'stage': 'review', 'round': saved['round'],
