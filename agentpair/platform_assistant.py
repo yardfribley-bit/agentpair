@@ -51,6 +51,21 @@ class PlatformAssistant:
                 result['items'] = [{k: r.get(k) for k in ('id', 'name', 'platform', 'state', 'expiresAt')} for r in rows]
                 active = sum(r.get('state') == 'active' for r in rows)
                 text = f'目前有 {active} 台有效租约机器，另有 {len(rows)-active} 条历史机器记录。有效租约不等于已验证登录。'
+                previous = task.get('cloudAction', {})
+                latest = next((m.get('text', '') for m in reversed(task['messages']) if m['role']=='user'), '')
+                if previous and any(word in latest for word in ('创建了吗','开好了吗','创建成功','那台','这台','开机了吗')):
+                    target = next((r for r in rows if r['id']==previous.get('leaseId')), None)
+                    if target:
+                        text = ('这次的机器已经释放。' if target['state']=='released' else
+                                '这次的机器已取得创建回执，编号 '+target['id']+'。当前操作状态：'+previous.get('finalAnswer', previous.get('state','待核对')))
+                        result['items'] = [r for r in result['items'] if r['id']==target['id']]
+                    else:
+                        text = '这次还没有取得创建成功回执，不能确认机器已经创建。'+{
+                            'awaiting_confirmation':'正在等待你确认报价。',
+                            'interrupted':'创建请求已经中断，需要核对云端结果；目前没有重新创建，避免重复开机。',
+                            'creating':'请求正在处理，请等待结果，不需要重复确认。',
+                        }.get(previous.get('state'), '需要进一步核对当前操作记录。')
+                        result['items'] = []
                 result['links'] = [{'label': '查看云机器', 'url': '/cloud-machines'}]
             elif action == 'devices':
                 rows = self.devices.list(owner)
