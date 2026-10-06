@@ -93,3 +93,25 @@ def records_for_turn(db,turn,limit=16):
             e=json.loads(raw[0]);e['_seq']=seq;events.append(e)
     count=db.execute('SELECT count(*) FROM task_steps WHERE task=?',(turn,)).fetchone()[0]
     return events,count
+
+def bounded_event(db,ident,seq=0,budget=262144):
+    """Read one bounded raw record or a labelled indexed excerpt plus metadata."""
+    import json
+    row=db.execute('SELECT CASE WHEN length(event)<=? THEN event END FROM events WHERE id=?',(budget,ident)).fetchone()
+    if not row:return None
+    if row[0]:
+        event=json.loads(row[0]);event['_seq']=seq;return event
+    raw=db.execute('''SELECT json_object('id',e.id,'kind',json_extract(e.event,'$.kind'),
+      'source',json_extract(e.event,'$.source'),'sessionId',json_extract(e.event,'$.sessionId'),
+      'role',json_extract(e.event,'$.role'),'name',json_extract(e.event,'$.name'),
+      'timestamp',json_extract(e.event,'$.timestamp'),'callId',coalesce(json_extract(e.event,'$.callId'),json_extract(e.event,'$.payload.call_id')),
+      'payload',json_object('id',coalesce(json_extract(e.event,'$.payload.item.id'),json_extract(e.event,'$.payload.id')),
+        'parentId',coalesce(json_extract(e.event,'$.payload.item.parentId'),json_extract(e.event,'$.payload.parentId')),
+        'providerData',json_object('conversationRequestId',coalesce(json_extract(e.event,'$.payload.item.providerData.conversationRequestId'),json_extract(e.event,'$.payload.providerData.conversationRequestId')),
+          'traceId',coalesce(json_extract(e.event,'$.payload.item.providerData.traceId'),json_extract(e.event,'$.payload.providerData.traceId')))),
+      '_text',substr(s.excerpt,1,16000)) FROM events e LEFT JOIN task_steps s ON s.event=e.id WHERE e.id=?''',(ident,)).fetchone()
+    event=json.loads(raw[0]);text=event.pop('_text') or '';kind=event['kind']
+    field='arguments' if kind in CALL_KINDS else 'output' if kind=='tool_result' else 'content'
+    event['payload'][field]={'record_excerpt':text} if field=='arguments' else text
+    event['_seq']=seq;event['_bodyTruncated']=True
+    return event

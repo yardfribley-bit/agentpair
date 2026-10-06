@@ -40,7 +40,13 @@ class ChatWindow(QMainWindow):
         proof_panel=QWidget();pv=QVBoxLayout(proof_panel);pv.setContentsMargins(0,0,0,0);pr=QHBoxLayout();pr.addWidget(QLabel('原始依据'));pr.addStretch();close=QPushButton('收起');close.clicked.connect(proof_panel.hide);pr.addWidget(close);pv.addLayout(pr);self.proof=QTextBrowser();self.proof.setMinimumWidth(240);pv.addWidget(self.proof);self.proof_panel=proof_panel;self.split.addWidget(proof_panel);proof_panel.hide();m.addWidget(self.split,1)
         foot=QHBoxLayout();self.collection_status=QLabel('本地任务库 · 采集状态可查看');foot.addWidget(self.collection_status,1);view=QPushButton('查看采集进度');view.clicked.connect(self.open_collection);foot.addWidget(view);m.addLayout(foot);self.results.setSizePolicy(__import__('PySide6.QtWidgets',fromlist=['QSizePolicy']).QSizePolicy.Expanding,__import__('PySide6.QtWidgets',fromlist=['QSizePolicy']).QSizePolicy.Minimum);main_scroll=QScrollArea();main_scroll.setWidgetResizable(True);main_scroll.setFrameShape(QScrollArea.NoFrame);main_scroll.setWidget(main);outer.addWidget(main_scroll,1)
         self.signals=Signals(self);self.signals.progress.connect(self.status.setText);self.signals.ready.connect(self.received);self.signals.failed.connect(self.failed)
+        self.knowledge_timer=QTimer(self);self.knowledge_timer.timeout.connect(self.refresh_knowledge);self.knowledge_timer.start(1200)
         self.refresh_chats();self.new_chat()
+    def refresh_knowledge(self):
+        runtime=self.collector.runtime
+        if runtime:
+            with runtime.lock:text=runtime.status.get('knowledge','任务知识库正在准备…')
+            self.collection_status.setText(text)
     def fit_result(self):
         if self.results.currentWidget()==self.task_view:self.split.setMinimumHeight(max(300,self.task_view.layout().totalHeightForWidth(max(720,self.results.width()))))
     def resizeEvent(self,event):
@@ -55,7 +61,7 @@ class ChatWindow(QMainWindow):
         runtime=self.collector.runtime
         if runtime:
             with runtime.lock:status=dict(runtime.status)
-            text='本地采集运行中\n\n'+str(status.get('task_index','历史整理中'))+'\n'+str(status.get('upload','仅本地保存'))
+            text='本地采集运行中\n\n'+str(status.get('task_index','历史整理中'))+'\n'+str(status.get('knowledge','知识库正在准备'))+'\n'+str(status.get('upload','仅本地保存'))
         else:text='采集尚未启动'
         info=QLabel(text);info.setWordWrap(True);layout.addWidget(info)
         layout.addWidget(QLabel('已整理内容：用户提问、回复、已记录的思路、工具调用与结果'))
@@ -119,6 +125,7 @@ class ChatWindow(QMainWindow):
         if self.messages and self.messages[-1].get('presentation') and not self.busy:
             self.current_task.setText(task_title(self.messages[-1]['presentation']['prompt']));self.task_view.load(self.messages[-1]);self.results.setCurrentWidget(self.task_view);QTimer.singleShot(0,self.fit_result);return
         self.task_view.stop();self.split.setMinimumHeight(150);self.results.setCurrentWidget(self.answer)
+        if latest.get('packet',{}).get('scope')=='multiple':self.current_task.setText(f'相关任务 · {len(latest.get("retrievedTaskIds",[]))} 次')
         esc=html.escape
         content='<style>body{color:#233247}p{line-height:150%}a{color:#3265a8;text-decoration:none}h3{font-size:16px}</style>'
         if not self.messages and not self.busy:content+='<h3>答案将在这里展开</h3><p style="color:#758397">相关任务、处理经过与原始依据，随提问显示。</p><p><a href="sample:weather">查上海天气时遇到了什么问题？</a></p>'
@@ -133,6 +140,11 @@ class ChatWindow(QMainWindow):
                 content+='<p>'+esc(({'inferred':'推断：','unknown':'记录未能确认：'}.get(block['basis'],''))+block['text'])+'</p>'
                 content+='<p>'+ '　'.join(f'<a href="proof:{n}:{ref}">{ref} 查看依据</a>' for ref in block['evidenceRefs'])+'</p>'
             for gap in value.get('gaps',[]):content+='<p style="color:#88663b">'+esc(str(gap))+'</p>'
+            if r.get('packet',{}).get('scope')=='multiple':
+                content+='<h3>本次参考的任务</h3>'
+                for item in r.get('retrieved',[]):
+                    content+='<p><b>'+esc(item['source']+' · '+str(item.get('updated',''))[:16].replace('T',' '))+'</b><br>'+esc(item['title'][:140])+f'<br><a href="inspect-task:{esc(item["taskId"])}">查看这次任务过程</a></p>'
+                content+='<p style="color:#758397">最多比较 3 个检索到的任务，受所选来源、时间和当前整理进度限制。</p>'
             content+='<p style="color:#758397">'+esc(' · '.join(x['source']+' / '+x['title'] for x in r.get('retrieved',[])))+'</p>'
             packet=r.get('packet',{});fragments=packet.get('fragments',[])
             content+='<p style="color:#758397">本次读取 '+str(len(fragments))+' / '+str(packet.get('totalRecords',len(fragments)))+' 条记录'+('，部分正文已截取' if any(f.get('truncated') for f in fragments) else '')+'；引用可核对原文。</p>'
@@ -173,12 +185,19 @@ class ChatWindow(QMainWindow):
             if latest.get('selectionNeeded') and identity in {option['taskId'] for option in latest['options']}:
                 self.input.setPlainText(latest['question']);self.send(selected_task=identity)
             return
+        if url.toString().startswith('inspect-task:'):
+            identity=url.toString()[len('inspect-task:'):];latest=self.messages[-1] if self.messages else {}
+            if identity in latest.get('retrievedTaskIds',[]):
+                self.input.setPlainText('这一次任务的要求、执行过程和结果是什么？');self.send(selected_task=identity)
+            return
         _,n,ref=url.toString().split(':');r=self.messages[int(n)];f=next(x for x in r['packet']['fragments'] if x['evidenceId']==ref)
         with sqlite3.connect(self.root/'collector.db') as db:raw=db.execute('SELECT event FROM events WHERE id=?',(f['eventId'],)).fetchone()
         if not raw:self.status.setText('这条原始记录暂不可用；回答引用的摘录仍保存在本次对话中。');return
         e=json.loads(raw[0]);esc=html.escape;loc=e.get('evidence',{})
-        self.proof.setHtml('<h3>'+esc(ref)+' · 原始证据</h3><p>'+esc(str(e.get('name') or e['kind']))+'</p><pre style="white-space:pre-wrap">'+esc(event_text(e)[:20000])+'</pre><hr><p>'+esc(str(loc.get('path','')))+ '</p><p>字节 '+str(loc.get('byteStart'))+'–'+str(loc.get('byteEnd'))+'</p>');self.proof_panel.show();self.split.setSizes([650,350])
+        owner=next((x['title'] for x in r.get('retrieved',[]) if x.get('taskId')==f.get('taskId')),None)
+        self.proof.setHtml('<h3>'+esc(ref)+' · 原始证据</h3>'+('<p>所属任务：'+esc(owner[:160])+'</p>' if owner else '')+'<p>'+esc(str(e.get('name') or e['kind']))+'</p><pre style="white-space:pre-wrap">'+esc(event_text(e)[:20000])+'</pre><hr><p>'+esc(str(loc.get('path','')))+ '</p><p>字节 '+str(loc.get('byteStart'))+'–'+str(loc.get('byteEnd'))+'</p>');self.proof_panel.show();self.split.setSizes([650,350])
     def closeEvent(self,event):
+        self.knowledge_timer.stop()
         self.task_view.timer.stop()
         if self.collector.runtime:self.collector.runtime.stop.set()
         self.collector.hide_on_close=False;self.collector.close();self.cache.close();event.accept()

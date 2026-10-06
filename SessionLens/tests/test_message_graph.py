@@ -79,7 +79,7 @@ class MessageGraphTests(unittest.TestCase):
             packet=packet_for_task(store.db,task)
             self.assertEqual(len(packet['reasoningLinks']),3)
             self.assertTrue(packet['messageRelations'])
-            self.assertEqual(packet['version'],6)
+            self.assertEqual(packet['version'],7)
             self.assertTrue(all(x['reasoningRef'].startswith('E') for x in packet['reasoningLinks']))
             store.close()
 

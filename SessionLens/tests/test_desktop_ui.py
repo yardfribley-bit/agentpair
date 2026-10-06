@@ -53,6 +53,25 @@ class LiveUiTests(unittest.TestCase):
             self.assertIn('2 轮对话',window.task_list.item(0).text());self.assertIn('需求对话 · 2 轮',window.middle.toPlainText());self.assertIn('本轮中断',window.middle.toPlainText())
             window.follow_link(QUrl('dialogue:'+ids[1]));self.assertIn('再分析一下',window.proof.toPlainText());self.assertTrue(window.associate.isEnabled());window.close()
 
+    def test_comparison_view_shows_each_task_and_opens_owned_evidence(self):
+        from sessionlens.chat_window import ChatWindow
+        from sessionlens.assistant import packet_for_task,combine_packets
+        from PySide6.QtCore import QUrl
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);window=Window(root);chat=ChatWindow(window);log=root/'task.jsonl'
+            rows=[{'type':'message','role':'user','sessionId':str(n),'content':'检查日报接口 '+str(n)} for n in range(3)]
+            log.write_text(''.join(json.dumps(r)+'\n' for r in rows));c=Collector(root/'collector.db');c.scan(log,source='workbuddy');window.store.advance(realtime=True);window.store.repair_links(10);c.db.close()
+            tasks=window.store.tasks();packet=combine_packets([packet_for_task(window.store.db,t[0]) for t in tasks]);ids=[t[0] for t in tasks]
+            chat.messages=[{'question':'比较这几次接口检查','taskId':ids[0],'retrievedTaskIds':ids,'packet':packet,'retrieved':[{'taskId':t[0],'title':t[3],'source':t[1],'updated':t[4]} for t in tasks],
+                            'understanding':{'overview':{'text':'这里只比较本次检索到的三次任务。','basis':'recorded','evidenceRefs':['E001']},'steps':[],'gaps':[]}}]
+            chat.render();self.assertEqual(chat.results.currentWidget(),chat.answer);self.assertEqual(chat.current_task.text(),'相关任务 · 3 次')
+            self.assertIn('检查日报接口 0',chat.answer.toPlainText());self.assertIn('最多比较 3 个',chat.answer.toPlainText())
+            chat.evidence(QUrl('proof:0:E001'));self.assertIn('所属任务',chat.proof.toPlainText())
+            with patch.object(chat,'send') as send:
+                chat.evidence(QUrl('inspect-task:'+ids[1]));send.assert_called_once_with(selected_task=ids[1])
+            chat.close()
+
     def test_chat_preserves_collection_window_and_restores_conversation(self):
         from sessionlens.chat_window import ChatWindow
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,7 +4,7 @@ from urllib.parse import urlparse,parse_qsl,unquote
 from .supervision import event_text
 from .desktop import category
 from .task_lineage import task_table,step_table,resolve,history,execution_map
-from .message_graph import build,reasoning_bindings
+from .message_graph import build,reasoning_bindings,bounded_event
 
 LABELS={'prompt':'生成提示词','resolution':'分辨率','aspect_ratio':'画面比例','enable_audio':'生成音频','output_dir':'保存目录','image':'输入图像','last_image':'结束画面','files':'交付文件','queries':'搜索内容','top_k':'候选数量','command':'执行命令','description':'用途','file_path':'文件路径','path':'路径','old_string':'修改前','new_string':'修改后'}
 
@@ -27,7 +27,7 @@ def readable_fields(args):
         if isinstance(value,bool):text='开启' if value else '关闭'
         elif isinstance(value,str):text=value
         else:text=json.dumps(value,ensure_ascii=False)
-        rows.append({'label':LABELS.get(key,key),'key':key,'value':text})
+        rows.append({'label':'参数摘录（正文较长，可查看原文）' if key=='record_excerpt' else LABELS.get(key,key),'key':key,'value':text})
     command=str(inner.get('command',''))
     for url in re.findall(r'https?://[^\s\"\'<>]+',command):
         parsed=urlparse(url);rows.append({'label':'本机地址' if parsed.hostname in ('localhost','127.0.0.1','::1') else '外部网址','key':'URL','value':url})
@@ -45,10 +45,10 @@ def project(db,task_id):
     for identity in {x['planEvent'] for x in bindings.values() if x.get('planEvent')}:
         raw=db.execute('SELECT event FROM events WHERE id=?',(identity,)).fetchone()
         if raw:plans[identity]=event_text(json.loads(raw[0]))[:16000]
-    selected=db.execute('SELECT s.seq,e.event FROM '+steps+' s JOIN events e ON e.id=s.event WHERE s.task=? ORDER BY s.seq LIMIT ?',(task_id,800 if count<=800 else 400)).fetchall()
-    if count>800:selected+=db.execute('SELECT s.seq,e.event FROM '+steps+' s JOIN events e ON e.id=s.event WHERE s.task=? ORDER BY s.seq DESC LIMIT 400',(task_id,)).fetchall()[::-1]
-    for seq,raw in selected:
-        e=json.loads(raw);e['_seq']=seq;events.append(e)
+    selected=db.execute('SELECT seq,event FROM '+steps+' WHERE task=? ORDER BY seq LIMIT ?',(task_id,800 if count<=800 else 400)).fetchall()
+    if count>800:selected+=db.execute('SELECT seq,event FROM '+steps+' WHERE task=? ORDER BY seq DESC LIMIT 400',(task_id,)).fetchall()[::-1]
+    for seq,ident in selected:
+        e=bounded_event(db,ident,seq,budget=min(262144,4*1024*1024//max(1,len(selected))));events.append(e)
     graph=build(events);decision_links=reasoning_bindings(graph)
     by_id={e['id']:e for e in events};nodes={n['eventId']:n for n in graph['nodes']}
     returns={}
@@ -58,7 +58,7 @@ def project(db,task_id):
     for i,e in enumerate(events):
         text=event_text(e)
         if category(e)=='解题思路' and text:
-            reasoning.append({'id':e['id'],'text':text[:16000],'truncated':len(text)>16000,'timestamp':e.get('timestamp')})
+            reasoning.append({'id':e['id'],'text':text[:16000],'truncated':bool(e.get('_bodyTruncated')) or len(text)>16000,'timestamp':e.get('timestamp')})
             next_reason=None
             for x in events[i+1:]:
                 if category(x)=='用户提问':break
@@ -76,7 +76,7 @@ def project(db,task_id):
                     if category(previous)=='解题思路':
                         if event_text(previous):decision={'reasoningEvent':previous['id'],'basis':'sequence_candidate','path':[previous['id'],e['id']]}
                         break
-            calls.append({'id':e['id'],'name':title,'callId':e.get('callId'),'fields':readable_fields(args),'arguments':args,'returns':[{'id':x['id'],'text':event_text(x)[:16000],'truncated':len(event_text(x))>16000} for x in linked],'timestamp':e.get('timestamp'),'requirement':bindings.get(e['id']),'decisionLink':decision})
+            calls.append({'id':e['id'],'name':title,'callId':e.get('callId'),'fields':readable_fields(args),'arguments':args,'truncated':bool(e.get('_bodyTruncated')),'returns':[{'id':x['id'],'text':event_text(x)[:16000],'truncated':bool(x.get('_bodyTruncated')) or len(event_text(x))>16000} for x in linked],'timestamp':e.get('timestamp'),'requirement':bindings.get(e['id']),'decisionLink':decision})
     for frame in frames:
         related=[c for c in calls if c.get('decisionLink') and c['decisionLink']['reasoningEvent']==frame['reasoning']['id']]
         frame['callIds']=[c['id'] for c in related];frame['call']=frame['callIds'][0] if related else None
