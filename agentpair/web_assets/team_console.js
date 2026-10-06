@@ -6,9 +6,9 @@
   const stages={plan:'规划任务',driver:'执行工作',review:'复核与交付',explore:'独立探索',review_peer:'交叉复核',revise:'修订结果'};
   const title=e=>e.text||e.summary||({stage_started:'开始'+(stages[e.stage]||e.stage),stage_completed:'完成'+(stages[e.stage]||e.stage),handoff_requested:'交接工作上下文',branch_handoff:'共享发现',branch_handoff_processed:'已处理交接',rework:'验收后继续返工',stopped:'任务已停止'})[e.kind]||e.kind;
   const terminal=new Set(['completed','failed','cancelled','interrupted','blocked']);
-  let selectedJob=null;let task=null,selected='Navigator',tab='messages',follow=true,signature='',unread=0,scope='all';
+  let selectedJob=null;let task=null,selected='Navigator',tab='messages',follow=false,signature='',unread=0,scope='all';
   const root=make('section',null,'team-console');root.id='team-console';root.hidden=true;
-  root.innerHTML='<div class="tc-heading"><div><div class="tc-breadcrumb">任务 <span>›</span> 团队工作台</div><h1></h1><p></p></div><span class="tc-task-status"></span></div><div class="tc-overview"><section class="tc-canvas"><div class="tc-canvas-label">团队工作流 <small>点击节点查看工作 · 点击连线消息查看往返记录</small></div><div class="tc-map"><svg aria-hidden="true"></svg><div class="tc-nodes"></div><div class="tc-edge-messages"></div></div></section><section class="tc-activity"><h2>团队动态</h2><div></div></section></div><section class="tc-work"><div class="tc-work-heading"><h2></h2><span></span></div><div class="tc-tabs" role="tablist" aria-label="节点详情"></div><div class="tc-work-body"><section class="tc-jobs"></section><section class="tc-detail"></section></div><div class="tc-work-footer"><span class="tc-new"></span><label><input type="checkbox" checked> 跟随最新</label></div></section>';
+  root.innerHTML='<div class="tc-heading"><div><div class="tc-breadcrumb">任务 <span>›</span> 团队工作台</div><h1></h1><p></p></div><span class="tc-task-status"></span></div><div class="tc-overview"><section class="tc-canvas"><div class="tc-canvas-label">团队工作流 <small>点击节点查看工作 · 点击连线消息查看往返记录</small></div><div class="tc-map"><svg aria-hidden="true"></svg><div class="tc-nodes"></div><div class="tc-edge-messages"></div></div></section><section class="tc-activity"><h2>团队动态</h2><div></div></section></div><section class="tc-work"><div class="tc-work-heading"><h2></h2><span></span></div><div class="tc-tabs" role="tablist" aria-label="节点详情"></div><div class="tc-work-body"><section class="tc-jobs"></section><section class="tc-detail"></section></div><div class="tc-work-footer"><span class="tc-new"></span><label><input type="checkbox"> 跟随最新</label></div></section>';
   $('pair-board').before(root);
   document.body.classList.add('team-console-page');
   const stylesheet=make('link');stylesheet.rel='stylesheet';stylesheet.href='/team_console.css';document.head.append(stylesheet);
@@ -19,7 +19,11 @@
   const resource=document.querySelector('.resource-drawer');if(resource)document.querySelector('.account-actions').prepend(resource);
   const priorAccess=applyAccess;applyAccess=()=>{priorAccess();document.querySelector('.hero').classList.toggle('hidden',!!task);};
   const tabs=root.querySelector('.tc-tabs');
-  for(const [key,label] of [['work','当前工作'],['messages','往返消息'],['logs','日志与产物']]){const b=make('button',label);b.type='button';b.role='tab';b.dataset.tab=key;b.onclick=()=>{tab=key;renderDetails();};tabs.append(b);}
+  for(const [key,label] of [['work','当前工作'],['messages','往返消息'],['logs','日志与产物']]){const b=make('button',label);b.type='button';b.role='tab';b.dataset.tab=key;b.onclick=()=>{pauseFollow();tab=key;renderDetails();};tabs.append(b);}
+  const updateNotice=root.querySelector('.tc-new');updateNotice.setAttribute('role','button');updateNotice.tabIndex=0;updateNotice.title='点击更新记录，保持当前阅读位置';updateNotice.onclick=()=>{unread=0;renderDetails();};updateNotice.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();updateNotice.click();}};
+  const pauseFollow=()=>{follow=false;root.querySelector('input').checked=false;};
+  root.addEventListener('click',e=>{if(e.target.closest('summary'))pauseFollow();});
+  root.querySelector('.tc-detail').addEventListener('wheel',pauseFollow,{passive:true});
   root.querySelector('input').onchange=e=>{follow=e.target.checked;if(follow){unread=0;renderDetails();}};
   function events(){return task.events||[];}
   function belongs(e,node){return role(e.role||e.from||e.message?.from)===node||role(e.to||e.message?.to)===node;}
@@ -45,7 +49,7 @@
     const runningTool=[...es].reverse().find(e=>e.kind==='tool_started');
     if(runningTool){jobs.append(make('h3','最近执行的工具'),make('pre',JSON.stringify(runningTool.arguments||{},null,2)));}
     detail.scrollTop=follow?detail.scrollHeight:scroll;root.querySelector('.tc-new').textContent=unread?`新增 ${unread} 条事件`:'所有内容来自任务记录';}
-  function update(t){const changed=task?.id!==t.id;if(changed){selectedJob=null;selected='Navigator';signature='';unread=0;}const oldCount=task?.events?.length||0;task=t;root.hidden=false;document.querySelector('.team-nodes').hidden=true;root.querySelector('.tc-heading h1').textContent=t.title;const acceptance=t.operations?.acceptance;root.querySelector('.tc-heading p').textContent=acceptance?.total?`已通过 ${acceptance.passed} / ${acceptance.total} 项验收 · 第 ${t.round} 轮 · ${nodes().length} 个协作角色`:`第 ${t.round} 轮 · ${nodes().length} 个协作角色 · 尚无验收结论`;root.querySelector('.tc-task-status').textContent=labels[t.status]||t.status;const next=JSON.stringify(t);if(next===signature)return;signature=next;if(!follow&&!changed)unread+=Math.max(0,events().length-oldCount);renderGraph();renderActivity();renderDetails();document.querySelector('.hero').classList.add('hidden');}
+  function update(t){const changed=task?.id!==t.id;if(changed){selectedJob=null;selected='Navigator';signature='';unread=0;}const oldCount=task?.events?.length||0;task=t;root.hidden=false;document.querySelector('.team-nodes').hidden=true;root.querySelector('.tc-heading h1').textContent=t.title;const acceptance=t.operations?.acceptance;root.querySelector('.tc-heading p').textContent=acceptance?.total?`已通过 ${acceptance.passed} / ${acceptance.total} 项验收 · 第 ${t.round} 轮 · ${nodes().length} 个协作角色`:`第 ${t.round} 轮 · ${nodes().length} 个协作角色 · 尚无验收结论`;root.querySelector('.tc-task-status').textContent=labels[t.status]||t.status;const next=JSON.stringify(t);if(next===signature)return;signature=next;if(!follow&&!changed)unread+=Math.max(0,events().length-oldCount);renderGraph();renderActivity();if(changed||follow)renderDetails();else root.querySelector('.tc-new').textContent=unread?`新增 ${unread} 条事件 · 开启跟随最新可更新`:'所有内容来自任务记录';document.querySelector('.hero').classList.add('hidden');}
   function renderJob(){
     const list=(task.operations?.jobs||[]).filter(j=>j.node===selected);
     if(!list.length)return;
