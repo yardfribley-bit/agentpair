@@ -45,3 +45,22 @@ class PlatformAssistantTests(unittest.TestCase):
         self.assertEqual(self.query('session_detail',deviceId='device-1',sessionId='session-1')['status'],'completed')
         self.assertEqual(self.query('session_detail',deviceId='foreign',sessionId='missing')['status'],'needs_information')
         self.assertEqual(self.query('delete_device')['status'],'needs_information')
+
+    def test_release_requires_specific_machine_and_confirmation(self):
+        self.cloud.list=lambda:[{'id':'lease','name':'Windows test','state':'active'}]
+        self.assertEqual(self.query('release_machine')['status'],'needs_information')
+        self.assertEqual(self.query('release_machine',owner='alice',leaseId='lease')['status'],'unsupported_capability')
+        task=self.query('release_machine',leaseId='lease')
+        self.assertEqual(task['status'],'awaiting_confirmation')
+        self.assertFalse(self.tool.handle_message(task['id'],'改成另一台',administrator=True))
+        with self.assertRaises(PermissionError):self.tool.handle_message(task['id'],'确认释放')
+        released=[]
+        self.cloud.manager=SimpleNamespace(release=lambda lease:(released.append(lease) or {'state':'released'}))
+        from unittest.mock import patch
+        with patch('agentpair.platform_assistant.threading.Thread') as thread:
+            self.assertTrue(self.tool.handle_message(task['id'],'确认释放',administrator=True))
+            self.assertFalse(self.tool.handle_message(task['id'],'确认释放',administrator=True))
+            self.assertEqual(thread.call_count,1)
+        self.tool._release(task['id'],task['round'],'lease')
+        self.assertEqual(released,['lease'])
+        self.assertEqual(self.engine.get(task['id'])['status'],'completed')

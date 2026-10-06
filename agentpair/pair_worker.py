@@ -86,7 +86,8 @@ def _run(envelope, token, emit=None):
                  '"deviceId":"仅用户提供或历史工具结果中真实编号，未指定则省略","sessionId":"同理"}，executionMode为local。'
                  '分别对应云机器列表、当前账号设备及心跳、模型输入记录、安全已有发现、会话清单、特定会话详情。'
                  '不依赖记忆猜数量、编号和状态，必须查询工具。创建机器使用cloud_management。'
-                 '未接入的删除设备、改配置、释放机器等写操作必须明确未执行，不能用查询冒充完成。'
+                 '释放机器使用platform_management action:release_machine与leaseId，只能用用户指定或本会话机器查询的真实编号，平台会先等待对话确认。'
+                 '未接入的删除设备、改配置等写操作必须明确未执行，不能用查询冒充完成。'
                  '用户问写代码或其他无关平台任务才走原有通用能力。多轮追问参考上一轮真实查询返回和用户要求。')
     if stage=='plan' and task.get('cloudCapabilities') and not task.get('securityEvidence'):
         system+=('任务还提供独立 cloud_management 工具，其能力及已登记软件见 task.cloudCapabilities。'

@@ -1,11 +1,12 @@
 """Platform tools use local stores, with identity enforced outside model output."""
 import copy
+import threading
 from urllib.parse import urlencode
 from .tasks import now
 
 
 class PlatformAssistant:
-    ACTIONS = ('machines', 'devices', 'model_data', 'security', 'sessions', 'session_detail')
+    ACTIONS = ('machines', 'devices', 'model_data', 'security', 'sessions', 'session_detail', 'release_machine')
 
     def __init__(self, engine, devices, sessions, cloud):
         self.engine, self.devices, self.sessions, self.cloud = engine, devices, sessions, cloud
@@ -28,7 +29,22 @@ class PlatformAssistant:
                 raise PermissionError('采集证据不能发起平台管理操作')
             if action not in self.ACTIONS:
                 raise ValueError('尚未接入这个平台操作，未执行修改')
-            if action == 'machines':
+            if action == 'release_machine':
+                if owner != 'admin': raise PermissionError('释放机器需要管理员账号')
+                if self.cloud is None: raise ValueError('云机器工具未配置')
+                lease_id = tool.get('leaseId')
+                matches = [r for r in self.cloud.list() if r['id'] == lease_id]
+                if len(matches) != 1: raise ValueError('请先查询云机器并指定真实机器编号，不会自动选择机器释放')
+                row = matches[0]
+                result['items'] = [{k:row.get(k) for k in ('id','name','platform','state','expiresAt')}]
+                result['links'] = [{'label':'查看目标机器','url':'/cloud-machines'}]
+                if row['state'] == 'released':
+                    text = '这台机器已经释放，没有再次执行。'
+                else:
+                    status = 'awaiting_confirmation'
+                    result['pendingRelease'] = lease_id
+                    text = '将释放机器 '+row['name']+'（'+lease_id+'），机内数据会随实例删除。请回复“确认释放”后执行，当前尚未释放。'
+            elif action == 'machines':
                 if owner != 'admin': raise PermissionError('云机器管理需要管理员账号')
                 if self.cloud is None: raise ValueError('云机器工具未配置')
                 rows = self.cloud.list()
@@ -90,3 +106,42 @@ class PlatformAssistant:
                                     'text': text, 'action': action})
             self.engine._save(saved)
         return True
+
+    def handle_message(self, tid, message, *, administrator=False):
+        message = self.engine._message(message)
+        with self.engine.lock:
+            task = self.engine._load(tid)
+            result = task.get('platformResult', {})
+            if (result.get('round') != task['round'] or not result.get('pendingRelease')
+                    or task['status'] != 'awaiting_confirmation'):
+                return False
+            if message.strip().rstrip('。.!！') not in ('确认释放','确认','同意释放','confirm release'):
+                return False
+            if not administrator: raise PermissionError('释放机器需要管理员确认')
+            lease_id = result['pendingRelease']
+            task['messages'].append({'role':'user','text':message,'round':task['round'],'at':now()})
+            task['status'] = 'running'
+            result.pop('pendingRelease')
+            result['summary'] = '正在释放已确认的机器 '+lease_id
+            self.engine._save(task)
+            round_number = task['round']
+        threading.Thread(target=self._release, args=(tid,round_number,lease_id),daemon=True).start()
+        return True
+
+    def _release(self, tid, round_number, lease_id):
+        try:
+            released = self.cloud.manager.release(lease_id)
+            success = released['state'] == 'released'
+            text = '机器已释放，编号 '+lease_id if success else '释放尚未完成，请核对云机器状态。'
+        except Exception:
+            success, text = False, '未取得完整释放回执，请先核对云端机器状态，不能直接认定释放成功。'
+        with self.engine.lock:
+            task = self.engine._load(tid)
+            if task['round'] != round_number: return
+            task['status'] = 'completed' if success else 'interrupted'
+            task['platformResult']['summary'] = text
+            task['platformResult']['items'] = [{'id':lease_id,'state':'released' if success else '待核对'}]
+            task['messages'].append({'role':'navigator','stage':'review','round':round_number,'at':now(),
+                                    'answer':{'summary':text,'finalAnswer':text}})
+            task['events'].append({'kind':'platform_tool_result','round':round_number,'at':now(),'text':text})
+            self.engine._save(task)
