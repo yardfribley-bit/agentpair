@@ -46,6 +46,9 @@ class InventoryTests(unittest.TestCase):
         snap=self.store.snapshot(self.source);self.assertEqual(snap['counts']['identified'],1);self.assertEqual(snap['projects'][0]['name'],'alpha')
         self.add(3,'/work/alpha/pyproject.toml');self.add(4,'/work/alpha/main.py');self.source.execute("UPDATE task_cursor SET value=4 WHERE name='rowid'");self.store.sync(self.source)
         snap=self.store.snapshot(self.source);self.assertEqual(snap['counts']['identified'],0);self.assertEqual(snap['counts']['candidate'],2)
+        self.store.review(snap['projects'][0]['id'],'excluded');self.assertEqual(self.store.snapshot(self.source)['counts']['identified'],1)
+    def test_swift_manifest_without_implementation_not_development(self):
+        self.add(1,'/work/manifest-only/Package.swift');self.store.sync(self.source);self.assertEqual(self.store.snapshot(self.source)['projects'],[])
 
 @unittest.skipUnless(__import__('importlib').util.find_spec('PySide6'),'Qt unavailable')
 class InventoryUiTests(unittest.TestCase):

@@ -34,8 +34,9 @@ class ChatWindow(QMainWindow):
         self.composer=QWidget();self.composer.setObjectName('assistantComposer');self.composer.setStyleSheet('QWidget#assistantComposer{background:white;border:1px solid #E6E8EC;border-radius:12px;}')
         cv=QVBoxLayout(self.composer);cv.setContentsMargins(20,16,20,16);prompt=QLabel('你想了解什么？');prompt.setStyleSheet('font-size:17px;font-weight:600');prompt.hide()
         self.input=QPlainTextEdit();self.input.setFixedHeight(72);self.input.setStyleSheet('QPlainTextEdit{border:0;background:transparent;font-size:16px;padding:6px;}');self.input.setPlaceholderText('描述你想找的任务，或者直接问：当时为什么这样修改？用了什么工具？最后做成了吗？');cv.addWidget(self.input)
-        row=QHBoxLayout();hint=QLabel('发送相关证据给已配置的模型分析');hint.setWordWrap(True);hint.setStyleSheet('color:#667589;font-size:12px');row.addWidget(hint,1);self.send_button=QPushButton('查询');self.send_button.setMinimumWidth(88);self.send_button.clicked.connect(self.send);row.insertWidget(0,self.send_button)
-        self.project_scope=QComboBox();self.project_scope.addItem('全部任务',None);self.project_scope.addItem('未关联项目','__unlinked__');row.insertWidget(1,self.project_scope);cv.addLayout(row);m.addWidget(self.composer);self.project_catalog_seen=None
+        row=QHBoxLayout();hint=QLabel('项目统计在本机完成；任务解释按模型设置处理');hint.setWordWrap(True);hint.setStyleSheet('color:#667589;font-size:12px');row.addWidget(hint,1);self.send_button=QPushButton('查询');self.send_button.setMinimumWidth(88);self.send_button.clicked.connect(self.send);row.insertWidget(0,self.send_button)
+        # Project scope is inferred from the question; no preparatory dropdown.
+        self.project_scope=QComboBox(self);self.project_scope.addItem('全部任务',None);self.project_scope.hide();cv.addLayout(row);m.addWidget(self.composer);self.project_catalog_seen=None
         self.status=QLabel('从你的任务记录中寻找答案');self.status.setWordWrap(True);m.addWidget(self.status)
         self.split=QSplitter(Qt.Horizontal);self.split.setChildrenCollapsible(False);self.answer=QTextBrowser();self.answer.setOpenLinks(False);self.answer.anchorClicked.connect(self.evidence);self.results=QStackedWidget();self.results.addWidget(self.answer);self.task_view=TaskView();self.task_view.contentChanged.connect(lambda:QTimer.singleShot(0,self.fit_result));self.task_view.evidenceRequested.connect(lambda ref:self.evidence(QUrl("proof:"+str(len(self.messages)-1)+":"+ref)));self.results.addWidget(self.task_view);self.split.addWidget(self.results)
         self.task_view.associationRequested.connect(self.correct_association)
@@ -50,16 +51,6 @@ class ChatWindow(QMainWindow):
         if runtime:
             with runtime.lock:text=runtime.status.get('knowledge','任务知识库正在准备…')
             self.collection_status.setText(text)
-        path=self.root/'project_context.db'
-        if path.exists() and not self.busy:
-            try:
-                with sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=.1) as db:
-                    rows=db.execute('SELECT DISTINCT p.id,p.name,p.repository FROM project_catalog p JOIN project_tasks t ON t.project=p.id ORDER BY p.name').fetchall()
-                if rows!=self.project_catalog_seen:
-                    selected=self.project_scope.currentData();self.project_scope.blockSignals(True);self.project_scope.clear();self.project_scope.addItem('全部任务',None);self.project_scope.addItem('未关联项目','__unlinked__')
-                    for ident,name,repo in rows:self.project_scope.addItem(name,ident)
-                    index=self.project_scope.findData(selected);self.project_scope.setCurrentIndex(max(0,index));self.project_scope.blockSignals(False);self.project_catalog_seen=rows
-            except sqlite3.Error:pass
     def fit_result(self):
         if self.results.currentWidget()==self.task_view:self.split.setMinimumHeight(max(300,self.task_view.layout().totalHeightForWidth(max(720,self.results.width()))))
     def resizeEvent(self,event):
@@ -146,13 +137,23 @@ class ChatWindow(QMainWindow):
             self.task_view.stop();self.split.setMinimumHeight(150);self.results.setCurrentWidget(self.answer);self.current_task.setText('正在查找相关任务');self.proof_panel.hide()
             self.answer.setHtml('<h3>正在查找这次问题的相关记录</h3><p>'+html.escape(self.pending)+'</p>');self.send_button.setText('查询中…');return
         latest=self.messages[-1] if self.messages else {}
+        if 'projectChoices' in latest or latest.get('projectDetails'):
+            self.task_view.stop();self.results.setCurrentWidget(self.answer);self.split.setMinimumHeight(360);self.proof_panel.hide();self.send_button.setText('查询');esc=html.escape
+            if 'projectChoices' in latest:
+                self.current_task.setText('确认项目');self.status.setText('根据问题识别项目')
+                content='<h3>'+esc(latest['projectMessage'])+'</h3>'
+                for p in latest['projectChoices']:content+='<p><a href="project:'+p['id']+'">'+esc(p['name']+' · '+p['source'])+'</a><br>'+esc(' / '.join(p['roots']))+'</p>'
+                self.answer.setHtml(content);return
+            from .project_answers import render_project_answer
+            project=latest['projectDetails'];self.current_task.setText(project['name']);self.status.setText('SessionLens 本机项目知识 · 任务与文件都有依据')
+            self.answer.setHtml(render_project_answer(latest));return
         if latest.get('projectInventory'):
             from html import escape
             snap=latest['projectInventory'];c=snap['counts'];self.task_view.stop();self.results.setCurrentWidget(self.answer);self.split.setMinimumHeight(300);self.proof_panel.hide();self.current_task.setText('项目总览')
             self.send_button.setText('查询');self.status.setText('本机项目统计 · 点击项目查看开发依据')
             text=f'<h3>已识别 {c["identified"]+c["confirmed"]} 个项目；待确认 {c["candidate"]} 个开发目录</h3>'
             text+='<p>'+('本次统计已覆盖当前整理出的历史。' if snap['complete'] else '历史尚未整理完，当前数量会继续增加。')+'</p><p><a href="projects:">打开项目总览：确认、合并或排除目录 →</a></p>'
-            text+='<ol>'+''.join('<li>'+escape(p['name'])+' · '+str(p['taskCount'])+' 个任务 · '+({'confirmed':'人工确认','identified':'项目标记与源码记录','candidate':'待确认'}[p['state']])+'</li>' for p in snap['projects'] if p['state']!='excluded')+'</ol><p>'+escape(snap['coverage'])+'</p>'
+            text+='<ol>'+''.join('<li><a href="project:'+p['id']+'">'+escape(p['name'])+'</a> · '+str(p['taskCount'])+' 个任务 · '+({'confirmed':'人工确认','identified':'项目标记与源码记录','candidate':'待确认'}[p['state']])+'</li>' for p in snap['projects'] if p['state']!='excluded')+'</ol><p>'+escape(snap['coverage'])+'</p>'
             self.answer.setHtml(text);return
         if latest.get('selectionMismatch'):
             self.task_view.stop();self.split.setMinimumHeight(150);self.results.setCurrentWidget(self.answer);self.current_task.setText('任务需要重新核对');self.proof_panel.hide();self.send_button.setText('重新查询')
@@ -199,14 +200,14 @@ class ChatWindow(QMainWindow):
             content+='<p style="color:#758397">已参考 '+str(len(r.get('retrievedTaskIds',[])))+' 个任务 · 当前已整理知识库中的相关证据</p>'
         if self.busy:content+='<hr><h3>你</h3><p>'+esc(self.pending)+'</p><p style="color:#758397">正在查找与核对记录…</p>'
         self.answer.setHtml(content)
-    def send(self,selected_task=None):
+    def send(self,selected_task=None,selected_project=None):
         if not isinstance(selected_task,str):selected_task=None
         q=self.input.toPlainText().strip()
         if len(q)>2000:self.status.setText('问题过长，请缩短到 2000 字以内。');return
         if not q or self.busy:return
         history=[]
         for r in self.messages:
-            if r.get('error') or r.get('selectionMismatch') or r.get('selectionNeeded') or r.get('projectInventory'):history=[]
+            if r.get('error') or r.get('selectionMismatch') or r.get('selectionNeeded') or 'projectChoices' in r or r.get('projectInventory'):history=[]
             else:history.append(r)
         self.busy=True;self.send_button.setEnabled(False);self.chats.setEnabled(False);self.pending=q;self.status.setText('正在查找相关工作记录…')
         self.source.setEnabled(False);self.period.setEnabled(False)
@@ -217,14 +218,10 @@ class ChatWindow(QMainWindow):
         def work():
             config={**self.collector.config.get('model',{}),'embedding':self.collector.config.get('embedding',{})}
             try:
-                from .project_inventory import ProjectInventory,inventory_question
-                if not selected_task and inventory_question(q):
-                    provider='workbuddy' if 'workbuddy' in q.lower() else 'codex' if 'codex' in q.lower() else source or ''
-                    with sqlite3.connect((self.root/'collector.db').resolve().as_uri()+'?mode=ro',uri=True,timeout=1) as db:
-                        store=ProjectInventory(self.root/'project_inventory.db')
-                        try:snapshot=store.snapshot(db,provider)
-                        finally:store.close()
-                    self.signals.ready.emit({'question':q,'projectInventory':snapshot,'projectScope':project_id});return
+                from .project_queries import local_project_query
+                if not selected_task:
+                    local=local_project_query(self.root,q,source=source,previous=history[-1] if history else None,selected=selected_project)
+                    if local is not None:local['projectScope']=project_id;self.signals.ready.emit(local);return
                 result=ask(self.root,config,q,history,self.signals.progress.emit,source=source,days=days,selected_task=selected_task,project_id=project_id);result['projectScope']=project_id;self.signals.ready.emit(result)
             except Exception as exc:self.signals.failed.emit(str(exc)[:300])
         threading.Thread(target=work,daemon=True).start()
@@ -238,6 +235,16 @@ class ChatWindow(QMainWindow):
         self.cache.execute('INSERT OR REPLACE INTO chats VALUES(?,?,?,?)',(self.chat_id,self.messages[0]['question'][:30],json.dumps(self.messages,ensure_ascii=False),__import__('time').time_ns()));self.cache.commit();self.refresh_chats();self.render()
         self.answer.scrollToAnchor('answer-'+str(len(self.messages)-1))
     def evidence(self,url):
+        if url.toString().startswith('project:'):
+            ident=url.toString()[len('project:'):];latest=self.messages[-1] if self.messages else {}
+            offered=latest.get('projectChoices',latest.get('projectInventory',{}).get('projects',[]))
+            if any(p['id']==ident for p in offered):
+                name=next(p['name'] for p in offered if p['id']==ident);self.input.setPlainText(name+' 项目有多少任务，里面做了什么？');self.send(selected_project=ident)
+            return
+        if url.toString().startswith('project-task:'):
+            ident=url.toString()[len('project-task:'):];latest=self.messages[-1] if self.messages else {}
+            if ident in latest.get('projectDetails',{}).get('taskIds',[]):self.collector.open_project_task(ident);self.open_collector()
+            return
         if url.toString()=='projects:':self.open_projects();return
         if url.toString()=='associate:':self.correct_association();return
         if url.toString()=='sample:weather':self.prefill('之前 WorkBuddy 查上海天气遇到了什么问题，后来怎么解决的？');return

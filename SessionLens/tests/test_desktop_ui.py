@@ -41,7 +41,7 @@ class LiveUiTests(unittest.TestCase):
                 def __init__(self,target,**kwargs):self.target=target
                 def start(self):self.target()
             with patch('sessionlens.chat_window.ask') as model,patch('sessionlens.chat_window.threading.Thread',Immediate):chat.send();model.assert_not_called()
-            self.app.processEvents();self.assertIn('已识别',chat.answer.toPlainText());self.assertEqual(chat.input.toPlainText(),question);self.assertTrue(chat.messages[-1].get('projectInventory'));chat.close()
+            self.app.processEvents();self.assertIn('已识别',chat.answer.toPlainText());self.assertEqual(chat.input.toPlainText(),question);self.assertTrue(chat.messages[-1].get('projectInventory'));self.assertTrue(chat.project_scope.isHidden());chat.close()
 
     def test_history_review_is_explicit_and_preserves_selected_retry(self):
         from sessionlens.task_lineage import resolve
@@ -103,7 +103,7 @@ class LiveUiTests(unittest.TestCase):
             store=ProjectStore(root/'project_context.db',filesystem=False);ctx=store.resolve(window.store.db,task)
             packet=packet_for_task(window.store.db,task,project_context=ctx);view=project(window.store.db,task);view['projectContext']=ctx
             q='项目说明修改了什么';chat.input.setPlainText(q);chat.messages=[{'question':q,'taskId':task,'packet':packet,'presentation':view,'understanding':{'overview':{'text':'记录显示读取了仓库状态。','basis':'recorded','evidenceRefs':['E001']},'steps':[]}}]
-            chat.render();chat.refresh_knowledge();self.assertIn('atlas',chat.task_view.project_label.text());self.assertIn('github.com/team/atlas',chat.task_view.project_label.text());self.assertGreater(chat.project_scope.count(),2)
+            chat.render();chat.refresh_knowledge();self.assertIn('atlas',chat.task_view.project_label.text());self.assertIn('github.com/team/atlas',chat.task_view.project_label.text());self.assertTrue(chat.project_scope.isHidden())
             def save():
                 dialog=next(w for w in self.app.topLevelWidgets() if isinstance(w,QDialog) and w.windowTitle()=='修正项目关联')
                 dialog.findChildren(QComboBox)[0].setCurrentIndex(1);next(b for b in dialog.findChildren(QPushButton) if b.text()=='保存关联').click()

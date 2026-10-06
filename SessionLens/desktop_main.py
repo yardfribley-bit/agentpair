@@ -315,7 +315,8 @@ def main():
     query_test='--verify-assistant' in sys.argv
     conversation_test='--verify-conversation' in sys.argv
     project_test='--verify-projects' in sys.argv
-    verify='--verify-ui' in sys.argv or query_test or conversation_test or project_test
+    project_query_test='--verify-project-query' in sys.argv
+    verify='--verify-ui' in sys.argv or query_test or conversation_test or project_test or project_query_test
     if test or verify:os.environ['QT_QPA_PLATFORM']='offscreen'
     app=QApplication(sys.argv);app.setStyleSheet(STYLE)
     root=Path(__import__('tempfile').mkdtemp(prefix='sessionlens-test-')) if test else state_root();root.mkdir(parents=True,exist_ok=True)
@@ -324,6 +325,22 @@ def main():
     window=Window(root)
     from sessionlens.chat_window import ChatWindow
     chat=ChatWindow(window)
+    if project_query_test:
+        index=sys.argv.index('--verify-project-query');question=sys.argv[index+1];output=Path(sys.argv[index+2])
+        # Exercise the same native input/send/result path. This local test must
+        # never fall through to an external model for an unknown project.
+        window.config['model']={};chat.input.setPlainText(question);chat.show();chat.send()
+        from time import monotonic
+        started=monotonic();timer=QTimer(chat)
+        def check_project_query():
+            if chat.busy and monotonic()-started<30:return
+            timer.stop();value=chat.messages[-1] if chat.messages else {'error':'query timeout'}
+            output.parent.mkdir(parents=True,exist_ok=True);output.write_text(json.dumps(value,ensure_ascii=False,indent=2));os.chmod(output,0o600)
+            chat.grab().save(str(output.with_suffix('.png')))
+            passed=value.get('engine')=='sessionlens.local_projects.v1'
+            print('SessionLens product project query '+('passed' if passed else 'failed')+': '+question,flush=True)
+            chat.close();app.exit(0 if passed else 1)
+        timer.timeout.connect(check_project_query);timer.start(100);return app.exec()
     if project_test:
         from sessionlens.project_window import ProjectWindow
         overview=ProjectWindow(root);overview.show();app.processEvents()

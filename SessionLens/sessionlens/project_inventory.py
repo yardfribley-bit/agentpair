@@ -88,7 +88,7 @@ class ProjectInventory:
                   ON CONFLICT(id) DO UPDATE SET boundary=max(boundary,excluded.boundary),
                   basis=CASE WHEN excluded.basis='recorded_manifest' OR basis='' THEN excluded.basis ELSE basis END,
                   marker_event=COALESCE(excluded.marker_event,marker_event)''',(ident,agent,root,basename(root),int(marker),basis,event if recorded else None))
-                self.db.execute('INSERT OR IGNORE INTO inventory_writes VALUES(?,?,?,?,?,?)',(event,ident,task,seq,path,int(Path(path).suffix.lower() in SOURCE_EXT)))
+                self.db.execute('INSERT OR IGNORE INTO inventory_writes VALUES(?,?,?,?,?,?)',(event,ident,task,seq,path,int(Path(path).suffix.lower() in SOURCE_EXT and basename(path) not in MARKERS)))
             if len(rows)<limit:cursor=upper
             self.db.execute('INSERT OR REPLACE INTO inventory_state VALUES(?,?)',(key,cursor))
         return len(rows)
@@ -125,7 +125,7 @@ class ProjectInventory:
         # Only compact inventory metadata is traversed here; no source bodies.
         for ident,task,seq,path,is_source in self.db.execute('SELECT project,task,seq,path,is_source FROM inventory_writes'):
             group=groups.get(identity(ident))
-            if not group or not is_source:continue
+            if not group or not is_source or basename(path) in MARKERS:continue
             group['files'].add(path);group['taskIds'].add(task);group['writes']+=1;group['lastSeq']=max(seq,group['lastSeq'])
         links=dict(source.execute('SELECT turn_task,root FROM task_links'))
         dates=dict(source.execute('SELECT id,updated FROM task_groups'))
@@ -136,7 +136,8 @@ class ProjectInventory:
             group['lastUpdated']=max((dates.get(t) or '' for t in group['taskIds']),default='');projects.append(group)
         # Same-name copies need identity review, even when both have manifests.
         names={}
-        for p in projects:names.setdefault((p['source'],p['name'].casefold()),[]).append(p)
+        for p in projects:
+            if p['state']!='excluded':names.setdefault((p['source'],p['name'].casefold()),[]).append(p)
         for copies in names.values():
             if len(copies)>1:
                 for p in copies:
@@ -161,5 +162,6 @@ class ProjectInventory:
             row=source.execute('SELECT prompt,updated,state FROM task_groups WHERE id=?',(task,)).fetchone()
             if row:tasks.append({'taskId':task,'prompt':row[0],'updated':row[1],'state':row[2]})
         group['tasks']=sorted(tasks,key=lambda t:t['updated'],reverse=True)[:limit]
+        group['firstTasks']=sorted(tasks,key=lambda t:t['updated'])[:8]
         group['evidence']=[{'eventId':e,'turnTask':t,'path':p,'seq':s} for e,t,p,s in writes]
         return group
