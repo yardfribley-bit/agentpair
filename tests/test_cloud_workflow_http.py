@@ -109,12 +109,26 @@ class CloudWorkflowHTTPTests(unittest.TestCase):
         self.assertEqual(status, 202)
         self.assertEqual(first['action']['requestId'], second['action']['requestId'])
         self.assertEqual(self.console.create_calls, [])
+
         self.engine.cloud_workflow._run(self.task['id'], create=True)
         self.call(self.path, self.payload, csrf)
         self.assertEqual(len(self.console.create_calls), 1)
         self.assertEqual(self.console.create_calls[0][0], 'Windows')
         self.assertEqual(self.console.create_calls[0][3], self.task['cloudAction']['quote']['sizing'])
         self.assertEqual(self.console.install_calls, [('b' * 24, WINDOWS_RECIPE['id'])])
+
+    def test_conversation_confirmation_preserves_round_and_uses_bound_quote(self):
+        csrf = self.admin_login()
+        path = '/api/tasks/' + self.task['id'] + '/messages'
+        status, task = self.call(path, {'message': '确认，继续执行。'}, csrf)
+        self.assertEqual(status, 202)
+        self.assertEqual(task['round'], self.task['round'])
+        self.assertEqual(task['status'], 'running')
+        self.assertEqual(task['messages'][-1]['text'], '确认，继续执行。')
+        self.assertEqual(self.console.create_calls, [])
+        self.engine.cloud_workflow._run(self.task['id'], create=True)
+        self.assertEqual(len(self.console.create_calls), 1)
+        self.assertEqual(self.console.create_calls[0][2], self.payload['requestId'])
 
     def test_resume_is_admin_csrf_protected_and_does_not_create_another_machine(self):
         csrf = self.admin_login()

@@ -535,7 +535,9 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     if parts[4]=='messages':
                         if not self.admin() and accounts.balance(self.identity()['id'])['remainingCNY']<=0:
                             self.respond(409,{'error':'模型额度不足'});return
-                        engine.followup(parts[3],data.get('message'));self.respond(202,self.visible_task(parts[3]));return
+                        if not cloud_workflow.handle_message(parts[3],data.get('message'),administrator=self.admin()):
+                            engine.followup(parts[3],data.get('message'))
+                        self.respond(202,self.visible_task(parts[3]));return
                     engine.cancel(parts[3]);self.respond(200,self.visible_task(parts[3]));return
                 if self.path=='/api/tasks' and not self.admin():
                     if data.get('engineeringMethod','local')!='local' or data.get('executionProfile','none')!='none':

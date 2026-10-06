@@ -136,6 +136,41 @@ class CloudWorkflow:
             self._launch(tid, create=True)
             return copy.deepcopy(self.engine._load(tid)['cloudAction'])
 
+    def handle_message(self, tid, message, *, administrator=False):
+        """Bind an affirmative conversational reply to this task's current quote."""
+        message = self.engine._message(message)
+        text = re.sub(r'[\s，。！!,.；;]', '', message).lower()
+        affirmative = text in ('确认', '确认报价', '同意', '同意报价', '继续', '执行', '开始',
+                               '可以', '好的', '好', '开机', '确认开机', '确认并继续',
+                               '确认开始安装', '继续执行', '确认继续执行', '按这个报价执行',
+                               'confirm', 'yes', 'ok', 'proceed', 'continue')
+        with self.lock, self.engine.lock:
+            task = self.engine._load(tid)
+            action = task.get('cloudAction', {})
+            if action.get('round') != task['round'] or not affirmative:
+                return False
+            if action.get('state') not in ('awaiting_confirmation', 'waiting_machine'):
+                return False
+            if not administrator:
+                raise PermissionError('云机器费用确认需要管理员回复')
+            # Keep the user's reply in the same execution round. Do not enqueue
+            # a new planning pass or make a second machine creation request.
+            task['messages'].append({'role': 'user', 'text': message,
+                                     'round': task['round'], 'at': now()})
+            self.engine._save(task)
+            if action['state'] == 'waiting_machine':
+                self.resume(tid, {'requestId': action['requestId']})
+            elif datetime.datetime.fromisoformat(action['quoteExpiresAt']) <= datetime.datetime.now(datetime.timezone.utc):
+                quote = self.console.quote(action['system'], action['quote'].get('sizing'))
+                self._save(tid, 'awaiting_confirmation',
+                           f"上次报价已过期，已更新为 ¥{quote['hourlyCNY']:.2f}/小时，租约 60 分钟。回复‘确认’后开机安装，目前没有创建机器。",
+                           quote=quote, requestId=uuid.uuid4().hex,
+                           quoteExpiresAt=(datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(minutes=10)).isoformat())
+            else:
+                self.confirm(tid, {'requestId': action['requestId'], 'confirmed': True,
+                                   'maxHourlyCNY': action['quote']['hourlyCNY']})
+            return True
+
     def resume(self, tid, data):
         if set(data) - {'requestId'}:
             raise ValueError('继续操作不能改动原机器或软件清单')

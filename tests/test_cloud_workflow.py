@@ -226,6 +226,21 @@ class CloudWorkflowTests(unittest.TestCase):
         self.assertEqual(self.console.login_calls, [])
         self.assertEqual(self.console.install_calls, [])
 
+    def test_conversation_rejects_changed_request_and_refreshes_expired_quote(self):
+        task = self.prepare()
+        self.assertFalse(self.workflow.handle_message(task['id'], '继续，但是改成 Linux', administrator=True))
+        with self.assertRaises(PermissionError):
+            self.workflow.handle_message(task['id'], '确认', administrator=False)
+        with self.engine.lock:
+            saved = self.engine._load(task['id'])
+            saved['cloudAction']['quoteExpiresAt'] = '2000-01-01T00:00:00+00:00'
+            self.engine._save(saved)
+        self.assertTrue(self.workflow.handle_message(task['id'], '继续', administrator=True))
+        refreshed = self.engine.get(task['id'])
+        self.assertEqual(refreshed['status'], 'awaiting_confirmation')
+        self.assertNotEqual(refreshed['cloudAction']['requestId'], task['cloudAction']['requestId'])
+        self.assertEqual(self.console.create_calls, [])
+
     def test_unready_ssh_never_installs_and_resume_reuses_same_lease(self):
         self.console.login_state = 'ssh_pending'
         task = self.prepare()
