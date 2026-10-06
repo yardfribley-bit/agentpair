@@ -1,9 +1,9 @@
 const $=id=>document.getElementById(id);let csrf='',current=null,last='',logged=false,admin=false,accountName='',canWrite=false;
 window.addEventListener('DOMContentLoaded',()=>{const css=document.createElement('link');css.rel='stylesheet';css.href='/workbench.css';document.head.append(css);const script=document.createElement('script');script.src='/workbench.js';script.onload=()=>{const consoleScript=document.createElement('script');consoleScript.src='/team_console.js';consoleScript.onload=()=>{const operations=document.createElement('script');operations.src='/operations_ui.js';document.body.append(operations);};document.body.append(consoleScript);};document.body.append(script);});
 const readonly=document.body.dataset.readonly==='true';
-const deliverables=el('section',null,'card hidden');deliverables.id='deliverables';$('pair-board').after(deliverables);
+const deliverables=el('section',null,'card hidden');deliverables.id='deliverables';$('pair-board').before(deliverables);
 function renderDeliverables(task){
- deliverables.classList.remove('hidden');deliverables.replaceChildren(el('h2','成果与代码'));
+ deliverables.classList.remove('hidden');deliverables.replaceChildren(el('h2',task.cloudAction?.round===task.round?'云机器任务 · 当前状态':'成果与代码'));
  const review=task.messages.filter(m=>m.stage==='review'&&m.round===task.round).at(-1);
  const cloud=t=>t.cloudAction?.round===t.round?t.cloudAction:null;
  deliverables.append(el('p',cloud(task)?.finalAnswer||review?.answer?.finalAnswer||task.blockingReason?.message||'本轮结果尚未交付，可在下方查看协作进度。','final-answer'));
