@@ -75,7 +75,7 @@ class TaskView(QWidget):
         elif items:
             self.project_label.setText('\n'.join(('项目：' if p['role']=='target' else '参考项目：')+p['name']+(' · 仓库：'+p['repository'].removeprefix('https://') if p.get('repository') else ' · 未记录仓库')+(' · 分支（日志）：'+p['branch'] if p.get('branch') else '') for p in items))
         else:self.project_label.setText('未关联项目')
-        self.project_label.setToolTip('工作目录（运行环境）：'+str(context.get('workingDirectory') or '未记录')+'\n'+ '\n'.join('关联依据：'+{'current_filesystem':'当前本机仓库配置检测','recorded':'日志记录','user_confirmed':'用户确认'}.get(p['basis'],p['basis']) for p in items))
+        self.project_label.setToolTip('工作目录（运行环境）：'+str(context.get('workingDirectory') or '未记录')+'\n'+ '\n'.join('关联依据：'+{'current_filesystem':'本机工作树目录检测','recorded':'日志记录','user_confirmed':'用户确认'}.get(p['basis'],p['basis']) for p in items))
         history=d.get('requirements',[]);changes=sum(r['kind']=='revision' for r in history)
         self.requirement_button.setVisible(len(history)>1)
         self.association_button.setVisible(bool(history))
