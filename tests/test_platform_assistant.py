@@ -64,3 +64,11 @@ class PlatformAssistantTests(unittest.TestCase):
         self.tool._release(task['id'],task['round'],'lease')
         self.assertEqual(released,['lease'])
         self.assertEqual(self.engine.get(task['id'])['status'],'completed')
+
+    def test_platform_conversation_continues_past_legacy_round_limit(self):
+        self.engine.platform_assistant=self.tool
+        task=self.query('devices')
+        for _ in range(5):
+            task=self.engine.followup(task['id'],'继续查设备')
+            self.tool.prepare(task['id'],{'tool':{'name':'platform_management','action':'devices'}},{})
+        self.assertEqual(task['round'],6)

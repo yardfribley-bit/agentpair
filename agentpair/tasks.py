@@ -203,7 +203,8 @@ class TaskEngine:
         with self.lock:
             task = self._load(tid)
             if task['status'] in ('queued','running','cancelling'): raise Conflict('Wait for the current round or cancel it')
-            if task['round']>=self.max_rounds: raise Limit('Round limit reached')
+            if task['round']>=self.max_rounds and not getattr(self, 'platform_assistant', None):
+                raise Limit('Round limit reached')
             task['round'] += 1; task['status'] = 'queued'
             task['messages'].append({'role':'user','text':message,'round':task['round'],'at':now()})
             self._save(task); self.jobs.put(tid)

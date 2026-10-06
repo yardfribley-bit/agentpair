@@ -78,6 +78,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
 
         def visible_task(self, tid):
             task=engine.get(tid)
+            task['conversationUnlimited']=True
             if not self.task_access(task): raise KeyError('Task not found')
             task['permissions']={'canWrite':self.task_access(task,write=True)}
             task['applens']=devices.task_participants(tid)
