@@ -35,6 +35,18 @@ class PlatformAssistantTests(unittest.TestCase):
             self.assertTrue(task['messages'][-1]['answer']['platformEvidence']['items'])
         self.assertNotIn('secret',str(self.query('machines')['platformResult']))
 
+    def test_detail_queries_and_conversation_actions(self):
+        device=self.query('device_detail',deviceId='device-1')
+        self.assertEqual(device['status'],'completed')
+        self.assertTrue(device['platformResult']['nextSteps'])
+        self.assertEqual(self.query('device_detail',deviceId='foreign')['status'],'needs_information')
+        self.assertEqual(self.query('model_calls',deviceId='foreign')['status'],'unsupported_capability')
+        event=self.query('security_detail',findingId='finding')
+        self.assertEqual(event['status'],'completed')
+        self.assertEqual(event['platformResult']['items'][0]['evidenceStrength'],'上下文记录中已发现，尚无发送证据')
+        self.assertIn('finding=finding',event['platformResult']['links'][0]['url'])
+        self.assertEqual(self.query('security_detail',findingId='invented')['status'],'needs_information')
+
     def test_identity_not_model_controlled_and_foreign_devices_rejected(self):
         task=self.query('devices',owner='alice',ownerId='admin')
         self.assertEqual(self.seen[-1],'alice')

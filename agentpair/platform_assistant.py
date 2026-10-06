@@ -6,14 +6,14 @@ from .tasks import now
 
 
 class PlatformAssistant:
-    ACTIONS = ('machines', 'devices', 'model_data', 'security', 'sessions', 'session_detail', 'release_machine')
+    ACTIONS = ('machines', 'devices', 'model_data', 'security', 'sessions', 'session_detail', 'release_machine', 'device_detail', 'model_calls', 'security_detail')
 
     def __init__(self, engine, devices, sessions, cloud):
         self.engine, self.devices, self.sessions, self.cloud = engine, devices, sessions, cloud
 
     def capabilities(self):
         return {'actions': list(self.ACTIONS), 'cloudAvailable': self.cloud is not None,
-                'description': '平台真实数据查询。创建云机使用 cloud_management，其他写操作不支持，不能假装执行。'}
+                'description': '列表之后可按真实编号查询设备详情、模型调用、发现详情、会话详情。创建云机使用 cloud_management，其他写操作不支持，不能假装执行。'}
 
     def prepare(self, tid, plan, outputs):
         tool = plan.get('tool', {})
@@ -22,7 +22,7 @@ class PlatformAssistant:
         task = self.engine.get(tid)
         owner = task.get('owner') or 'admin'
         action = tool.get('action')
-        result = {'action': action, 'checkedAt': now(), 'items': [], 'links': []}
+        result = {'action': action, 'checkedAt': now(), 'items': [], 'links': [], 'nextSteps': []}
         status = 'completed'
         try:
             if task.get('securityEvidence'):
@@ -53,8 +53,8 @@ class PlatformAssistant:
                 text = f'目前有 {active} 台有效租约机器，另有 {len(rows)-active} 条历史机器记录。有效租约不等于已验证登录。'
                 previous = task.get('cloudAction', {})
                 latest = next((m.get('text', '') for m in reversed(task['messages']) if m['role']=='user'), '')
-                if previous and any(word in latest for word in ('创建了吗','开好了吗','创建成功','那台','这台','开机了吗')):
-                    target = next((r for r in rows if r['id']==previous.get('leaseId')), None)
+                if tool.get('leaseId') or (previous and any(word in latest for word in ('创建了吗','开好了吗','创建成功','那台','这台','开机了吗'))):
+                    target = next((r for r in rows if r['id']==(tool.get('leaseId') or previous.get('leaseId'))), None)
                     if target and target.get('state')=='active':
                         info=self.cloud.login(target['id'])
                         text=('这次机器已创建，实际登录验证通过。' if info.get('loginState')=='ssh_authenticated' else '这次机器已创建，仍在初始化，暂未验证登录。')
@@ -63,7 +63,7 @@ class PlatformAssistant:
                         text='这次创建失败，没有取得有效的机器回执。'+previous.get('finalAnswer','')
                         result['items']=[r for r in result['items'] if r['id']==target['id']]
                     elif target and target.get('state')=='reconcile_required':
-                        receipt=self.cloud.creation_status(previous['requestId'])
+                        receipt=self.cloud.creation_status(previous['requestId']) if previous.get('requestId') else {}
                         text=('云端核对已找到这次机器，需要继续验证登录。' if receipt.get('state')=='created' else '这次没有创建成功回执；最新云端核对未找到该机器，系统没有重复创建。')
                         result['items']=[r for r in result['items'] if r['id']==target['id']]
                     elif target:
@@ -78,32 +78,50 @@ class PlatformAssistant:
                         }.get(previous.get('state'), '需要进一步核对当前操作记录。')
                         result['items'] = []
                 result['links'] = [{'label': '查看云机器', 'url': '/cloud-machines'}]
-            elif action == 'devices':
+            elif action in ('devices','device_detail'):
                 rows = self.devices.list(owner)
+                if action=='device_detail':
+                    selected=tool.get('deviceId')
+                    rows=[r for r in rows if r['id']==selected]
+                    if not rows:raise ValueError('请选择查询结果中的设备，我会继续查看它的状态。')
                 result['items'] = [{k: r.get(k) for k in ('id', 'name', 'online', 'lastSeen')} for r in rows]
                 text = f'你的账号有 {len(rows)} 台设备，{sum(bool(r.get("online")) for r in rows)} 台最近在线。在线状态来自设备心跳，不能代替采集完整性。'
                 result['links'] = [{'label': '查看我的设备', 'url': '/devices'}]
-            elif action == 'model_data':
+            elif action in ('model_data','model_calls'):
                 rows = self.devices.list(owner)
                 selected = tool.get('deviceId')
                 if selected and selected not in {r['id'] for r in rows}: raise PermissionError('设备不属于当前账号')
                 for row in rows:
                     if selected and row['id'] != selected: continue
                     data = self.devices.llm_data(owner, row['id'], summary=True)
-                    result['items'].append({'id': row['id'], 'name': row['name'], 'recentCalls': len(data.get('calls', []))})
+                    if action=='model_calls':
+                        result['items'].extend({k:c.get(k) for k in ('id','model','source','sessionId','sessionName','timestamp','bodyBytes')} for c in data.get('calls',[])[:20])
+                    else:result['items'].append({'id': row['id'], 'name': row['name'], 'recentCalls': len(data.get('calls', []))})
                 text = '已检查你设备的模型数据。下列数量是最近查询窗口中的记录，不是全部历史；原文和请求详情请打开对应设备。'
                 result['links'] = [{'label': r['name']+' · 模型数据', 'url': '/model-data?'+urlencode({'device': r['id']})} for r in rows if not selected or r['id']==selected]
-            elif action == 'security':
+            elif action in ('security','security_detail'):
                 # This is the same globally visible audit scope as /api/audit/credential-threats.
                 data = self.devices.credential_threats.inventory(tool.get('deviceId'))
-                result['items'] = [{k: r.get(k) for k in ('id', 'deviceId', 'deviceName', 'kind', 'label')} for r in data['items']]
-                text = f'当前安全审计中有 {len(result["items"])} 项已有发现。这是现有检测结果查询，没有启动新的模型分析；没有发现也不代表没有风险。'
-                result['links'] = [{'label': '查看威胁、证据和处置', 'url': '/model-security'}]
+                rows=data['items']
+                if action=='security_detail':
+                    rows=[r for r in rows if r['id']==tool.get('findingId')]
+                    if not rows:raise ValueError('请选择已有安全事件，我会继续查看对应证据和处理状态。')
+                result['items'] = [{k: r.get(k) for k in ('id','deviceId','deviceName','kind','label','networkRecords','contextRecords','firstSeen','lastSeen')} for r in rows]
+                if action=='security_detail':
+                    for item,row in zip(result['items'],rows):
+                        item['evidenceStrength']='请求正文中已发现' if row.get('networkRecords') else '上下文记录中已发现，尚无发送证据'
+                        item['verificationState']=row.get('verification',{}).get('state')
+                        item['handlingState']=row.get('workflow',{}).get('state')
+                        item['requestIds']=list(dict.fromkeys(e.get('requestId') for e in row.get('evidence',[]) if e.get('requestId')))
+                    text='已定位这项安全事件。下面列出涉及的设备、请求编号、证据强度和处理状态。'
+                else:
+                    text = f'当前安全审计中有 {len(result["items"])} 项已有发现。这是现有检测结果查询，没有启动新的模型分析；没有发现也不代表没有风险。'
+                result['links'] = [{'label':'查看威胁、证据和处置','url':'/model-security'+('?' + urlencode({'finding':rows[0]['id']}) if action=='security_detail' else '')}]
             else:
                 rows = self.sessions.sessions(owner)
                 if action == 'sessions':
                     result['items'] = rows[:50]
-                    text = f'你的账号采集了 {len(rows)} 个会话，下面展示前 {min(50,len(rows))} 个。可告诉我设备编号和会话编号，继续查看执行过程。'
+                    text = f'找到 {len(rows)} 个会话，下面展示前 {min(50,len(rows))} 个。选择一个会话，我会继续查看它的执行过程。'
                 else:
                     device, session = tool.get('deviceId'), tool.get('sessionId')
                     if not any(r['device']==device and r['session']==session for r in rows):
@@ -118,6 +136,19 @@ class PlatformAssistant:
             text = str(error)
         except Exception:
             status, text = 'failed', '平台数据暂时读取失败，本次未执行任何修改。请稍后重试。'
+        if status=='completed':
+            prompts={
+                'machines':['检查机器是否可以使用','查看机器到期时间'],
+                'devices':['查看这台设备的模型数据','查看这台设备的安全事件'],
+                'device_detail':['查看这台设备的模型数据','查看这台设备的安全事件'],
+                'model_data':['展开这台设备最近的模型调用'],
+                'model_calls':['查看相关安全事件'],
+                'security':['查看这项事件的证据和处理状态'],
+                'security_detail':['这项事件有什么危害，应该如何处理？'],
+                'sessions':['查看这个会话的执行过程'],
+                'session_detail':['查看已有安全事件'],
+            }
+            result['nextSteps']=prompts.get(action,[]) if len(result['items'])==1 else []
         with self.engine.lock:
             saved = self.engine._load(tid)
             if saved['status'] in ('cancelling', 'cancelled'): return True

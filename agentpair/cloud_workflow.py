@@ -284,7 +284,7 @@ class CloudWorkflow:
                     return
             names = '、'.join(x['name'] for x in action['software'])
             self._save(tid, 'completed', '机器已创建并通过登录验证。' + (names + ' 安装与验证完成。' if names else '')
-                       + '尚未验证用户登录及实际任务执行。')
+                       + ('你接下来想在这台机器上做什么？可以部署项目、安装软件或检查环境。' if not names else '接下来需要我继续做什么？'))
         except InterruptedError:
             # Cancellation never destroys a lease or claims an in-flight installation stopped.
             with self.engine.lock:

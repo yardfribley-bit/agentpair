@@ -273,6 +273,11 @@ class TaskEngine:
                 platform_assistant = getattr(self, 'platform_assistant', None)
                 if platform_assistant and not task.get('securityEvidence'):
                     envelope['task']['platformCapabilities'] = platform_assistant.capabilities()
+                    if task.get('platformResult'):
+                        envelope['task']['platformContext'] = task['platformResult']
+                    if task.get('cloudAction'):
+                        a=task['cloudAction']
+                        envelope['task']['machineContext']={k:a.get(k) for k in ('leaseId','state','address','expiresAt','system','finalAnswer')}
                 if cloud_workflow and not task.get('securityEvidence'):
                     envelope['task']['cloudCapabilities'] = cloud_workflow.capabilities()
                 if task.get('securityEvidence'):
