@@ -2,6 +2,8 @@
 import datetime
 from pathlib import Path
 import re
+import json
+import time
 
 PATTERN=re.compile(r'^(\S+) .*?\[([^]]+)\] "(\S+) ([^ ?]+)[^"]*" (\d+)')
 
@@ -11,6 +13,12 @@ def recent_access(path='/var/log/nginx/access.log', minutes=10, clock=None):
         raise ValueError('访问查询时间范围必须为1至60分钟')
     now=clock or datetime.datetime.now(datetime.timezone.utc)
     groups={}
+    if str(path)=='/var/log/nginx/access.log':
+        snapshot=Path('/run/agentpair-access/summary.json')
+        if snapshot.exists():
+            if minutes!=10:raise ValueError('访问汇总当前支持最近10分钟')
+            if time.time()-snapshot.stat().st_mtime>90:raise ValueError('访问汇总已过期，请稍后重试')
+            return json.loads(snapshot.read_text())
     with Path(path).open('rb') as stream:
         stream.seek(0,2);size=stream.tell();start=max(0,size-2*1024*1024)
         stream.seek(start)
