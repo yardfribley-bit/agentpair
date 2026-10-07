@@ -46,7 +46,7 @@ class AgentPairWindows : Form {
   Text="AppLens — 上下文采集";Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);Size=new Size(1240,900);MinimumSize=new Size(940,680);Font=new Font("Segoe UI",10);BackColor=Color.FromArgb(247,248,250);StartPosition=FormStartPosition.CenterScreen;AutoScaleMode=AutoScaleMode.Dpi;
   try{var path=Path.Combine(folder,"desktop-preferences.json");if(File.Exists(path))server=Origin(TextValue(json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path)),"server"));else {path=Path.Combine(folder,"connection-state.json");if(File.Exists(path))server=Origin(TextValue(json.Deserialize<Dictionary<string,object>>(File.ReadAllText(path)),"server"));}}catch(Exception){status="连接设置未能读取，请检查平台地址。";}
   desktop.Dock=DockStyle.Fill;desktop.ScriptErrorsSuppressed=true;desktop.AllowWebBrowserDrop=false;desktop.IsWebBrowserContextMenuEnabled=false;desktop.WebBrowserShortcutsEnabled=false;desktop.ObjectForScripting=new AppLensDesktopBridge(HandleAction);Controls.Add(desktop);
-  desktop.Navigating+=(s,e)=>{string file=e.Url.IsFile?e.Url.LocalPath:"";if(!String.Equals(file,pageFile,StringComparison.OrdinalIgnoreCase)&&!String.Equals(file,Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"),StringComparison.OrdinalIgnoreCase))e.Cancel=true;};
+  desktop.Navigating+=(s,e)=>{if(e.Url.ToString()=="about:blank")return;string file=e.Url.IsFile?e.Url.LocalPath:"";if(!String.Equals(file,pageFile,StringComparison.OrdinalIgnoreCase)&&!String.Equals(file,Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"),StringComparison.OrdinalIgnoreCase))e.Cancel=true;};
   desktop.DocumentCompleted+=(s,e)=>RefreshState();
   timer.Tick+=(s,e)=>RefreshState();timer.Start();
   FormClosing+=(s,e)=>{timer.Stop();StopCollection();if(capture!=null&&!capture.HasExited)File.WriteAllText(Path.Combine(folder,"capture-stop"),"stop");};
@@ -93,43 +93,68 @@ class AgentPairWindows : Form {
   if(record!=null&&Identifier(selectedId)&&Identifier(digest)){string path=Path.Combine(folder,"contexts",selectedId+"-"+digest+".txt");try{if(File.Exists(path)){raw=File.ReadAllText(path,Encoding.UTF8);using(var hash=SHA256.Create()){string actual=BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(raw))).Replace("-","").ToLowerInvariant();if(actual!=digest){raw="";status="原文校验未通过；下次采集会从源记录重建本机缓存。";}}}else if(TextValue(state,"captureBodyId")==selectedId&&TextValue(state,"captureBodySHA256")==digest)raw=TextValue(state,"captureBody");}catch(IOException){raw="";status="原文暂时无法读取，请重试；未展示未校验的内容。";}}
   published["captureBody"]=raw;published["captureBodyId"]=selectedId;published["captureBodySHA256"]=digest;published["localPath"]=folder;published["server"]=server;published["status"]=TextValue(state,"error")!=""?TextValue(state,"error"):status;published["active"]=collector!=null&&!collector.HasExited;published["canEnableNetworkCapture"]=true;if(!published.ContainsKey("calls"))published["calls"]=new object[0];desktop.Document.InvokeScript("updateDesktopJSON",new object[]{json.Serialize(published)});
  }catch(IOException){}catch(Exception){}}
+ static string UITestLogPath {get{return Environment.GetEnvironmentVariable("APPLENS_UI_TEST_LOG")??Path.Combine(Path.GetTempPath(),"applens-ui-self-test.log");}}
+ static void UITestLog(string text){try{File.AppendAllText(UITestLogPath,DateTimeOffset.UtcNow.ToString("o")+" "+text+Environment.NewLine,Encoding.UTF8);}catch(Exception){}}
+ static void StartUITestLog(string mode){try{File.WriteAllText(UITestLogPath,"AppLens native UI acceptance: "+mode+Environment.NewLine,Encoding.UTF8);}catch(Exception){}UITestLog("exe="+Application.ExecutablePath+" process64="+Environment.Is64BitProcess);}
+ static bool NativeScriptReady(WebBrowser browser,string functionName){
+  if(browser.Document==null)return false;
+  object readiness=browser.Document.InvokeScript("eval",new object[]{"typeof window."+functionName+" === 'function'"});
+  return readiness!=null&&Convert.ToBoolean(readiness);
+ }
+ static void AttachScriptDiagnostics(WebBrowser browser,ref HtmlWindow attached){
+  if(browser.Document==null||browser.Document.Window==null||Object.ReferenceEquals(attached,browser.Document.Window))return;
+  attached=browser.Document.Window;attached.Error+=(s,e)=>{UITestLog("SCRIPT ERROR line="+e.LineNumber+" url="+e.Url+" description="+e.Description);e.Handled=true;};
+ }
+ static void AssertNative(bool condition,string message){if(!condition)throw new Exception(message);UITestLog("PASS "+message);}
  static int VerifyCollectionView(){
-  int result=3;using(var form=new Form {Text="AppLens 采集界面验收",Size=new Size(1000,1000)})using(var browser=new WebBrowser {Dock=DockStyle.Fill,ScriptErrorsSuppressed=true})using(var timeout=new Timer {Interval=15000}){
-   form.Controls.Add(browser);timeout.Tick+=(s,e)=>{timeout.Stop();form.Close();};
-   browser.DocumentCompleted+=(s,e)=>{if(!e.Url.IsFile)return;try{
+  StartUITestLog("capture");int result=3,ticks=0;bool tested=false;HtmlWindow attached=null;
+  using(var form=new Form {Text="AppLens 采集界面验收",Size=new Size(1000,1000)})using(var browser=new WebBrowser {Dock=DockStyle.Fill,ScriptErrorsSuppressed=true})using(var poll=new Timer {Interval=100}){
+   form.Controls.Add(browser);Action attempt=()=>{if(tested)return;try{
+    AttachScriptDiagnostics(browser,ref attached);
+    if(!NativeScriptReady(browser,"updateCaptureJSON"))return;tested=true;
+    UITestLog("capture script ready; documentMode="+browser.Document.InvokeScript("eval",new object[]{"document.documentMode"})+" url="+browser.Url);
     string id=new string('a',64),digest=new string('b',64),body="{\"messages\":[{\"role\":\"user\",\"content\":\"fixture task\"}]}";
     var record=new Dictionary<string,object>{{"id",id},{"bodySHA256",digest},{"source","workbuddy_network_context"},{"timestamp",1700000000},{"bodyBytes",body.Length},{"receipt",false}};
     var state=new Dictionary<string,object>{{"calls",new object[]{record}},{"active",true},{"connected",true},{"appRunning",true},{"captureBody",body},{"captureBodyId",id},{"captureBodySHA256",digest},{"captureEvent",new Dictionary<string,object>{{"id",id},{"phase","failed"}}}};
     var serializer=new JavaScriptSerializer();browser.Document.InvokeScript("updateCaptureJSON",new object[]{serializer.Serialize(state)});
-    if(!browser.Document.GetElementById("inventory").InnerText.Contains("fixture task")||!browser.Document.GetElementById("status").InnerText.Contains("上传失败"))throw new Exception("Native collection rendering failed");
+    AssertNative(browser.Document.GetElementById("inventory").InnerText.Contains("fixture task"),"capture original body rendered");
+    AssertNative(browser.Document.GetElementById("status").InnerText.Contains("上传失败"),"failed capture is visibly failed");
     record["receipt"]=true;state["captureEvent"]=new Dictionary<string,object>{{"id",id},{"phase","received"}};
     browser.Document.InvokeScript("updateCaptureJSON",new object[]{serializer.Serialize(state)});
-    if(!browser.Document.GetElementById("inventory").InnerText.Contains("已同步到 AgentPair")||!browser.Document.GetElementById("receipt").InnerText.Contains("一致"))throw new Exception("Native acknowledgement rendering failed");
-    result=0;
-   }catch(Exception){result=3;}timeout.Stop();form.Close();};
-   form.Shown+=(s,e)=>{timeout.Start();browser.Navigate(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"));};Application.Run(form);
-  }return result;
+    AssertNative(browser.Document.GetElementById("inventory").InnerText.Contains("已同步到 AgentPair")&&browser.Document.GetElementById("receipt").InnerText.Contains("一致"),"capture acknowledgement rendered");result=0;
+   }catch(Exception ex){UITestLog("capture exception tested="+tested+": "+ex.ToString());if(!tested)return;result=3;}poll.Stop();form.Close();};
+   browser.DocumentCompleted+=(s,e)=>{UITestLog("capture DocumentCompleted "+e.Url+" state="+browser.ReadyState);attempt();};
+   poll.Tick+=(s,e)=>{ticks++;attempt();if(ticks>=150&&!tested){UITestLog("capture TIMEOUT state="+browser.ReadyState+" url="+browser.Url);poll.Stop();form.Close();}};
+   form.Shown+=(s,e)=>{poll.Start();browser.Navigate(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"));};Application.Run(form);
+  }UITestLog("capture exit="+result);return result;
  }
  static int VerifyDesktopView(){
-  int result=3;string page=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"collector.html");
-  var previous=new Dictionary<string,object>{{"server","https://fixture.invalid"},{"deviceId","old-device"}};if(MatchingContext(previous,"https://fixture.invalid","new-device"))return 3;previous["deviceId"]="new-device";if(!MatchingContext(previous,"https://fixture.invalid","new-device"))return 3;
-  using(var form=new Form {Text="AppLens 桌面布局验收",Size=new Size(1240,900)})using(var browser=new WebBrowser {Dock=DockStyle.Fill,ScriptErrorsSuppressed=true})using(var timeout=new Timer {Interval=15000}){
-   form.Controls.Add(browser);bool tested=false;timeout.Tick+=(s,e)=>{timeout.Stop();form.Close();};
-   browser.DocumentCompleted+=(s,e)=>{if(tested||!e.Url.IsFile||!String.Equals(e.Url.LocalPath,page,StringComparison.OrdinalIgnoreCase))return;tested=true;try{
+  StartUITestLog("desktop");int result=3,ticks=0;bool tested=false;HtmlWindow attached=null;string page=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"collector.html");
+  try{var previous=new Dictionary<string,object>{{"server","https://fixture.invalid"},{"deviceId","old-device"}};AssertNative(!MatchingContext(previous,"https://fixture.invalid","new-device"),"old device context rejected");previous["deviceId"]="new-device";AssertNative(MatchingContext(previous,"https://fixture.invalid","new-device"),"current device context accepted");}catch(Exception ex){UITestLog(ex.ToString());return 3;}
+  using(var form=new Form {Text="AppLens 桌面布局验收",Size=new Size(1240,900)})using(var browser=new WebBrowser {Dock=DockStyle.Fill,ScriptErrorsSuppressed=true})using(var poll=new Timer {Interval=100}){
+   form.Controls.Add(browser);Action attempt=()=>{if(tested)return;try{
+    AttachScriptDiagnostics(browser,ref attached);
+    // A hidden local iframe can delay Trident's top-level DocumentCompleted.
+    // Check the actual main scripts instead of depending on that event's URL.
+    if(!NativeScriptReady(browser,"updateDesktopJSON")||!NativeScriptReady(browser,"classifyAppLensContext"))return;tested=true;
+    UITestLog("desktop script ready; documentMode="+browser.Document.InvokeScript("eval",new object[]{"document.documentMode"})+" url="+browser.Url);
     string id=new string('a',64),digest=new string('b',64),body="{\"messages\":[{\"role\":\"user\",\"content\":\"desktop fixture task\"}]}";
     var record=new Dictionary<string,object>{{"id",id},{"bodySHA256",digest},{"source","workbuddy_generation_context"},{"timestamp",1700000000},{"sessionName","fixture session"},{"bodyBytes",body.Length},{"receipt",false}};
     var state=new Dictionary<string,object>{{"calls",new object[]{record}},{"active",true},{"connected",true},{"appRunning",true},{"server","https://fixture.invalid"},{"deviceId","fixture"},{"localPath","fixture local folder"},{"captureBody",body},{"captureBodyId",id},{"captureBodySHA256",digest}};
     var serializer=new JavaScriptSerializer();browser.Document.InvokeScript("updateDesktopJSON",new object[]{serializer.Serialize(state)});
-    if(!browser.Document.GetElementById("request-task").InnerText.Contains("desktop fixture task")||!browser.Document.GetElementById("categories").InnerText.Contains("用户对话"))throw new Exception("Desktop classified content did not render");
+    UITestLog("task text="+browser.Document.GetElementById("request-task").InnerText+" categories="+browser.Document.GetElementById("categories").InnerText);
+    AssertNative(browser.Document.GetElementById("request-task").InnerText.Contains("desktop fixture task")&&browser.Document.GetElementById("categories").InnerText.Contains("用户对话"),"desktop classified content rendered");
     browser.Document.GetElementById("receipt-button").InvokeMember("click");
-    if(!browser.Document.GetElementById("proof").InnerText.Contains(id)||browser.Document.GetElementById("proof").InnerText.Contains("平台回执一致"))throw new Exception("Desktop selected evidence mismatch");
+    AssertNative(browser.Document.GetElementById("proof").InnerText.Contains(id)&&!browser.Document.GetElementById("proof").InnerText.Contains("平台回执一致"),"desktop selected unconfirmed evidence rendered");
     record["receipt"]=true;browser.Document.InvokeScript("updateDesktopJSON",new object[]{serializer.Serialize(state)});
-    if(!browser.Document.GetElementById("proof").InnerText.Contains("平台回执一致"))throw new Exception("Desktop acknowledgement did not update");
+    AssertNative(browser.Document.GetElementById("proof").InnerText.Contains("平台回执一致"),"desktop acknowledgement updated");
     state["captureBodySHA256"]="mismatch";browser.Document.InvokeScript("updateDesktopJSON",new object[]{serializer.Serialize(state)});
-    if(browser.Document.GetElementById("request-task").InnerText.Contains("desktop fixture task"))throw new Exception("Desktop mismatched body was retained");
-    result=0;
-   }catch(Exception){result=3;}timeout.Stop();form.Close();};form.Shown+=(s,e)=>{timeout.Start();browser.Navigate(page);};Application.Run(form);
-  }return result;
+    AssertNative(!browser.Document.GetElementById("request-task").InnerText.Contains("desktop fixture task"),"desktop mismatched body rejected");result=0;
+   }catch(Exception ex){UITestLog("desktop exception tested="+tested+": "+ex.ToString());if(!tested)return;result=3;}poll.Stop();form.Close();};
+   browser.DocumentCompleted+=(s,e)=>{UITestLog("desktop DocumentCompleted "+e.Url+" state="+browser.ReadyState);attempt();};
+   poll.Tick+=(s,e)=>{ticks++;attempt();if(ticks>=150&&!tested){UITestLog("desktop TIMEOUT state="+browser.ReadyState+" url="+browser.Url);try{UITestLog("documentMode="+browser.Document.InvokeScript("eval",new object[]{"document.documentMode"})+" documentReadyState="+browser.Document.InvokeScript("eval",new object[]{"document.readyState"}));}catch(Exception ex){UITestLog("timeout diagnostics "+ex);}poll.Stop();form.Close();}};
+   form.Shown+=(s,e)=>{UITestLog("navigate "+page);poll.Start();browser.Navigate(page);};Application.Run(form);
+  }UITestLog("desktop exit="+result);return result;
  }
  [STAThread] static int Main(string[] args){
   if(args.Length==1&&args[0]=="--self-test")return File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"context.js"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"collector.html"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"applens.svg"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture.html"))&&File.Exists(Script)&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-context.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"workbuddy-network.ps1"))&&File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"capture","mitmdump.exe"))?0:2;

@@ -59,7 +59,11 @@ jobs:
           $captureTest=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -ArgumentList '--capture-ui-self-test' -Wait -PassThru
           if($captureTest.ExitCode){throw 'Native capture content/receipt UI acceptance failed'}
           $desktopTest=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -ArgumentList '--desktop-ui-self-test' -Wait -PassThru
-          if($desktopTest.ExitCode){throw 'Native desktop selected-request UI acceptance failed'}
+          if($desktopTest.ExitCode){
+            $diagnostic=Join-Path $env:TEMP 'applens-ui-self-test.log'
+            if(Test-Path $diagnostic){Get-Content $diagnostic}
+            throw 'Native desktop selected-request UI acceptance failed'
+          }
           $ui=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -PassThru
           Start-Sleep -Seconds 3
           if($ui.HasExited){throw 'GUI exited unexpectedly'}

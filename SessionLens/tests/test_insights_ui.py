@@ -26,7 +26,7 @@ class InsightsWebUITests(unittest.TestCase):
                 'story':[{'title':'写网页','action':'写入天气页面','result':'文件已保存','evidenceRefs':['E001']},{'title':'验证接口','action':'执行 curl','result':'返回错误','evidenceRefs':['E001']}],'findings':[],'limitations':[]}}}]}
     def test_delivery_before_steps_and_only_one_step_visible(self):
         with tempfile.TemporaryDirectory() as d:
-            p=Path(d)/'report.html';render(self.packet(),self.task(),p);text=p.read_text();doc=Inspector();doc.feed(text)
+            p=Path(d)/'report.html';render(self.packet(),self.task(),p);text=p.read_text(encoding='utf-8');doc=Inspector();doc.feed(text)
         self.assertLess(text.index('页面文件已生成'),text.index('任务过程'))
         self.assertIn('部分交付',text);self.assertNotIn('已完成独立验证',text)
         engineering=next(attrs for tag,attrs in doc.tags if attrs.get('id')=='engineering')
@@ -41,7 +41,7 @@ class InsightsWebUITests(unittest.TestCase):
             root=Path(d);folder=root/'synthetic';folder.mkdir()
             (folder/'analysis.json').write_text(json.dumps(self.task()));(folder/'evidence.json').write_text(json.dumps(self.packet()))
             publish(root)
-            text=(folder/'report.html').read_text();index=(root/'index.html').read_text()
+            text=(folder/'report.html').read_text(encoding='utf-8');index=(root/'index.html').read_text(encoding='utf-8')
         self.assertIn('<body class="agentpair-web"',text);self.assertIn('data-product-ui',text)
         self.assertIn('<a class="brand" href="/">',text)
         self.assertIn('data-insights href="/session-insights/"',text)
@@ -51,7 +51,7 @@ class InsightsWebUITests(unittest.TestCase):
     def test_absent_story_has_explicit_empty_state(self):
         task=self.task();task['messages'][0]['answer']['report']['story']=[]
         with tempfile.TemporaryDirectory() as d:
-            p=Path(d)/'report.html';render(self.packet(),task,p);text=p.read_text()
+            p=Path(d)/'report.html';render(self.packet(),task,p);text=p.read_text(encoding='utf-8')
         self.assertIn('该分析没有记录可回放的过程',text);self.assertNotIn('data-story-step=',text)
 
 if __name__=='__main__':unittest.main()

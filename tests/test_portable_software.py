@@ -146,14 +146,14 @@ class PortablePowerShellTests(unittest.TestCase):
         # Match windows/build.ps1: Windows PowerShell 5.1 needs a UTF-8 BOM.
         source = self.root / 'software-install.ps1'
         source.write_text(SCRIPT.read_text(encoding='utf-8-sig'), encoding='utf-8-sig')
-        path.write_text("$ErrorActionPreference='Stop'\n. " + ps_quote(source) + '\n' + code, encoding='utf-8-sig')
+        path.write_text("$ErrorActionPreference='Stop'\n[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)\n. " + ps_quote(source) + '\n' + code, encoding='utf-8-sig')
         environment = os.environ.copy()
         if os.name == 'nt' and Path(POWERSHELL).name.lower() == 'powershell.exe':
             # A pwsh CI shell exports its own PS7 module paths. A separately
             # launched Windows PowerShell 5.1 must build its normal defaults.
             environment = {key: value for key, value in environment.items() if key.upper() != 'PSMODULEPATH'}
         return subprocess.run([POWERSHELL, '-NoProfile', '-NonInteractive', '-File', str(path)],
-                              capture_output=True, text=True, timeout=30, env=environment)
+                              capture_output=True, text=True, encoding='utf-8', timeout=30, env=environment)
 
     def extract(self, limits=''):
         return self.run_ps('Expand-AgentPairPortableZip ' + ps_quote(self.archive) + ' ' + ps_quote(self.destination)

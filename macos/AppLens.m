@@ -62,7 +62,7 @@
 }
 - (void)webView:(WKWebView*)webView decidePolicyForNavigationAction:(WKNavigationAction*)action decisionHandler:(void (^)(WKNavigationActionPolicy))handler {
  NSURL *url=action.request.URL;NSString *root=NSBundle.mainBundle.resourcePath;
- BOOL local=url.isFileURL&&[url.path hasPrefix:[root stringByAppendingString:@"/"]];
+ BOOL local=(url.isFileURL&&[url.path hasPrefix:[root stringByAppendingString:@"/"]])||(!action.targetFrame.mainFrame&&[url.absoluteString isEqual:@"about:blank"]);
  handler(local?WKNavigationActionPolicyAllow:WKNavigationActionPolicyCancel);
 }
 - (void)showTelemetry:(id)sender{[NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:[self.server.stringValue stringByAppendingString:[NSString stringWithFormat:@"/model-data?device=%@",self.deviceId?:@""]]]];}

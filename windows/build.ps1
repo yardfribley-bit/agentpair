@@ -37,9 +37,9 @@ if($p.ExitCode -ne 0) {throw 'Installer acceptance failed'}
 $p=Start-Process (Join-Path $install 'AgentPairWindows.exe') -ArgumentList '--self-test' -Wait -PassThru
 if($p.ExitCode -ne 0) {throw 'Installed binary self-test failed'}
 $captureTest=Start-Process (Join-Path $install 'AgentPairWindows.exe') -ArgumentList '--capture-ui-self-test' -Wait -PassThru
-if($captureTest.ExitCode -ne 0){throw 'Native capture content/receipt UI acceptance failed'}
+if($captureTest.ExitCode -ne 0){$diag=Join-Path $env:TEMP 'applens-ui-self-test.log';if(Test-Path $diag){Get-Content $diag -Raw | Write-Host};throw 'Native capture content/receipt UI acceptance failed'}
 $desktopTest=Start-Process (Join-Path $install 'AgentPairWindows.exe') -ArgumentList '--desktop-ui-self-test' -Wait -PassThru
-if($desktopTest.ExitCode -ne 0){throw 'Native AppLens desktop request/detail/receipt UI acceptance failed'}
+if($desktopTest.ExitCode -ne 0){$diag=Join-Path $env:TEMP 'applens-ui-self-test.log';if(Test-Path $diag){Get-Content $diag -Raw | Write-Host};throw 'Native AppLens desktop request/detail/receipt UI acceptance failed'}
 $p=Start-Process (Join-Path $install 'AgentPairWindows.exe') -PassThru
 Start-Sleep -Seconds 3
 if($p.HasExited) {throw 'Installed GUI exited unexpectedly'}
