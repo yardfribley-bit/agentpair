@@ -41,7 +41,7 @@ class Settings(QDialog):
             check=QCheckBox('采集 '+title);check.setChecked(config['sources'][source]['enabled'])
             paths=QLineEdit(';'.join(config['sources'][source]['roots']));form.addRow(check,paths);self.sources[source]=(check,paths)
         self.endpoint=QLineEdit(config.get('endpoint',''));self.endpoint.setPlaceholderText('https://www.chuhaijian.com/api/sessionlens/events');form.addRow('上报接口',self.endpoint)
-        self.token=QLineEdit();self.token.setEchoMode(QLineEdit.Password);form.addRow('设备令牌（仅本次运行）',self.token)
+        self.token=QLineEdit();self.token.setEchoMode(QLineEdit.Password);form.addRow('设备令牌（留空沿用已保存授权）',self.token)
         self.assistant_url=QLineEdit(config.get('assistant',{}).get('url',''));form.addRow('AgentPair 分析接口',self.assistant_url)
         self.assistant_token=QLineEdit(config.get('assistant',{}).get('tokenFile',''));form.addRow('分析授权文件',self.assistant_token)
         self.model_url=QLineEdit(config.get('model',{}).get('url',''));form.addRow('助手模型地址',self.model_url)
@@ -173,7 +173,7 @@ class Window(QMainWindow):
     def follow_changed(self):
         self.signature=None;self.reload()
     def start_local(self):
-        local=json.loads(json.dumps(self.config));local['endpoint']=''
+        local=json.loads(json.dumps(self.config))
         self.runtime=Runtime(self.root,local);self.runtime.start()
     def configure(self):
         if self.runtime:

@@ -50,12 +50,18 @@ def defaults():
 class Runtime:
     def __init__(self,root,config,token=''):
         self.root=Path(root);self.root.mkdir(parents=True,exist_ok=True)
-        self.path=self.root/'collector.db';self.config=config;self.token=token
+        self.path=self.root/'collector.db';self.config=config
+        credential=self.root/'device-token'
+        if token:
+            fd=os.open(credential,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+            with os.fdopen(fd,'w') as f:f.write(token.strip())
+            os.chmod(credential,0o600)
+        self.token=token.strip() or (credential.read_text().strip() if credential.exists() else '')
         self.stop=threading.Event();self.lock=threading.Lock();self.status={};self.threads=[]
         c=Collector(self.path)
         c.db.executescript('CREATE TABLE IF NOT EXISTS display_index(id TEXT PRIMARY KEY,source TEXT,category TEXT,summary TEXT,bytes INTEGER); CREATE INDEX IF NOT EXISTS display_source ON display_index(source,category); CREATE TABLE IF NOT EXISTS display_state(name TEXT PRIMARY KEY,value INTEGER);')
         c.db.close()
-        self.destination=hashlib.sha256((config.get('endpoint','')+'\0'+token).encode()).hexdigest()
+        self.destination=hashlib.sha256((config.get('endpoint','')+'\0'+self.token).encode()).hexdigest()
     def update(self,**v):
         with self.lock:self.status.update(v)
         if 'knowledge' in v or 'embedding_error' in v:
@@ -132,7 +138,7 @@ class Runtime:
                 if parsed.scheme!='https' or not parsed.netloc or parsed.username or parsed.password:
                     self.update(upload='上报地址必须使用 HTTPS');self.stop.wait(2);continue
                 try:
-                    items=c.pending(self.destination,sources=[s for s,cfg in self.config['sources'].items() if cfg['enabled']])
+                    items=c.pending(self.destination,limit=5,sources=[s for s,cfg in self.config['sources'].items() if cfg['enabled']])
                     if not items:self.update(upload='等待新数据');self.stop.wait(1);continue
                     self.update(upload=f'正在发送 {len(items)} 份记录')
                     req=urllib.request.Request(endpoint,json.dumps({'schemaVersion':1,'events':items},ensure_ascii=False).encode(),{'Content-Type':'application/json','Authorization':'Bearer '+self.token},method='POST')
@@ -141,7 +147,7 @@ class Runtime:
                     with urllib.request.build_opener(NoRedirect()).open(req,timeout=15) as r:receipt=json.load(r)
                     ids=[e['id'] for e in items]
                     if not isinstance(receipt.get('ids'),list) or sorted(receipt['ids'])!=sorted(ids):raise ValueError('平台回执不完整，保留队列重试')
-                    c.acknowledge(self.destination,ids);delay=1;self.update(upload='平台已确认接收',receipt=time.time())
+                    c.acknowledge(self.destination,ids);delay=1;self.update(upload='平台已确认接收',receipt=time.time());self.stop.wait(10)
                 except Exception as exc:
                     self.update(upload=f'上报失败：{type(exc).__name__} · {str(exc)[:160]}');self.stop.wait(delay);delay=min(delay*2,30)
         finally:c.db.close()
