@@ -31,12 +31,21 @@ def safe_packet(value):
 
 def current_context_input(context):
     """Last recorded user message is an input candidate, never a new log turn."""
-    try:
-        parsed = json.loads(context.get('body', ''))
-        messages = parsed if isinstance(parsed, list) else parsed.get('messages', [])
-    except (ValueError, AttributeError): return ''
     from SessionLens.sessionlens.supervision import readable
     from .collection_links import excerpt
+    body = context.get('body', '')
+    try:
+        parsed = json.loads(body)
+        messages = parsed if isinstance(parsed, list) else parsed.get('messages', [])
+    except (ValueError, TypeError, AttributeError):
+        # Generation-context logs store assembled text, while network hooks
+        # store JSON messages. Only explicit current-input markers are usable;
+        # free-form system/background text is never treated as a user message.
+        if not isinstance(body,str): return ''
+        body = re.sub(r'<(cb_summary|conversation_history_summary|system-reminder)\b[^>]*>.*?</\1>', '', body, flags=re.S)
+        queries = re.findall(r'<user_query\b[^>]*>(.*?)</user_query>', body, re.S)
+        return excerpt({'payload': {'content': readable(queries[-1],user=True)}},1800)['text'] if queries else ''
+    if not isinstance(messages,list): return ''
     users = [m for m in messages if isinstance(m, dict) and m.get('role') == 'user']
     return excerpt({'payload': {'content': readable(users[-1].get('content'), user=True)}}, 1800)['text'] if users else ''
 
@@ -464,6 +473,9 @@ class CollectionAssistant:
             rows = db.execute('SELECT data FROM applens_model_context WHERE device_id IN (' + marks +
                 ') AND json_extract(data,"$.sessionId") IN (' + session_marks + ') ORDER BY received DESC LIMIT 16',
                 [*aliases, *sessions]).fetchall()
+        if len(rows) >= 16:
+            for task in tasks:
+                if task['source'] == 'workbuddy': task['gaps'].append('本次核对所选会话最近16条 AppLens 记录、最多8条当前输入；更早上下文可能未包含。')
         contexts = {}
         for row in rows:
             context = json.loads(row[0]); text = current_context_input(context)
@@ -474,7 +486,7 @@ class CollectionAssistant:
             if len(contexts) >= 8: break
         if not contexts:
             for task in tasks:
-                if task['source'] == 'workbuddy': task['gaps'].append('未找到带相同会话标识且有可读当前输入的 AppLens 上下文；未按时间强行关联。')
+                if task['source'] == 'workbuddy': task['gaps'].append('本次核对范围未找到同会话标识且有可读当前输入的 AppLens 上下文；未按时间强行关联。')
             return []
         # Check beyond the selected answer tasks: two different goals can both
         # end in "执行吧". A filtered window must not erase that ambiguity.
