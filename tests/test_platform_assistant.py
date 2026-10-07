@@ -35,6 +35,19 @@ class PlatformAssistantTests(unittest.TestCase):
             self.assertTrue(task['messages'][-1]['answer']['platformEvidence']['items'])
         self.assertNotIn('secret',str(self.query('machines')['platformResult']))
 
+    def test_repeated_current_security_query_cannot_use_stale_answer(self):
+        task=self.query('security')
+        self.engine.platform_assistant=self.tool
+        task=self.engine.followup(task['id'],'交互安全审计 中有多少安全威胁')
+        self.devices.credential_threats.inventory=lambda device:{'items':[
+            {'id':'one','kind':'server_password','label':'服务器凭据'},
+            {'id':'two','kind':'unrelated_background','label':'无关背景'},
+            {'id':'three','kind':'server_password','label':'另一台服务器凭据'}]}
+        self.assertTrue(self.tool.prepare(task['id'],{'tool':{'name':'none'}},{}))
+        result=self.engine.get(task['id'])['platformResult']
+        self.assertEqual(result['round'],task['round'])
+        self.assertIn('2 类安全威胁、3 条具体发现',result['summary'])
+
     def test_access_audit_is_admin_only(self):
         self.assertEqual(self.query('access_audit',owner='alice')['status'],'unsupported_capability')
         from unittest.mock import patch

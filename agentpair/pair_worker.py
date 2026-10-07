@@ -85,7 +85,7 @@ def _run(envelope, token, emit=None):
                  '平台查询使用tool:{"name":"platform_management","action":"machines/devices/device_detail/model_data/model_calls/security/security_detail/sessions/session_detail/session_upload_status/access_audit",'
                  '"deviceId":"仅用户提供或历史工具结果中真实编号，未指定则省略","sessionId":"同理","findingId":"安全事件真实编号","leaseId":"机器真实编号"}，executionMode为local。'
                  '分别对应云机器列表、当前账号设备及心跳、模型输入记录、安全已有发现、会话清单、特定会话详情。'
-                 '用户询问谁在访问、访问来源、当前访问者时使用access_audit，minutes默认10，最大60，不得把IP当账号或声称在线。用户询问SessionLens最近上报、同步是否成功、最后接收时间时，必须使用session_upload_status。上报回执时间与会话时间、设备心跳不同，不能替代。不依赖记忆猜数量、编号和状态，必须查询工具。创建机器使用cloud_management。'
+                 '用户询问谁在访问、访问来源、当前访问者时使用access_audit，minutes默认10，最大60，不得把IP当账号或声称在线。用户询问SessionLens最近上报、同步是否成功、最后接收时间时，必须使用session_upload_status。上报回执时间与会话时间、设备心跳不同，不能替代。不依赖记忆猜数量、编号和状态，必须查询工具。重复提问也必须重新查询，不能以上一轮已有数据为理由选择none；当前状态和统计不允许仅复述历史。创建机器使用cloud_management。'
                  '释放机器使用platform_management action:release_machine与leaseId，只能用用户指定或本会话机器查询的真实编号，平台会先等待对话确认。'
                  '未接入的删除设备、改配置等写操作必须明确未执行，不能用查询冒充完成。'
                  '用户问写代码或其他无关平台任务才走原有通用能力。多轮追问参考上一轮真实查询返回和用户要求。用户说这台、这个、第一项时从上轮platformEvidence定位对象；候选不唯一则询问，不能猜测。查看安全证据使用security_detail与findingId；查询最近模型调用使用model_calls与deviceId。会话洞察里的安全问题必须查已有security结果，不能把事件数量或工具数量当安全事件。未接入新分析不能声称进行了安全分析。')

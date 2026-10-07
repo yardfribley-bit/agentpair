@@ -1,6 +1,7 @@
 """Platform tools use local stores, with identity enforced outside model output."""
 import copy
 import threading
+import re
 from urllib.parse import urlencode
 from .tasks import now
 
@@ -17,9 +18,24 @@ class PlatformAssistant:
 
     def prepare(self, tid, plan, outputs):
         tool = plan.get('tool', {})
+        task = self.engine.get(tid)
+        # Current-state questions must not silently reuse an old model answer.
+        # This fallback routes intent only; results always come from scoped stores.
+        if isinstance(tool,dict) and tool.get('name')=='none' and not task.get('securityEvidence'):
+            question=next((m.get('text','') for m in reversed(task['messages']) if m.get('role')=='user'),'').lower()
+            querying=re.search(r'多少|几类|有哪些|查看|查询|目前|当前|最近|最新|how many|list|current|latest|status',question)
+            routes=((r'sessionlens.*(?:上报|同步)|(?:上报|同步).*sessionlens','session_upload_status'),
+                    (r'交互安全审计|安全威胁|安全事件|security audit|security threats','security'),
+                    (r'访问.*(?:系统|平台)|谁.*访问|who.*access','access_audit'),
+                    (r'我的设备|设备列表|my devices','devices'),
+                    (r'会话洞察|会话列表|session insights','sessions'),
+                    (r'模型数据|model data','model_data'),
+                    (r'云机器|机器列表|cloud machines','machines'))
+            if querying:
+                action=next((action for pattern,action in routes if re.search(pattern,question)),None)
+                if action:tool={'name':'platform_management','action':action}
         if not isinstance(tool, dict) or tool.get('name') != 'platform_management':
             return False
-        task = self.engine.get(tid)
         owner = task.get('owner') or 'admin'
         action = tool.get('action')
         result = {'action': action, 'checkedAt': now(), 'items': [], 'links': [], 'nextSteps': []}
