@@ -48,7 +48,7 @@ $('export').onclick=()=>{const c=call();if(!c)return;const url=URL.createObjectU
 $('text-search').oninput=()=>{findAt=-1;};
 $('find').onclick=()=>{const text=readerText(),q=$('text-search').value;if(!q)return;let at=text.toLowerCase().indexOf(q.toLowerCase(),findAt+1);if(at<0)at=text.toLowerCase().indexOf(q.toLowerCase());set('match-status',at<0?'未找到':'字符 '+at);if(at<0)return;findAt=at;
  const pre=$('original');pre.replaceChildren(document.createTextNode(text.slice(0,at)));const mark=document.createElement('mark');mark.textContent=text.slice(at,at+q.length);pre.append(mark,document.createTextNode(text.slice(at+q.length)));mark.scrollIntoView({block:'nearest'});};
-(async()=>{try{const session=await api('/api/session');set('identity',session.username?session.username+' · 已登录':'未登录');if(!session.csrf&&!globalView)throw Error('请先登录，或从全局审计打开公开原文');
+(async()=>{try{if(['applens','sessionlens'].includes(params.get('collector')))$('collector').value=params.get('collector');const session=await api('/api/session');set('identity',session.username?session.username+' · 已登录':'未登录');if(!session.csrf&&!globalView)throw Error('请先登录，或从全局审计打开公开原文');
  const list=await api(globalView?'/api/audit/devices':'/api/devices');$('device').replaceChildren(...list.items.map(d=>option(d.id,d.name+(d.online?' · 在线':' · 离线'))));
  if(list.items.some(d=>d.id===params.get('device')))$('device').value=params.get('device');await load();
  }catch(e){failure(e);}})();
