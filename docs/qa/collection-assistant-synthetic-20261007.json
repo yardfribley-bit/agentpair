@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "syntheticOnly": true,
+  "status": "completed",
+  "questionsRun": 4,
+  "passed": 4,
+  "failed": 0,
+  "modelCalls": 21,
+  "limits": [
+    "Synthetic fixtures only; not a real-history retrieval accuracy claim.",
+    "Evidence identity checks do not prove every answer sentence is semantically correct.",
+    "This evaluation makes no cloud-machine creation or production database changes."
+  ],
+  "cases": [
+    {
+      "caseId": 1,
+      "question": "前面那次气象查询，是怎么拿到上海实时气温的？",
+      "metrics": {
+        "passed": true,
+        "checks": {
+          "goalRetrieved": true,
+          "goalTermsMatch": true,
+          "associationSupported": true,
+          "exactRequirementTurns": true,
+          "toolsAndReturnsOwned": true,
+          "noTaskMixing": true,
+          "evidenceExistsInFixture": true,
+          "answerReferencesProvidedEvidence": true,
+          "currentContextOwned": true
+        },
+        "taskMixingRate": 0.0,
+        "expectedRequirementTurns": 1,
+        "actualRequirementTurns": 1,
+        "expectedToolCalls": 1,
+        "actualToolCalls": 1,
+        "selectedCandidateCount": 1,
+        "selectedEvidenceCount": 5
+      },
+      "elapsedSeconds": 10.563,
+      "modelCalls": 5
+    },
+    {
+      "caseId": 2,
+      "question": "会员身份认证从方案讨论到写代码，中间怎么确认并继续的？",
+      "metrics": {
+        "passed": true,
+        "checks": {
+          "goalRetrieved": true,
+          "goalTermsMatch": true,
+          "associationSupported": true,
+          "exactRequirementTurns": true,
+          "toolsAndReturnsOwned": true,
+          "noTaskMixing": true,
+          "evidenceExistsInFixture": true,
+          "answerReferencesProvidedEvidence": true,
+          "currentContextOwned": true
+        },
+        "taskMixingRate": 0.0,
+        "expectedRequirementTurns": 4,
+        "actualRequirementTurns": 4,
+        "expectedToolCalls": 1,
+        "actualToolCalls": 1,
+        "selectedCandidateCount": 1,
+        "selectedEvidenceCount": 11
+      },
+      "elapsedSeconds": 13.071,
+      "modelCalls": 5
+    },
+    {
+      "caseId": 3,
+      "question": "那段展示安全远程连接的短片如何生成，最后给出了什么？",
+      "metrics": {
+        "passed": true,
+        "checks": {
+          "goalRetrieved": true,
+          "goalTermsMatch": true,
+          "associationSupported": true,
+          "exactRequirementTurns": true,
+          "toolsAndReturnsOwned": true,
+          "noTaskMixing": true,
+          "evidenceExistsInFixture": true,
+          "answerReferencesProvidedEvidence": true,
+          "currentContextOwned": true
+        },
+        "taskMixingRate": 0.0,
+        "expectedRequirementTurns": 2,
+        "actualRequirementTurns": 2,
+        "expectedToolCalls": 2,
+        "actualToolCalls": 2,
+        "selectedCandidateCount": 1,
+        "selectedEvidenceCount": 9
+      },
+      "elapsedSeconds": 11.793,
+      "modelCalls": 5
+    },
+    {
+      "caseId": 4,
+      "question": "查上海天气这一轮，AppLens记录对应哪一个任务，调用了什么网址？",
+      "metrics": {
+        "passed": true,
+        "checks": {
+          "goalRetrieved": true,
+          "goalTermsMatch": true,
+          "associationSupported": true,
+          "exactRequirementTurns": true,
+          "toolsAndReturnsOwned": true,
+          "noTaskMixing": true,
+          "evidenceExistsInFixture": true,
+          "answerReferencesProvidedEvidence": true,
+          "currentContextOwned": true
+        },
+        "taskMixingRate": 0.0,
+        "expectedRequirementTurns": 1,
+        "actualRequirementTurns": 1,
+        "expectedToolCalls": 1,
+        "actualToolCalls": 1,
+        "selectedCandidateCount": 1,
+        "selectedEvidenceCount": 6
+      },
+      "elapsedSeconds": 12.725,
+      "modelCalls": 6
+    }
+  ]
+}

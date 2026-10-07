@@ -24,7 +24,7 @@ from .accounts import Accounts, SESSION_TTL
 from .mobile_auth import MobileAuth
 
 
-def handler_for(engine, password, origin, public_demo=False, expires_at=None, username='admin', cloud_console=None):
+def handler_for(engine, password, origin, public_demo=False, expires_at=None, username='admin', cloud_console=None, collection_model=None):
     attempts=[]
     credentials=CredentialStore(Path(engine.db).parent/'credentials')
     devices=DeviceStore(Path(engine.db).parent/'devices.db')
@@ -34,6 +34,15 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
     session_lens=SessionStore(session_path)
     from .collection_view import CollectionView
     collections=CollectionView(devices,session_lens)
+    from .collection_assistant import CollectionAssistant, RelayJSON
+    relay_token=getattr(engine.backend,'token',None)
+    def reserve_collection_model(requester):
+        if not requester:raise RuntimeError('模型调用缺少计费账号')
+        estimate=engine.backend.estimate({'mode':'plan','task':{'engineeringMethod':'local'}})
+        if requester!='admin':accounts.reserve(requester,estimate)
+        engine._reserve(estimate)
+    collection_assistant=CollectionAssistant(Path(engine.db).parent/'collection-assistant.db',collections,
+        collection_model or (RelayJSON(relay_token) if relay_token else None),reserve=reserve_collection_model)
     mobile_auth=MobileAuth(devices)
     accounts=Accounts(Path(engine.db).parent/'accounts.db', username)
     engine.accounts=accounts
@@ -293,6 +302,9 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                 if self.path=='/api/sessionlens/report':
                     if not self.authenticated():self.respond(401,{'error':'Login required'});return
                     self.respond(200,session_lens.report(self.identity()['id'],query.get('device',[''])[0],query.get('session',[''])[0]));return
+                if self.path.startswith('/api/collection/questions/'):
+                    if not self.authenticated():self.respond(401,{'error':'Login required'});return
+                    self.respond(200,collection_assistant.get(self.path.rsplit('/',1)[1],self.identity()['id'],self.admin()));return
                 if self.path=='/api/session': self.respond(200,{'role':self.identity()['role'] if self.authenticated() else 'viewer','username':self.identity()['name'] if self.authenticated() else None,'csrf':self.identity()['csrf'] if self.authenticated() else None,'budget':engine.usage(),'maxRounds':engine.max_rounds})
                 elif self.path=='/api/tasks': self.respond(200,{'items':[t for t in engine.list() if self.task_access(engine.get(t['id']))],'budget':engine.usage()})
                 elif self.path=='/api/resources':
@@ -444,6 +456,17 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                 if not self.authenticated(): self.respond(401,{'error':'Login required'}); return
                 if not hmac.compare_digest(self.headers.get('X-CSRF-Token',''),self.identity()['csrf']):
                     self.respond(403,{'error':'CSRF rejected'}); return
+                if self.path=='/api/collection/questions':
+                    device_id=data.get('deviceId')
+                    if not isinstance(device_id,str) or not device_id:raise ValueError('请选择采集设备')
+                    if data.get('scope','mine')=='global':
+                        with devices.connect() as db:
+                            row=db.execute('SELECT owner FROM devices WHERE id=? AND revoked=0',(device_id,)).fetchone()
+                        if row is None:raise PermissionError('Device unavailable')
+                        owner=row['owner']
+                    elif data.get('scope','mine')=='mine':owner=self.identity()['id']
+                    else:raise ValueError('Invalid collection scope')
+                    self.respond(202,collection_assistant.submit(self.identity()['id'],owner,device_id,data.get('question'),data.get('previousQuestionId')));return
                 if self.path=='/api/sessionlens/analyze':
                     evidence=session_lens.analysis_input(self.identity()['id'],data.get('deviceId',''),data.get('sessionId',''))
                     task=engine.create('SessionLens 会话分析',

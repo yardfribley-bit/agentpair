@@ -61,5 +61,5 @@ def excerpt(record,limit=1800):
     text=plain(content)
     if not text:return {'text':'','truncated':False,'coverage':'no_readable_content'}
     if len(text)<=limit:return {'text':text,'truncated':False,'coverage':'readable_content'}
-    head=limit//3;tail=limit-head
-    return {'text':text[:head]+'\n[片段省略]\n'+text[-tail:],'truncated':True,'coverage':'head_and_tail'}
+    marker='\n[片段省略]\n';head=limit//3;tail=max(0,limit-head-len(marker))
+    return {'text':text[:head]+marker+(text[-tail:] if tail else ''),'truncated':True,'coverage':'head_and_tail'}
