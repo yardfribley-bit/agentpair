@@ -342,6 +342,65 @@ def turn_packet(records, max_turns=24, max_records_per_turn=6):
                          'semanticAssociation': 'not_reviewed'}}
 
 
+def expand_turn_evidence(turns, metadata, selected_turns):
+    """Restore locally known task actions after the compact lineage decision.
+
+    A lineage excerpt is not the answer's evidence inventory. Only IDs already
+    owned by the native round graph can be restored; no neighboring round is
+    inferred from a keyword or timestamp here. Final outbound evidence is capped
+    separately by the assistant, retaining invocation/return pairs.
+    """
+    # Task filtering must not make a reused call ID or message parent unique.
+    # Recompute relationships over the complete retained source window before
+    # restoring only the selected task's evidence. Normalize window order and
+    # partition by device as well as provider/session.
+    metadata_scopes = defaultdict(list)
+    for row in metadata.values():
+        metadata_scopes[_scope(row)].append(row)
+    ordered_metadata = []
+    for scope, members in sorted(metadata_scopes.items(), key=lambda item: str(item[0])):
+        files = {row.get('fileIdentity') for row in members}
+        by_file = len(files)==1 and None not in files and all(row.get('byteStart') is not None for row in members)
+        def source_position(row):
+            return (row.get('epoch') or 0,row['byteStart'],row.get('seq',0)) if by_file else (row.get('timestamp') or 0,row.get('seq',0))
+        for row in sorted(members, key=source_position):
+            ordered_metadata.append(dict(row,windowSeq=len(ordered_metadata)))
+    rows = _records(ordered_metadata)
+    scopes = defaultdict(list)
+    for row in rows:
+        scopes[_scope(row)].append(row['event'])
+    graphs = [build(events) for events in scopes.values()]
+    calls = {edge['to']: edge['from'] for graph in graphs for edge in graph['edges'] if edge['relation'] == 'call_result'}
+    parents = {edge['to']: edge['from'] for graph in graphs for edge in graph['edges'] if edge['relation'] == 'source_parent'}
+    gaps = defaultdict(list)
+    for graph in graphs:
+        for gap in graph['gaps']:
+            gaps[gap['eventId']].append(gap['reason'])
+    by_id = {row['id']: row for row in rows}
+    for turn in turns:
+        if turn['turnId'] not in selected_turns:
+            continue
+        previous = {r['recordId']: r for r in turn['records']}
+        restored = []
+        for key in turn.get('allRecordIds', turn['recordIds']):
+            row = metadata.get(key)
+            if not row or not row.get('text') or (row['source'], row['sessionId']) != (turn['source'], turn['sessionId']):
+                continue
+            text, truncated = _excerpt(row['text'], 1600)
+            event = row['event']; call = by_id.get(calls.get(row['id'])); parent = by_id.get(parents.get(row['id']))
+            restored.append({**previous.get(key, {}), 'recordId': key, 'kind': row['kind'], 'role': row.get('role'),
+                'tool': event.get('name'), 'text': text, 'truncated': truncated or row.get('truncated', False),
+                'seq': row.get('windowSeq', row['seq']), 'timestamp': row.get('timestamp'),
+                'callId': event.get('callId'), 'callRecordId': call['recordId'] if call else None,
+                'parentRecordId': parent['recordId'] if parent else None,
+                'association': 'recorded_call_id' if call else ('inferred' if gaps[row['id']] else previous.get(key, {}).get('association', 'inferred')),
+                'relationshipGaps': list(dict.fromkeys([*previous.get(key, {}).get('relationshipGaps', []), *gaps[row['id']]])),
+                'textCoverage': 'indexed_excerpt'})
+        turn['records'] = restored
+        turn['recordIds'] = [r['recordId'] for r in restored]
+        turn['includedRecords'] = len(restored)
+
+
 def validate_lineage(result, turns):
     """Reuse native structural validation and add the platform scope boundary."""
     if not isinstance(turns, list) or not turns or len(turns) > 24:

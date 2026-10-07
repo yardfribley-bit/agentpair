@@ -265,16 +265,82 @@ class CollectionKnowledge:
             raise ValueError('Invalid retrieval terms')
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError('Invalid retrieval limit')
-        words = list(dict.fromkeys(word for term in terms for word in tokens(term, 80)))[:120]
+        limit = min(limit, 40)
+        groups = []
+        words = []
+        for term in terms:
+            group = list(dict.fromkeys(word for word in tokens(term, 80) if word not in words))[:120 - len(words)]
+            if group:
+                groups.append(group)
+                words.extend(group)
         if not words:
             return []
-        query = ' OR '.join('"' + word.replace('"', '""') + '"' for word in words)
+
+        def query(group):
+            return ' OR '.join('"' + word.replace('"', '""') + '"' for word in group)
+
+        # Expansion terms must not displace a short original user requirement.
+        # Retrieve IDs through bounded independent channels before loading text.
+        # BM25 values from different queries are not comparable: fuse ranks.
+        queries = list(dict.fromkeys([query(words), *(query(group) for group in groups)]))
+        candidates = {}
+        quota = min(80, max(12, limit * 2))
+        user_filter = " AND (r.kind='user_message' OR (r.kind='message' AND r.role='user'))"
         with self.connect() as db:
-            rows = db.execute('''SELECT r.*,bm25(collection_fts) AS rank FROM collection_fts
-              JOIN collection_records r ON r.rowid=collection_fts.rowid
-              WHERE collection_fts MATCH ? AND r.owner=? AND r.device=?
-              ORDER BY bm25(collection_fts),r.timestamp DESC,r.seq DESC LIMIT ?''', (query, owner, canonical, limit)).fetchall()
-        return [self._record(row) for row in rows]
+            for expression in queries:
+                for users in (False, True):
+                    rows = db.execute('''SELECT r.rowid AS rowid,r.id,r.source,r.session,r.kind,r.role,r.timestamp,r.seq,
+                      bm25(collection_fts) AS rank FROM collection_fts
+                      JOIN collection_records r ON r.rowid=collection_fts.rowid
+                      WHERE collection_fts MATCH ? AND r.owner=? AND r.device=?''' + (user_filter if users else '') + '''
+                      ORDER BY bm25(collection_fts),r.timestamp DESC,r.seq DESC LIMIT ?''',
+                      (expression, owner, canonical, quota if not users else min(quota, 24))).fetchall()
+                    for position, row in enumerate(rows, 1):
+                        found = candidates.setdefault(row['id'], {'row': row, 'score': 0.0, 'channels': set()})
+                        # The additional user channel is a reservation, not an
+                        # extra relevance vote over otherwise identical text.
+                        if expression not in found['channels']:
+                            found['score'] += 1 / (20 + position)
+                            found['channels'].add(expression)
+
+            def ranked(items):
+                return sorted(items, key=lambda item: (-item['score'], -(item['row']['timestamp'] or 0), -item['row']['seq'], item['row']['id']))
+
+            def balanced(items, count):
+                # Round-robin source and session buckets. One chat with many
+                # tool results cannot occupy every candidate before reranking.
+                sources = {}
+                for item in ranked(items):
+                    row = item['row']
+                    source = sources.setdefault(row['source'], {})
+                    source.setdefault(row['session'], []).append(item)
+                result = []
+                while len(result) < count and sources:
+                    for source in list(sources):
+                        sessions = sources[source]
+                        if not sessions:
+                            del sources[source]
+                            continue
+                        session = next(iter(sessions))
+                        bucket = sessions.pop(session)
+                        result.append(bucket.pop(0))
+                        if bucket:
+                            sessions[session] = bucket
+                        if len(result) == count:
+                            break
+                return result
+
+            is_user = lambda item: item['row']['kind'] == 'user_message' or item['row']['kind'] == 'message' and item['row']['role'] == 'user'
+            selected = balanced([item for item in candidates.values() if is_user(item)], max(1, limit // 3))
+            selected_ids = {item['row']['id'] for item in selected}
+            selected.extend(balanced([item for item in candidates.values() if item['row']['id'] not in selected_ids], limit - len(selected)))
+            if not selected:
+                return []
+            marks = ','.join('?' for _ in selected)
+            rows = db.execute('SELECT * FROM collection_records WHERE owner=? AND device=? AND id IN (' + marks + ')',
+                              [owner, canonical, *(item['row']['id'] for item in selected)]).fetchall()
+            by_id = {row['id']: row for row in rows}
+            return [self._record(by_id[item['row']['id']]) for item in selected if item['row']['id'] in by_id]
 
     def window(self, owner, device, source, sessionId, recordId, before=8, after=12):
         canonical, _ = self._scope(owner, device)

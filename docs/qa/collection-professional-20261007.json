@@ -1,0 +1,302 @@
+{
+  "date": "2026-10-07",
+  "environment": "production HTTPS; existing relay deepseek-v4-flash",
+  "scope": "Collection questions, task association, evidence and recovery",
+  "cloudMachinesCreated": 0,
+  "realCases": [
+    {
+      "case": "shanghai",
+      "status": "completed",
+      "seconds": 20.25,
+      "checks": {
+        "completed": true,
+        "expectedGoalsPresent": true,
+        "onlyRequestedGoals": true,
+        "sourceEvidenceExists": true,
+        "citationsValid": true,
+        "agentSourceCorrect": true,
+        "noOtherKnownGoal": true,
+        "actualTestEvidenceRetained": true
+      },
+      "passed": true,
+      "coverage": {
+        "indexedRecords": 5305,
+        "totalRecords": 5305,
+        "indexComplete": true,
+        "searchableRecords": 2217,
+        "indexedThisBatch": 90,
+        "coverage": "uploaded_semantic_fields",
+        "selectedRecords": 32
+      }
+    },
+    {
+      "case": "curl-followup",
+      "status": "completed",
+      "seconds": 18.19,
+      "checks": {
+        "completed": true,
+        "expectedGoalsPresent": true,
+        "onlyRequestedGoals": true,
+        "sourceEvidenceExists": true,
+        "citationsValid": true,
+        "agentSourceCorrect": true,
+        "noOtherKnownGoal": true,
+        "specificTestURLExplained": true
+      },
+      "passed": true,
+      "coverage": {
+        "indexedRecords": 5315,
+        "totalRecords": 5315,
+        "indexComplete": true,
+        "searchableRecords": 2224,
+        "indexedThisBatch": 10,
+        "coverage": "uploaded_semantic_fields",
+        "selectedRecords": 32
+      }
+    },
+    {
+      "case": "liyang-switch",
+      "status": "completed",
+      "seconds": 18.19,
+      "checks": {
+        "completed": true,
+        "expectedGoalsPresent": true,
+        "onlyRequestedGoals": true,
+        "sourceEvidenceExists": true,
+        "citationsValid": true,
+        "agentSourceCorrect": true,
+        "noOtherKnownGoal": true,
+        "webSearchExplained": true
+      },
+      "passed": true,
+      "coverage": {
+        "indexedRecords": 5320,
+        "totalRecords": 5320,
+        "indexComplete": true,
+        "searchableRecords": 2224,
+        "indexedThisBatch": 5,
+        "coverage": "uploaded_semantic_fields",
+        "selectedRecords": 4
+      }
+    },
+    {
+      "case": "ssh",
+      "status": "completed",
+      "seconds": 16.4,
+      "checks": {
+        "completed": true,
+        "expectedGoalsPresent": true,
+        "onlyRequestedGoals": true,
+        "sourceEvidenceExists": true,
+        "citationsValid": true,
+        "agentSourceCorrect": true,
+        "noOtherKnownGoal": true,
+        "videoToolExplained": true
+      },
+      "passed": true,
+      "coverage": {
+        "indexedRecords": 5330,
+        "totalRecords": 5330,
+        "indexComplete": true,
+        "searchableRecords": 2232,
+        "indexedThisBatch": 10,
+        "coverage": "uploaded_semantic_fields",
+        "selectedRecords": 11
+      }
+    },
+    {
+      "case": "two-goals",
+      "status": "completed",
+      "seconds": 22.17,
+      "checks": {
+        "completed": true,
+        "expectedGoalsPresent": true,
+        "onlyRequestedGoals": true,
+        "sourceEvidenceExists": true,
+        "citationsValid": true,
+        "agentSourceCorrect": true
+      },
+      "passed": true,
+      "coverage": {
+        "indexedRecords": 5335,
+        "totalRecords": 5335,
+        "indexComplete": true,
+        "searchableRecords": 2235,
+        "indexedThisBatch": 5,
+        "coverage": "uploaded_semantic_fields",
+        "selectedRecords": 36
+      }
+    },
+    {
+      "case": "unknown",
+      "status": "completed",
+      "seconds": 4.07,
+      "checks": {
+        "completed": true,
+        "expectedGoalsPresent": true,
+        "onlyRequestedGoals": true,
+        "sourceEvidenceExists": true,
+        "citationsValid": true,
+        "agentSourceCorrect": true,
+        "unknownWithoutFallback": true
+      },
+      "passed": true,
+      "coverage": {
+        "indexedRecords": 5345,
+        "totalRecords": 5345,
+        "indexComplete": true,
+        "searchableRecords": 2241,
+        "indexedThisBatch": 10,
+        "coverage": "uploaded_semantic_fields",
+        "selectedRecords": 0
+      }
+    }
+  ],
+  "statusCodeClaimRetest": [
+    {
+      "case": "shanghai",
+      "status": "completed",
+      "seconds": 20.44,
+      "checks": {
+        "completed": true,
+        "expectedGoalsPresent": true,
+        "onlyRequestedGoals": true,
+        "sourceEvidenceExists": true,
+        "citationsValid": true,
+        "agentSourceCorrect": true,
+        "noOtherKnownGoal": true,
+        "actualTestEvidenceRetained": true
+      },
+      "passed": true,
+      "coverage": {
+        "indexedRecords": 5495,
+        "totalRecords": 5495,
+        "indexComplete": true,
+        "searchableRecords": 2314,
+        "indexedThisBatch": 150,
+        "coverage": "uploaded_semantic_fields",
+        "selectedRecords": 32
+      },
+      "manualReview": "API JSON is reported without an unrecorded HTTP status"
+    },
+    {
+      "case": "curl-followup",
+      "status": "completed",
+      "seconds": 18.35,
+      "checks": {
+        "completed": true,
+        "expectedGoalsPresent": true,
+        "onlyRequestedGoals": true,
+        "sourceEvidenceExists": true,
+        "citationsValid": true,
+        "agentSourceCorrect": true,
+        "noOtherKnownGoal": true,
+        "specificTestURLExplained": true
+      },
+      "passed": true,
+      "coverage": {
+        "indexedRecords": 5505,
+        "totalRecords": 5505,
+        "indexComplete": true,
+        "searchableRecords": 2316,
+        "indexedThisBatch": 10,
+        "coverage": "uploaded_semantic_fields",
+        "selectedRecords": 32
+      },
+      "manualReview": "API JSON is reported without an unrecorded HTTP status"
+    }
+  ],
+  "automated": {
+    "pythonTotal": 197,
+    "pythonPassed": 184,
+    "pythonSkipped": 13,
+    "pythonSkipReason": "Windows/PowerShell unavailable",
+    "pageSyntheticInteractionsPassed": 14
+  },
+  "browser": {
+    "visitorRun": "fbbe4b7a-6e9f-4614-b2ef-300bed39c3b0",
+    "baselineClicksCompleted": true,
+    "afterFixLoggedInVisualAcceptance": false
+  },
+  "limits": [
+    "Six samples are not a general accuracy estimate",
+    "24 turns / 3 candidate tasks / 60 answer evidence records",
+    "Index completion is not proof of endpoint completeness",
+    "Citation existence is not proof that every statement is correct"
+  ],
+  "productionChecks": [
+    {
+      "case": "HTTPS /",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "case": "HTTPS /devices",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "case": "HTTPS /model-data",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "case": "HTTPS /model-security",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "case": "HTTPS /session-insights/",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "case": "HTTPS /cloud-machines",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "case": "HTTPS /packages",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "case": "HTTPS /model_data.js",
+      "passed": true,
+      "status": 200
+    },
+    {
+      "case": "Visitor device inventory",
+      "passed": true,
+      "devices": 9
+    },
+    {
+      "case": "Historical source body outside recent list",
+      "passed": true
+    },
+    {
+      "case": "Visitor question access denied as JSON",
+      "passed": true,
+      "status": 401
+    },
+    {
+      "case": "Malformed previous question rejected without disconnect",
+      "passed": true,
+      "status": 400
+    },
+    {
+      "case": "Invalid field starts no model job",
+      "passed": true
+    },
+    {
+      "case": "No QA question left running",
+      "passed": true,
+      "running": 0
+    },
+    {
+      "case": "Navigator service active",
+      "passed": true
+    }
+  ],
+  "productionMatchesLocal": true
+}

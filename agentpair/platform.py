@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import math
 import os
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,8 +40,22 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
     def reserve_collection_model(requester):
         if not requester:raise RuntimeError('模型调用缺少计费账号')
         estimate=engine.backend.estimate({'mode':'plan','task':{'engineeringMethod':'local'}})
-        if requester!='admin':accounts.reserve(requester,estimate)
-        engine._reserve(estimate)
+        if not isinstance(estimate,(int,float)) or not math.isfinite(estimate) or not 0<estimate<=.30:
+            raise Limit('Invalid or excessive request estimate')
+        # One transaction reserves both ledgers. Rejecting either limit cannot
+        # charge the other ledger before a provider request has even started.
+        with engine.lock, engine.connection() as db:
+            db.execute('ATTACH DATABASE ? AS question_accounts',(accounts.path,))
+            db.execute('BEGIN IMMEDIATE')
+            used=db.execute('SELECT reserved FROM ledger WHERE id=1').fetchone()[0]
+            if engine.budget is not None and used+estimate>engine.budget:
+                raise Limit('Experiment model estimate budget exhausted')
+            if requester!='admin':
+                units=math.ceil(estimate*1000000)
+                changed=db.execute('UPDATE question_accounts.wallets SET remaining=remaining-? WHERE owner=? AND remaining>=?',(units,requester,units))
+                if not changed.rowcount:raise ValueError('模型额度不足，无法继续调用；注册赠送额度为 ¥2')
+                db.execute('INSERT INTO question_accounts.charges VALUES(?,?,?)',(secrets.token_hex(16),requester,units))
+            db.execute('UPDATE ledger SET reserved=? WHERE id=1',(used+estimate,))
     collection_assistant=CollectionAssistant(Path(engine.db).parent/'collection-assistant.db',collections,
         collection_model or (RelayJSON(relay_token) if relay_token else None),reserve=reserve_collection_model)
     mobile_auth=MobileAuth(devices)
