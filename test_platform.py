@@ -66,6 +66,9 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(data['calls'][0]['collector'],'sessionlens')
         detail=self.call('/api/devices/model-data/'+device.get('deviceId',device.get('id'))+'?request=sessionlens:'+event['id'])
         self.assertIn('上海天气',detail['items'][0]['rawContent'])
+        with self.client.open(self.url+'/devices') as response:page=response.read().decode()
+        self.assertIn('Session-only Mac',page)
+        self.assertIn('SessionLens · 1 条',page)
 
     def test_model_data_route_is_private_and_serves_prototype(self):
         with self.client.open(self.url+'/model-data') as response:

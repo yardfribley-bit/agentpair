@@ -1,0 +1,6 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=fs.readFileSync('agentpair/web_assets/devices.js','utf8');
+const elements=new Map();const $=id=>{if(!elements.has(id))elements.set(id,{append(){},replaceChildren(){}});return elements.get(id)};
+const calls=[];const context={$,node:()=>({append(){}}),csrf:'',role:'viewer',username:'',devices:[],device:null,selected:null,notice:e=>{throw e},render(){},renderCurrentTask:async()=>{},invalidatePlan(){},api:async p=>{calls.push(p);if(p==='/api/session')return {role:'viewer',csrf:null};if(p==='/api/audit/devices')return {items:[{id:'mac',name:'Test Mac',ownerAccount:'admin',os:'macOS',collectors:[{id:'sessionlens',name:'SessionLens',records:5}]}]};throw Error('Unexpected '+p)}};
+vm.createContext(context);vm.runInContext(source.slice(source.indexOf('async function refresh('),source.indexOf('function detailRow(')),context);
+context.refresh().then(()=>{assert.equal(context.devices.length,1);assert.equal(context.devices[0].collectors[0].name,'SessionLens');assert.equal(context.devices[0].canManage,false);assert(!calls.includes('/api/devices'));console.log('Anonymous global device visibility and ownership checks passed');}).catch(e=>{console.error(e);process.exitCode=1});

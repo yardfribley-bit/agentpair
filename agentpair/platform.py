@@ -163,6 +163,14 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             if self.path in paths:
                 try: body=(ASSETS/paths[self.path]).read_bytes()
                 except OSError: self.respond(503,{'error':'Static asset unavailable'}); return
+                if self.path=='/devices':
+                    from html import escape
+                    cards=[]
+                    for asset in collections.inventory(devices.audit_inventory()):
+                        tags=' / '.join(c['name']+' · '+str(c['records'])+' 条' for c in asset.get('collectors',[])) or '尚无采集器记录'
+                        href='/model-data?scope=global&amp;device='+escape(asset['id'],quote=True)
+                        cards.append('<article class="device"><strong>'+escape(asset['name'])+'</strong><small>归属账号：'+escape(asset.get('ownerAccount',''))+'</small><small>'+escape(tags)+'</small><a href="'+href+'">查看采集数据 →</a></article>')
+                    body=body.replace(b'<div id="device-list"></div>',('<div id="device-list">'+(''.join(cards) or '<p>平台尚无已接入设备。</p>')+'</div>').encode())
                 self.send_response(200)
                 suffix=Path(paths[self.path]).suffix
                 self.send_header('Content-Type',{'.html':'text/html','.js':'application/javascript','.css':'text/css','.ps1':'application/octet-stream'}[suffix]+'; charset=utf-8')
