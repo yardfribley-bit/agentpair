@@ -15,7 +15,8 @@
 - 15 项 CollectionView / CollectionLinks 回归通过；JavaScript 语法检查通过。
 - 生产接口关键词 SL-20261007-A：AppLens 4 条、SessionLens 3 条，全部摘要包含关键词，时间戳正常。
 - TinyFish run b11be0ed-09c0-4bc0-ab2a-59c6eabf55ba：确认设备、筛选器顺序、范围、北京时间、关键词高亮、7 条结果、SessionLens 原文加载。
-- 会话洞察实际跳转与 AppLens 详情补充验收 run ddfbfe16-cc90-4403-94b3-907015b1fd9b 待完成。
+- AppLens 详情补充验收 run ddfbfe16-cc90-4403-94b3-907015b1fd9b：点击 user 分类，原文包含测试关键词，加载正常。该轮点错导航，未将导航记为通过。
+- 专项导航验收 run cf7fe184-9bb9-49f6-a842-db1d658606e1：实际点击会话洞察，最终 URL /session-insights/，h1 总览，列表加载，未出现阻塞错误。
 
 ## 边界
 
