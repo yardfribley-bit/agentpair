@@ -44,28 +44,28 @@ class KnowledgeView(QWidget):
         self.step_buttons, self.input_labels = [], []
         self.flow = None
         self.setStyleSheet('''
-            QWidget#nativeKnowledge {background:#ffffff;border:1px solid #E6E8EC;border-radius:12px;color:#202834;}
+            QWidget#nativeKnowledge {background:#ffffff;border:1px solid #E6E8EC;border-radius:12px;color:#172334;}
             QWidget#nativeKnowledge QWidget {background:transparent;}
-            QWidget#nativeKnowledge QLabel {background:transparent;border:0;color:#202834;}
-            QWidget#nativeKnowledge QPushButton {background:#ffffff;border:1px solid #E6E8EC;border-radius:7px;padding:7px 12px;font-size:12px;color:#2563eb;}
-            QWidget#nativeKnowledge QPushButton:hover {background:#f1f4f8;}
-            QWidget#nativeKnowledge QPushButton:focus {border-color:#2563eb;}
+            QWidget#nativeKnowledge QLabel {background:transparent;border:0;color:#172334;}
+            QWidget#nativeKnowledge QPushButton {background:#ffffff;border:1px solid #E6E8EC;border-radius:7px;padding:7px 12px;font-size:12px;color:#2463EB;}
+            QWidget#nativeKnowledge QPushButton:hover {background:#F7F8FA;}
+            QWidget#nativeKnowledge QPushButton:focus {border-color:#2463EB;}
             QWidget#nativeKnowledge QPushButton:disabled {color:#a3aab5;}
             QWidget#nativeKnowledge QPushButton#answerRow {background:transparent;border:0;border-bottom:1px solid #E6E8EC;border-radius:0;padding:0;text-align:left;}
             QWidget#nativeKnowledge QPushButton#answerRow:hover {background:#f7f9fc;}
-            QWidget#nativeKnowledge QPushButton#answerRow:focus {background:#edf3ff;}
-            QWidget#nativeKnowledge QFrame#rowIcon {background:#f1f4f8;border:0;border-radius:7px;}
+            QWidget#nativeKnowledge QPushButton#answerRow:focus {background:#EDF3FF;}
+            QWidget#nativeKnowledge QFrame#rowIcon {background:#F7F8FA;border:0;border-radius:7px;}
             QWidget#nativeKnowledge QFrame#answerMeta {border:0;border-bottom:1px solid #E6E8EC;border-radius:0;}
             QWidget#nativeKnowledge QWidget#answerFold {border:0;border-top:1px solid #E6E8EC;border-radius:0;}
-            QWidget#nativeKnowledge QToolButton#foldToggle {border:0;background:transparent;text-align:left;color:#2563eb;font-size:12px;padding:2px 0;}
+            QWidget#nativeKnowledge QToolButton#foldToggle {border:0;background:transparent;text-align:left;color:#2463EB;font-size:12px;padding:2px 0;}
             QWidget#nativeKnowledge QToolButton#foldToggle:hover {color:#174dcc;}
-            QWidget#nativeKnowledge QPushButton#stepButton {background:transparent;border:0;border-radius:0;text-align:left;color:#626d7d;padding:4px 3px 9px;font-size:12px;}
-            QWidget#nativeKnowledge QPushButton#stepButton:checked {color:#2563eb;background:#edf3ff;border-radius:6px;}
-            QWidget#nativeKnowledge QPushButton#stepButton:hover {background:#f1f4f8;}
-            QWidget#nativeKnowledge QComboBox {background:white;border:1px solid #E6E8EC;border-radius:6px;padding:6px;font-size:12px;color:#202834;}
+            QWidget#nativeKnowledge QPushButton#stepButton {background:transparent;border:0;border-radius:0;text-align:left;color:#637084;padding:4px 3px 9px;font-size:12px;}
+            QWidget#nativeKnowledge QPushButton#stepButton:checked {color:#2463EB;background:#EDF3FF;border-radius:6px;}
+            QWidget#nativeKnowledge QPushButton#stepButton:hover {background:#F7F8FA;}
+            QWidget#nativeKnowledge QComboBox {background:white;border:1px solid #E6E8EC;border-radius:6px;padding:6px;font-size:12px;color:#172334;}
             QWidget#nativeKnowledge QTabWidget::pane {border:0;}
-            QWidget#nativeKnowledge QTabBar::tab {background:transparent;border:0;border-bottom:2px solid transparent;padding:9px 10px;font-size:12px;color:#626d7d;}
-            QWidget#nativeKnowledge QTabBar::tab:selected {color:#2563eb;border-bottom-color:#2563eb;}
+            QWidget#nativeKnowledge QTabBar::tab {background:transparent;border:0;border-bottom:2px solid transparent;padding:9px 10px;font-size:12px;color:#637084;}
+            QWidget#nativeKnowledge QTabBar::tab:selected {color:#2463EB;border-bottom-color:#2463EB;}
         ''')
         self.v = QVBoxLayout(self)
         self.v.setContentsMargins(22, 22, 22, 22)
@@ -73,24 +73,24 @@ class KnowledgeView(QWidget):
         self.v.setAlignment(Qt.AlignTop)
         origin_row = QHBoxLayout()
         origin_row.setSpacing(8)
-        origin_row.addWidget(LineIcon('history', '#2563eb'))
-        self.origin = label('任务历史', 'font-size:12px;color:#626d7d;')
+        origin_row.addWidget(LineIcon('history', '#2463EB'))
+        self.origin = label('任务历史', 'font-size:12px;color:#637084;')
         origin_row.addWidget(self.origin, 1)
-        self.source = label('', 'font-size:11px;color:#626d7d;')
+        self.source = label('', 'font-size:11px;color:#637084;')
         self.source.setProperty('i18nSkip', True)
         self.source.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
         origin_row.addWidget(self.source)
         self.v.addLayout(origin_row)
-        self.title = label('', 'font-size:21px;font-weight:600;')
+        self.title = label('', 'font-size:22px;font-weight:600;')
         self.v.addWidget(self.title)
-        self.summary = label('', 'font-size:14px;color:#626d7d;')
+        self.summary = label('', 'font-size:14px;color:#637084;')
         self.v.addWidget(self.summary)
         self.meta_frame = QFrame()
         self.meta_frame.setObjectName('answerMeta')
         meta = QHBoxLayout(self.meta_frame)
         meta.setContentsMargins(0, 5, 0, 16)
         meta.setSpacing(10)
-        self.scope = label('', 'font-size:12px;color:#626d7d;')
+        self.scope = label('', 'font-size:12px;color:#637084;')
         meta.addWidget(self.scope, 1)
         self.status = label('')
         self.status.setWordWrap(False)
@@ -108,7 +108,7 @@ class KnowledgeView(QWidget):
         self.timer.setInterval(3500)
         self.timer.timeout.connect(self.next_step)
         # Retain the public context label used by project-association dialogs.
-        self.project_label = label('', 'font-size:12px;color:#626d7d;')
+        self.project_label = label('', 'font-size:12px;color:#637084;')
         self.project_label.setProperty('i18nSkip', True)
         self.project_label.hide()
         self.v.addWidget(self.project_label)
@@ -143,10 +143,10 @@ class KnowledgeView(QWidget):
             status = data.get('status') or {}
             self.status.setText(status.get('text', ''))
             color, background = {
-                'green': ('#16704a', '#ebf7f0'),
-                'warning': ('#93621c', '#fff5e4'),
-                'error': ('#b42318', '#fff0ee'),
-            }.get(status.get('tone'), ('#626d7d', '#f1f4f8'))
+                'green': ('#16744B', '#EDF7F1'),
+                'warning': ('#956017', '#FFF6E7'),
+                'error': ('#B52E35', '#FFF1F1'),
+            }.get(status.get('tone'), ('#637084', '#F7F8FA'))
             self.status.setStyleSheet(f'font-size:11px;color:{color};background:{background};border-radius:5px;padding:3px 7px;')
             self.status.setVisible(bool(status.get('text')))
             self.meta_frame.setVisible(bool(self.scope.text() or status.get('text')))
@@ -160,7 +160,7 @@ class KnowledgeView(QWidget):
                 self._projects(data.get('projects', []), kind)
             self._followups(data.get('followups', []))
             if data.get('notice'):
-                self.body_layout.addWidget(label(short(data['notice'], 340), 'font-size:11px;color:#626d7d;'))
+                self.body_layout.addWidget(label(short(data['notice'], 340), 'font-size:11px;color:#637084;'))
             if kind.startswith('task'):
                 self._identity_fold()
         finally:
@@ -249,7 +249,7 @@ class KnowledgeView(QWidget):
         # details remain available under the raw-record fold.
         if kind != 'task_process' and requirements:
             quote = label('“' + short(requirements[0].get('text'), 180) + '”',
-                          'font-size:14px;background:#edf3ff;border-left:3px solid #2563eb;border-radius:0;padding:8px 13px;')
+                          'font-size:14px;background:#EDF3FF;border-left:3px solid #2463EB;border-radius:0;padding:8px 13px;')
             quote.setProperty('i18nSkip', True)
             self.body_layout.addWidget(quote)
         if kind == 'task_process':
@@ -263,7 +263,7 @@ class KnowledgeView(QWidget):
                 path = artifact.get('path') or artifact.get('url') or artifact.get('name') or artifact.get('value') or ''
                 fold.content_layout.addWidget(label(short(path, 240), 'font-size:13px;'))
                 if artifact.get('description'):
-                    fold.content_layout.addWidget(label(short(artifact['description'], 220), 'font-size:12px;color:#626d7d;'))
+                    fold.content_layout.addWidget(label(short(artifact['description'], 220), 'font-size:12px;color:#637084;'))
                 self._refs(artifact.get('refs', []), fold.content_layout)
 
     def _decisions(self):
@@ -301,17 +301,17 @@ class KnowledgeView(QWidget):
             frame = QFrame()
             frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             if index:
-                frame.setStyleSheet('QFrame{border:0;border-left:1px solid #e6e8ec;}')
+                frame.setStyleSheet('QFrame{border:0;border-left:1px solid #E6E8EC;}')
             column = QVBoxLayout(frame)
             column.setContentsMargins(16 if index else 0, 0, 0, 0)
             column.setSpacing(7)
             head = QHBoxLayout()
             head.setSpacing(5)
             head.addWidget(LineIcon(('message', 'model', 'file')[index]))
-            head.addWidget(label(decision.get('label'), 'font-size:11px;color:#626d7d;'), 1)
+            head.addWidget(label(decision.get('label'), 'font-size:11px;color:#637084;'), 1)
             column.addLayout(head)
             column.addWidget(label(short(decision.get('title'), 65), 'font-size:15px;font-weight:600;'))
-            body = label(short(decision.get('text'), 220), 'font-size:12px;color:#626d7d;')
+            body = label(short(decision.get('text'), 220), 'font-size:12px;color:#637084;')
             if (index == 0 and requirement.get('text')) or (index == 1 and (reason_step or has_recorded_decision)) or (index == 2 and names):
                 body.setProperty('i18nSkip', True)
             column.addWidget(body)
@@ -337,12 +337,12 @@ class KnowledgeView(QWidget):
                     history.setProperty('i18nSkip', True)
                     layout.addWidget(history)
                     detail = ' · '.join(str(requirement.get(k) or '') for k in ('label', 'time', 'reason') if requirement.get(k))
-                    layout.addWidget(label(short(detail, 220), 'font-size:11px;color:#626d7d;'))
+                    layout.addWidget(label(short(detail, 220), 'font-size:11px;color:#637084;'))
                     self._refs(requirement.get('refs', []), layout)
                 if requirements:
                     self.requirement_button = self._button(f'查看 {len(requirements)} 轮完整需求与确认历程', self.dialogues, layout)
                 else:
-                    layout.addWidget(label('未读取到可关联的用户发言。', 'font-size:12px;color:#626d7d;'))
+                    layout.addWidget(label('未读取到可关联的用户发言。', 'font-size:12px;color:#637084;'))
             elif key == 'files':
                 self._file_rows(self.data.get('files', []), layout)
             else:
@@ -354,12 +354,12 @@ class KnowledgeView(QWidget):
                         layout.addWidget(history)
                         self._button('查看思路原文', lambda checked=False, item=reason: self.raw('已记录思路', item.get('text', '')), layout)
                 else:
-                    layout.addWidget(label('未读取到可关联的思路原文。', 'font-size:12px;color:#626d7d;'))
+                    layout.addWidget(label('未读取到可关联的思路原文。', 'font-size:12px;color:#637084;'))
                 for decision in self.data.get('decisions', []):
                     if decision.get('basis'):
                         basis = {'recorded': '记录支持', 'inferred': '分析推断', 'unknown': '尚未确认',
                                  'source_parent_path': '原始消息链关联', 'sequence_candidate': '按记录顺序候选关联，待核对'}.get(decision['basis'], decision['basis'])
-                        layout.addWidget(label(short(basis, 240), 'font-size:11px;color:#626d7d;'))
+                        layout.addWidget(label(short(basis, 240), 'font-size:11px;color:#637084;'))
                     self._refs(decision.get('refs', []), layout)
             tabs.addTab(page, title)
         tabs.currentChanged.connect(lambda index: self.contentChanged.emit())
@@ -375,12 +375,12 @@ class KnowledgeView(QWidget):
             path.setProperty('i18nSkip', True)
             column.addWidget(path)
             if item.get('description'):
-                column.addWidget(label(short(item['description'], 180), 'font-size:12px;color:#626d7d;'))
+                column.addWidget(label(short(item['description'], 180), 'font-size:12px;color:#637084;'))
             row.addLayout(column, 1)
             layout.addLayout(row)
             self._refs(item.get('refs', []), layout)
         if not files:
-            layout.addWidget(label('没有可确认的修改文件记录。', 'font-size:12px;color:#626d7d;'))
+            layout.addWidget(label('没有可确认的修改文件记录。', 'font-size:12px;color:#637084;'))
         if len(files) > 14:
             self._button(f'查看全部 {len(files)} 个文件记录', lambda: self.raw('修改文件记录', '\n\n'.join(
                 str(item.get('path', '')) + '\n' + str(item.get('description', '')) for item in files)), layout)
@@ -419,7 +419,7 @@ class KnowledgeView(QWidget):
         if not steps:
             self.play_button.setEnabled(False)
             self.next_button.setEnabled(False)
-            self.body_layout.addWidget(label('当前记录没有工具调用。', 'font-size:13px;color:#626d7d;'))
+            self.body_layout.addWidget(label('当前记录没有工具调用。', 'font-size:13px;color:#637084;'))
             return
         chain = QHBoxLayout()
         chain.setSpacing(8)
@@ -435,14 +435,14 @@ class KnowledgeView(QWidget):
         self.body_layout.addLayout(chain)
         self.flow = RelationFlow()
         self.body_layout.addWidget(self.flow)
-        self.route_label = label('', 'font-size:12px;color:#626d7d;')
+        self.route_label = label('', 'font-size:12px;color:#637084;')
         self.body_layout.addWidget(self.route_label)
         columns = QHBoxLayout()
         columns.setSpacing(24)
         left, right = QVBoxLayout(), QVBoxLayout()
         left.setSpacing(8)
         right.setSpacing(8)
-        self.input_heading = label('', 'font-size:12px;color:#626d7d;')
+        self.input_heading = label('', 'font-size:12px;color:#637084;')
         left.addWidget(self.input_heading)
         self.input_labels = []
         for _ in range(5):
@@ -451,10 +451,10 @@ class KnowledgeView(QWidget):
             left.addWidget(field)
             self.input_labels.append(field)
         left.addStretch()
-        right.addWidget(label('返回了什么', 'font-size:12px;color:#626d7d;'))
+        right.addWidget(label('返回了什么', 'font-size:12px;color:#637084;'))
         self.return_label = label('', 'font-size:13px;')
         self.return_label.setProperty('i18nSkip', True)
-        self.next_label = label('', 'font-size:12px;color:#626d7d;')
+        self.next_label = label('', 'font-size:12px;color:#637084;')
         right.addWidget(self.return_label)
         right.addWidget(self.next_label)
         right.addStretch()
@@ -464,7 +464,7 @@ class KnowledgeView(QWidget):
         self.step_details = self._fold('这一轮的思路与后续内容关联')
         self.reasoning_label = label('', 'font-size:13px;')
         self.reasoning_label.setProperty('i18nSkip', True)
-        self.reasoning_basis = label('', 'font-size:11px;color:#626d7d;')
+        self.reasoning_basis = label('', 'font-size:11px;color:#637084;')
         self.step_details.content_layout.addWidget(self.reasoning_label)
         self.step_details.content_layout.addWidget(self.reasoning_basis)
         self.reasoning_button = self._button('查看这一轮思路原文', self._step_reasoning, self.step_details.content_layout)
@@ -480,7 +480,7 @@ class KnowledgeView(QWidget):
             self.step_ref_buttons.append(button)
         refs_row.addStretch()
         raw_fold.content_layout.addLayout(refs_row)
-        self.play_state = label('', 'font-size:11px;color:#626d7d;')
+        self.play_state = label('', 'font-size:11px;color:#637084;')
         self.body_layout.addWidget(self.play_state)
         self._update_step()
 
@@ -662,7 +662,7 @@ class KnowledgeView(QWidget):
         ]
         if self.project_label.text():
             details.append('项目：' + self.project_label.text())
-        fold.content_layout.addWidget(label('\n'.join(details), 'font-size:12px;color:#626d7d;'))
+        fold.content_layout.addWidget(label('\n'.join(details), 'font-size:12px;color:#637084;'))
         row = QHBoxLayout()
         self.association_button = self._button('修正需求关联', lambda: self.associationRequested.emit(), row)
         self.project_button = self._button('修正项目归属', lambda: self.projectCorrectionRequested.emit(), row)
@@ -678,6 +678,9 @@ class KnowledgeView(QWidget):
 
     def raw(self, title, text):
         self.stop()
+        if getattr(self,'raw_handler',None):
+            self.raw_handler(title,text)
+            return
         dialog = QDialog(self)
         dialog.setWindowTitle(t(title))
         dialog.resize(850, 600)

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch,Mock
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import QEvent
@@ -18,6 +18,8 @@ class CollectorWindow(QWidget):
     def __init__(self, root, config):
         super().__init__()
         self.root, self.config, self.runtime = root, config, None
+        self.store=Mock();self.store.tasks.return_value=[]
+    def configure(self):pass
 
 
 class LanguageShellTests(unittest.TestCase):

@@ -63,6 +63,16 @@ AgentPair 提供 Driver 执行、Navigator 规划与复核的协作机制；AppL
 
 桌面版不需要切换操作系统，两个 Agent 可以分别启用并同时采集。默认只保存在本机；HTTPS 上报使用登记的设备令牌，完整回执后才标记接收。安装包由 [SessionLens desktop 构建](https://github.com/yardfribley-bit/agentpair/actions/workflows/sessionlens-desktop.yml) 生成。当前应用未签名或公证；来源日志未提供的数据不会被补造。
 
+## 三款产品的统一界面
+
+AppLens、SessionLens 是安装在设备上的独立桌面应用，AgentPair 是网页平台。三者共享颜色、字号、状态和证据规范，各自保留原生窗口或网页导航。
+
+- AppLens：请求列表与上下文详情分栏；原文、分类依据、本机保存和平台回执按选中请求核对。
+- SessionLens：先提问和看答案，再回顾任务步骤；历史任务、采集同步和可收起的证据窗格位于同一应用内。支持中文和英文。
+- AgentPair：顶部提问、当前答案、相关对象和证据入口；历史处理过程折叠。设备页同时展示 AppLens 和 SessionLens，安全发现通过详情抽屉进入处置。
+
+Mac 客户端覆盖 Intel 和 Apple Silicon 构建，Windows 使用各自的原生客户端及验收流水线。设计和交付记录见 [统一设计规范](design/unified-product-ui/design-spec.md) 与 [实现验收说明](docs/qa/unified-product-ui-2026-10-07.md)。本机隔离界面验收可运行 `python3 ops/unified_ui_preview.py`，该工具只使用虚构设备和临时数据库，不连接生产、云机器或模型。
+
 ## Driver 与 Navigator
 
 | 角色 | 职责 |

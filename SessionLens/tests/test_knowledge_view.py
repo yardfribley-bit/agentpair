@@ -30,10 +30,9 @@ class KnowledgeUiTests(unittest.TestCase):
             widgets=[id(w) for w in chat.knowledge_view.findChildren(QPushButton)]
             for _ in range(12):chat.refresh_knowledge();chat.fit_result();chat.render();self.app.processEvents()
             self.assertEqual(widgets,[id(w) for w in chat.knowledge_view.findChildren(QPushButton)]);self.assertEqual(chat.input.toPlainText(),q)
-            def inspect():
-                dialog=next(w for w in self.app.topLevelWidgets() if isinstance(w,QDialog) and w.windowTitle()=='需求与确认历程')
-                text=dialog.findChild(QPlainTextEdit).toPlainText();self.assertIn('好的',text);self.assertIn('行',text);self.assertIn('干',text);self.assertIn('写一个登录页面',text);dialog.accept()
-            QTimer.singleShot(0,inspect);chat.knowledge_view.dialogues();c.db.close();chat.close()
+            chat.knowledge_view.dialogues();self.app.processEvents()
+            text=chat.proof.toPlainText();self.assertIn('好的',text);self.assertIn('行',text);self.assertIn('干',text);self.assertIn('写一个登录页面',text)
+            self.assertTrue(chat.proof_panel.isVisible());self.assertEqual(chat.proof_heading.text(),'需求与确认历程');c.db.close();chat.close()
     def test_hidden_history_window_does_not_render_on_background_timer(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:

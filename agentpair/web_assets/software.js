@@ -1,6 +1,6 @@
 (() => {
  const $=id=>document.getElementById(id);let csrf='',items=[],taskId='';
- async function api(path,data){const r=await fetch(path,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json','X-CSRF-Token':csrf}:{},body:data?JSON.stringify(data):undefined});const body=await r.json();if(!r.ok)throw Error(body.error||'请求失败');return body;}
+ async function api(path,data){const r=await fetch(path,{method:data?'POST':'GET',headers:data?{'Content-Type':'application/json','X-CSRF-Token':csrf}:{},body:data?JSON.stringify(data):undefined});let body;try{body=await r.json();}catch(_){throw Error("服务暂时无法返回数据（HTTP "+r.status+"）。请保留本次输入并核对状态，再重试。");}if(!r.ok)throw Error(body.error||'请求失败');return body;}
  function options(el,rows,label){el.replaceChildren();for(const row of rows){const o=document.createElement('option');o.value=row.id;o.textContent=label(row);el.append(o);}}
  function recipes(){const device=items.find(x=>x.id===$('device').value);options($('software'),window.softwareRecipes.filter(x=>x.platform===device?.snapshot?.os),x=>x.name+' · '+(x.version||'系统软件源版本'));}
  async function load(){const session=await api('/api/session');if(session.role!=='admin')throw Error('请先登录管理员账号');csrf=session.csrf;items=(await api('/api/devices')).items;window.softwareRecipes=(await api('/api/software')).items;options($('device'),items.filter(x=>['Windows','Linux'].includes(x.snapshot?.os)),x=>x.name+' · '+(x.online?'在线':'离线'));recipes();}

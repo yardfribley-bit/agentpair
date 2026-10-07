@@ -1,0 +1,43 @@
+name: Unified product UI checks
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'agentpair/web_assets/**'
+      - 'agentpair/platform.py'
+      - 'tests/web/**'
+      - 'tests/test_unified_delivery.py'
+      - 'tests/test_reply_feedback.cjs'
+      - 'tests/test_device_global_view.cjs'
+      - 'SessionLens/sessionlens/ui.py'
+      - 'SessionLens/sessionlens/ui.css'
+      - 'SessionLens/tests/test_insights_ui.py'
+      - '.github/workflows/unified-product-ui.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify static routes, endpoint data and question ownership
+        run: python -m unittest tests.test_unified_delivery test_platform test_sessionlens_api tests.test_collection_view tests.test_collection_questions_api
+      - name: Verify conversations, scope and current-answer rendering
+        run: |
+          node tests/test_reply_feedback.cjs
+          node tests/test_device_global_view.cjs
+          node tests/web/product_ui_qa.cjs
+          node tests/web/security_drawer_qa.cjs
+          node tests/web/collection_assistant_ui_qa.cjs
+      - name: Verify insight generation and original evidence
+        working-directory: SessionLens
+        run: python -m unittest discover -s tests -p 'test_insights_ui.py'

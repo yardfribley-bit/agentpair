@@ -20,6 +20,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check desktop navigation and request identity
+        shell: powershell
+        run: |
+          npm install --prefix "$env:RUNNER_TEMP\applens-ui-tests" linkedom
+          $env:LINKEDOM_MODULE="$env:RUNNER_TEMP\applens-ui-tests\node_modules\linkedom"
+          node client-ui/test-desktop.cjs
+          if($LASTEXITCODE){throw 'Desktop navigation and evidence tests failed'}
       - name: Build, context tests, package and installed binary acceptance
         shell: powershell
         run: |
@@ -48,6 +58,8 @@ jobs:
           if($self.ExitCode){throw 'Installed self test failed'}
           $captureTest=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -ArgumentList '--capture-ui-self-test' -Wait -PassThru
           if($captureTest.ExitCode){throw 'Native capture content/receipt UI acceptance failed'}
+          $desktopTest=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -ArgumentList '--desktop-ui-self-test' -Wait -PassThru
+          if($desktopTest.ExitCode){throw 'Native desktop selected-request UI acceptance failed'}
           $ui=Start-Process (Join-Path $destination 'AgentPairWindows.exe') -PassThru
           Start-Sleep -Seconds 3
           if($ui.HasExited){throw 'GUI exited unexpectedly'}

@@ -165,6 +165,36 @@ const tests = [];
 const test = (name, run) => tests.push({name, run});
 const postCount = h => h.requests.filter(request => request.url === '/api/collection/questions').length;
 
+test('Default record overview explains the actual source while raw evidence stays collapsed', async () => {
+  const h = harness(); await h.flush();
+  assert.equal(h.$('raw-record-panel').open, false);
+  assert(h.$('selected-record-meta').textContent.includes('SessionLens'));
+  assert(h.$('selected-record-meta').textContent.includes('sessionlens:recent'));
+  assert(h.$('selected-record-summary').textContent.includes('来源日志中的一条事件'));
+  assert.equal(h.$('sessionlens-record-count').textContent, '当前查询窗口：1 条记录');
+  await h.click(h.$('inspect-record')); assert.equal(h.$('raw-record-panel').open, true);
+  h.$('raw-record-panel').open = false;
+  await h.click(h.$('rows').children[0]); assert.equal(h.$('raw-record-panel').open, true);
+});
+
+test('Source entry uses its real collector query and clears the old expanded record', async () => {
+  const h = harness({route: url => {
+    if (!url.startsWith('/api/audit/model-data/')) return;
+    const query = new URLSearchParams(url.split('?')[1]);
+    const source = query.get('collector') === 'applens' ? 'applens' : 'sessionlens';
+    const record = rawRecord(source + ':current', source, source + ' source content');
+    return apiReply(query.get('summary') ? {calls: record.calls, items: []} : record);
+  }});
+  await h.flush(); await h.click(h.$('inspect-record'));
+  await h.click(h.$('browse-applens'));
+  assert.equal(h.$('collector').value, 'applens');
+  assert.equal(h.$('raw-record-panel').open, false);
+  assert(h.$('selected-record-meta').textContent.includes('AppLens'));
+  assert(h.$('selected-record-meta').textContent.includes('applens:current'));
+  assert(!h.$('selected-record-meta').textContent.includes('sessionlens:current'));
+  assert(h.requests.some(request => request.url.includes('summary=1&collector=applens')));
+});
+
 test('Successful answer retains question, semantic statuses, Chinese basis and evidence navigation', async () => {
   const h = harness(); await h.flush(); await h.submit('回顾登录需求');
   assert.equal(h.$('collection-question').value, '回顾登录需求');
@@ -190,6 +220,8 @@ test('Original evidence deep-link hydrates an old record outside the recent summ
   await h.flush();
   assert(h.requests.some(request => request.url.includes('request=sessionlens%3Ahistorical')), 'Historical ID was never hydrated');
   assert.equal(h.$('original').textContent, 'Historical raw evidence');
+  assert.equal(h.$('raw-record-panel').open, true);
+  assert(h.$('selected-record-meta').textContent.includes('sessionlens:historical'));
 });
 
 test('Original evidence deep-link hydrates even when the recent summary is empty', async () => {

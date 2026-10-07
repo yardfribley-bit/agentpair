@@ -57,7 +57,7 @@ class Runtime:
             with os.fdopen(fd,'w') as f:f.write(token.strip())
             os.chmod(credential,0o600)
         self.token=token.strip() or (credential.read_text().strip() if credential.exists() else '')
-        self.stop=threading.Event();self.lock=threading.Lock();self.status={};self.threads=[]
+        self.stop=threading.Event();self.paused=threading.Event();self.lock=threading.Lock();self.status={};self.threads=[]
         c=Collector(self.path)
         c.db.executescript('CREATE TABLE IF NOT EXISTS display_index(id TEXT PRIMARY KEY,source TEXT,category TEXT,summary TEXT,bytes INTEGER); CREATE INDEX IF NOT EXISTS display_source ON display_index(source,category); CREATE TABLE IF NOT EXISTS display_state(name TEXT PRIMARY KEY,value INTEGER);')
         c.db.close()
@@ -74,6 +74,14 @@ class Runtime:
     def start(self):
         for fn in (self.collect,self.upload,self.project,self.knowledge,self.inventory):
             t=threading.Thread(target=fn,daemon=True);t.start();self.threads.append(t)
+    def set_paused(self,paused):
+        """Pause this client's new reads/uploads between batches, not its query DB."""
+        if paused:self.paused.set()
+        else:self.paused.clear()
+        self.update(paused=bool(paused))
+    def wait_until_active(self):
+        while self.paused.is_set() and not self.stop.is_set():self.stop.wait(.2)
+        return not self.stop.is_set()
     def close(self):
         self.stop.set()
         for t in self.threads:t.join(timeout=17)
@@ -81,6 +89,7 @@ class Runtime:
         c=Collector(self.path);files=[];discover=0;seen={};errors={}
         try:
             while not self.stop.is_set():
+                if not self.wait_until_active():break
                 if time.monotonic()-discover>15:
                     files=[]
                     for source,cfg in self.config['sources'].items():
@@ -90,6 +99,7 @@ class Runtime:
                             if p.is_dir():files.extend((source,f) for f in p.rglob('rollout*.jsonl' if source=='codex' else '*.jsonl'))
                     files=list(dict.fromkeys(files));self.update(files=len(files),bytes=sum(p.stat().st_size for _,p in files if p.exists()));files.sort(key=lambda x:x[1].stat().st_mtime if x[1].exists() else 0,reverse=True);discover=time.monotonic()
                 for source,p in files:
+                    if not self.wait_until_active():break
                     if self.stop.is_set() or time.monotonic()-discover>15:break
                     try:
                         st=p.stat();signature=(st.st_ino,st.st_size,st.st_mtime_ns)
@@ -130,6 +140,7 @@ class Runtime:
         c=Collector(self.path);delay=1;upload_round=0
         try:
             while not self.stop.is_set():
+                if not self.wait_until_active():break
                 endpoint=self.config.get('endpoint','')
                 if not endpoint or not self.token:
                     self.update(upload='仅本地采集 · 未配置上报');self.stop.wait(1);continue

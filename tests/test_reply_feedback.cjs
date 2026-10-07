@@ -5,8 +5,8 @@ const context={pendingReplies:new Map([['t',{taskId:'t',baseRound:2,text:'我的
 vm.createContext(context);
 vm.runInContext(source.slice(source.indexOf('function renderPending('),source.indexOf('function processingText(')),context);
 context.task={id:'t',messages:[]};vm.runInContext('renderPending(task)',context);
-assert.equal(context.dialogue.children[0].children[1].text,'我的问题');
-assert.equal(context.deliverables.children[1].text,'正在发送你的问题…');
+assert.equal(context.deliverables.children[0].children[1].text,'我的问题');
+assert.equal(context.deliverables.children[2].text,'正在发送你的问题…');
 context.task.messages=[{role:'user',round:3,text:'我的问题'}];vm.runInContext('renderPending(task)',context);assert.equal(context.pendingReplies.has('t'),false);
 context.pendingReplies.set('another',{taskId:'another',baseRound:2,text:'另一个问题'});context.dialogue.replaceChildren();vm.runInContext('renderPending(task)',context);assert.equal(context.dialogue.children.length,0);
 vm.runInContext(source.slice(source.indexOf('function processingText('),source.indexOf('function readableAnswer(')),context);

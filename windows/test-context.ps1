@@ -14,6 +14,12 @@ if(@($state.calls).Count -ne 1 -or !$state.calls[0].receipt -or $state.calls[0].
 $event=Get-Content (Join-Path $data 'capture-event.json') -Raw -Encoding UTF8|ConvertFrom-Json
 if($event.phase -ne 'received' -or !$event.record.receipt -or $event.record.preview -ne $body -or $event.record.source -ne 'workbuddy_generation_context'){throw 'Capture scene acknowledgement state failed'}
 if($script:posted[0].body -ne $body){throw 'Original body changed'}
+$bodyFile=Join-Path (Join-Path $data 'contexts') ($state.calls[0].id+'-'+$state.calls[0].bodySHA256+'.txt')
+if(!(Test-Path $bodyFile) -or [IO.File]::ReadAllText($bodyFile,[Text.Encoding]::UTF8) -ne $body){throw 'Selected historical context body not retained locally'}
+[IO.File]::WriteAllText($bodyFile,'broken partial cache',[Text.Encoding]::UTF8)
+Sync-WorkBuddyContext @{deviceId='fixture';token='fixture'} $data (Join-Path $fixture 'workbuddy')
+if([IO.File]::ReadAllText($bodyFile,[Text.Encoding]::UTF8) -ne $body){throw 'Damaged selected context cache not repaired'}
+if($script:posted.Count -ne 1){throw 'Cache repair resent already acknowledged context'}
 Sync-WorkBuddyContext @{deviceId='fixture';token='fixture'} $data (Join-Path $fixture 'workbuddy')
 if($script:posted.Count -ne 1){throw 'Already acknowledged context was resent'}
 $networkBody=@{model='wire-model';messages=@(@{role='system';content=('A'*150000)},@{role='user';content='END_MARKER'})}|ConvertTo-Json -Depth 5 -Compress

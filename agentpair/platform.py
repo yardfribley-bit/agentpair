@@ -128,6 +128,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             paths={'/':'workspace.html','/workspace.js':'workspace.js','/style.css':'style.css','/workspace.css':'workspace.css',
                    '/pair_flow.js':'pair_flow.js','/pair_flow.css':'pair_flow.css','/collaboration.css':'collaboration.css',
                    '/workbench.js':'workbench.js','/workbench.css':'workbench.css'}
+            paths.update({'/product_ui.css':'product_ui.css','/product_ui.js':'product_ui.js'})
             paths['/credentials.js']='credentials.js'
             paths.update({'/software':'software.html','/software.js':'software.js'})
             paths.update({'/packages':'packages.html','/packages.js':'packages.js','/packages.css':'packages.css'})

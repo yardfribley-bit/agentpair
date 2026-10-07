@@ -1,0 +1,457 @@
+<div id="agentpair-unified">
+<style>
+#agentpair-unified{--ap-bg:#f7f8fa;--ap-surface:#fff;--ap-text:#172334;--ap-muted:#637084;--ap-border:#e6e8ec;--ap-blue:#2463eb;--ap-blue-soft:#edf3ff;--ap-green:#16744b;--ap-green-soft:#edf7f1;--ap-amber:#956017;--ap-amber-soft:#fff6e7;--ap-red:#b52e35;--ap-red-soft:#fff1f1;--ap-radius:12px;--ap-gap:22px;color:var(--ap-text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color-scheme:light}
+#agentpair-unified *{box-sizing:border-box}
+#agentpair-unified [hidden]{display:none!important}
+#agentpair-unified button,#agentpair-unified input,#agentpair-unified textarea,#agentpair-unified select{font:inherit;color:inherit}
+#agentpair-unified button{border:1px solid var(--ap-border);border-radius:7px;padding:8px 12px;background:var(--ap-surface);display:inline-flex;gap:7px;align-items:center;justify-content:center;transition:background .16s,border-color .16s}
+#agentpair-unified button:hover{background:#f1f4f8}
+#agentpair-unified button:disabled{opacity:.5}
+#agentpair-unified button.primary{background:var(--ap-blue);border-color:var(--ap-blue);color:#fff;font-weight:600}
+#agentpair-unified button.primary:hover{background:#1d53cc}
+#agentpair-unified button.quiet{border:0;background:transparent;color:var(--ap-muted);padding:5px 8px}
+#agentpair-unified button.link{border:0;background:transparent;color:var(--ap-blue);padding:3px 0;justify-content:start}
+#agentpair-unified i,#agentpair-unified svg:not(.composition-chart){width:16px;height:16px;flex-shrink:0}
+#agentpair-unified p{margin:6px 0 12px}
+#agentpair-unified h1{font-size:22px;line-height:1.4;font-weight:600;letter-spacing:-.4px;margin:0}
+#agentpair-unified h2{font-size:17px;line-height:1.45;font-weight:600;margin:0 0 10px}
+#agentpair-unified h3{font-size:15px;line-height:1.5;font-weight:600;margin:0 0 5px}
+#agentpair-unified .muted{color:var(--ap-muted)}
+#agentpair-unified .small{font-size:12px}
+#agentpair-unified .mono{font:12px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}
+#agentpair-unified .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#agentpair-unified .between{justify-content:space-between}
+#agentpair-unified .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:5px;background:#f0f2f5;color:#536075;font-size:12px;white-space:nowrap}
+#agentpair-unified .badge.green{color:var(--ap-green);background:var(--ap-green-soft)}
+#agentpair-unified .badge.amber{color:var(--ap-amber);background:var(--ap-amber-soft)}
+#agentpair-unified .badge.red{color:var(--ap-red);background:var(--ap-red-soft)}
+#agentpair-unified .badge.blue{color:var(--ap-blue);background:var(--ap-blue-soft)}
+#agentpair-unified .dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+#agentpair-unified .preview-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:0 100px 14px 0;min-height:52px}
+#agentpair-unified .preview-label{font-size:12px;color:var(--ap-muted)}
+#agentpair-unified .product-picker{display:inline-flex;gap:2px;padding:3px;background:#e9edf3;border-radius:9px}
+#agentpair-unified .product-picker button{background:transparent;border:0;padding:6px 12px;color:#536075}
+#agentpair-unified .product-picker button[aria-pressed=true]{background:white;color:#172334;box-shadow:0 1px 3px #14233b15}
+#agentpair-unified .app{position:relative;background:var(--ap-bg);border:1px solid var(--ap-border);border-radius:14px;display:grid;grid-template-columns:196px minmax(0,1fr);min-height:730px;isolation:isolate}
+#agentpair-unified .sidebar{background:var(--ap-surface);border-right:1px solid var(--ap-border);border-radius:14px 0 0 14px;padding:25px 12px 18px;display:flex;flex-direction:column;min-width:0}
+#agentpair-unified .wordmark{display:flex;align-items:center;gap:9px;font-size:20px;font-weight:650;letter-spacing:-.55px;padding:0 10px}
+#agentpair-unified .wordmark img{width:28px;height:28px;border-radius:6px}
+#agentpair-unified .brand-description{font-size:12px;color:var(--ap-muted);padding:4px 10px 25px}
+#agentpair-unified .nav{display:grid;gap:4px}
+#agentpair-unified .nav button{border:0;justify-content:start;padding:10px 11px;background:transparent;color:#566276;min-height:42px}
+#agentpair-unified .nav button.active{background:var(--ap-blue-soft);color:var(--ap-blue);font-weight:600}
+#agentpair-unified .nav button:hover{background:#f3f5f8}
+#agentpair-unified .nav button.active:hover{background:var(--ap-blue-soft)}
+#agentpair-unified .side-group{margin-top:27px;padding-top:18px;border-top:1px solid var(--ap-border)}
+#agentpair-unified .side-label{font-size:12px;color:var(--ap-muted);padding:0 10px 9px}
+#agentpair-unified .task-link{width:100%;border:0;text-align:left;justify-content:start;padding:9px 10px;background:transparent;line-height:1.5}
+#agentpair-unified .task-link.selected{background:#f2f5fa}
+#agentpair-unified .task-link span{display:block;min-width:0}
+#agentpair-unified .task-link small{font-size:11px;color:var(--ap-muted);display:block;margin-top:3px}
+#agentpair-unified .side-bottom{margin-top:auto;padding:30px 10px 0;color:var(--ap-muted);font-size:12px}
+#agentpair-unified .topbar{min-height:58px;display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1px solid var(--ap-border);padding:12px 26px;background:var(--ap-surface);border-radius:0 14px 0 0;color:var(--ap-muted);font-size:12px;flex-wrap:wrap}
+#agentpair-unified .avatar{background:#eff2f7;border:1px solid var(--ap-border);color:#526079;border-radius:50%;width:26px;height:26px;display:grid;place-items:center;font-weight:600}
+#agentpair-unified .content{padding:25px 28px 26px;min-width:0}
+#agentpair-unified .page-head{display:flex;justify-content:space-between;gap:14px;align-items:start;margin-bottom:21px;flex-wrap:wrap}
+#agentpair-unified .subtitle{color:var(--ap-muted);font-size:13px;margin:5px 0 0}
+#agentpair-unified .surface{background:var(--ap-surface);border:1px solid var(--ap-border);border-radius:var(--ap-radius);padding:20px;min-width:0}
+#agentpair-unified .section-gap{margin-top:var(--ap-gap)}
+#agentpair-unified .composer{border:1px solid var(--ap-border);border-radius:var(--ap-radius);background:#fff;padding:16px 18px}
+#agentpair-unified .composer textarea{display:block;width:100%;min-height:64px;resize:vertical;border:0;padding:0;background:transparent;font-size:16px;line-height:1.6;color:var(--ap-text)}
+#agentpair-unified .composer textarea::placeholder{color:#758196}
+#agentpair-unified .composer-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px}
+#agentpair-unified .suggestions{display:flex;gap:8px;flex-wrap:wrap;margin:11px 0 20px}
+#agentpair-unified .suggestions button{font-size:12px;background:transparent;border:0;padding:4px 0;color:var(--ap-muted)}
+#agentpair-unified .suggestions button+button::before{content:'·';margin-right:5px;color:#9aa3b2}
+#agentpair-unified .question-label{display:flex;gap:8px;align-items:center;color:var(--ap-muted);font-size:12px;margin-bottom:9px}
+#agentpair-unified .answer-title{font-size:18px;font-weight:600;line-height:1.6;margin-bottom:8px}
+#agentpair-unified .answer-footer{border-top:1px solid var(--ap-border);padding-top:12px;margin-top:16px;display:flex;align-items:center;gap:9px;flex-wrap:wrap;color:var(--ap-muted);font-size:12px}
+#agentpair-unified .answer-footer button{margin-left:auto}
+#agentpair-unified .object-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:15px}
+#agentpair-unified .object{display:block;text-align:left;justify-content:start;padding:13px 14px;border:1px solid var(--ap-border);border-radius:9px;background:#fff}
+#agentpair-unified .object strong{display:block;font-size:14px;line-height:1.5;margin:5px 0}
+#agentpair-unified .object:hover{border-color:#b9c8e5;background:#fff}
+#agentpair-unified .toolbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:14px}
+#agentpair-unified .toolbar select,#agentpair-unified .toolbar input{background:#fff;border:1px solid var(--ap-border);border-radius:7px;padding:7px 10px;min-width:0;max-width:100%}
+#agentpair-unified .toolbar input{flex:1;min-width:140px}
+#agentpair-unified .segmented{display:flex;gap:2px;padding:3px;background:#eff2f6;border-radius:7px;width:fit-content;flex-wrap:wrap}
+#agentpair-unified .segmented button{padding:5px 11px;border:0;border-radius:5px;font-size:12px;background:transparent;color:var(--ap-muted)}
+#agentpair-unified .segmented button.active{background:white;box-shadow:0 1px 2px #1723340d;color:var(--ap-text);font-weight:600}
+#agentpair-unified .record-list{padding:0;overflow-wrap:anywhere}
+#agentpair-unified .list-head{display:grid;grid-template-columns:1fr 150px 90px;gap:16px;padding:11px 18px;border-bottom:1px solid var(--ap-border);color:var(--ap-muted);font-size:12px;background:#fbfcfd;border-radius:12px 12px 0 0}
+#agentpair-unified .record-row{width:100%;display:grid;grid-template-columns:minmax(0,1fr) 150px 90px;gap:16px;text-align:left;align-items:center;border:0;border-bottom:1px solid var(--ap-border);border-radius:0;padding:16px 18px}
+#agentpair-unified .record-row:last-child{border:0;border-radius:0 0 12px 12px}
+#agentpair-unified .record-row strong{font-weight:600;font-size:14px;display:block}
+#agentpair-unified .record-row .desc{font-size:12px;color:var(--ap-muted);display:block;margin-top:3px}
+#agentpair-unified .meta-line{display:flex;align-items:center;gap:9px;flex-wrap:wrap;color:var(--ap-muted);font-size:12px;margin:12px 0 18px}
+#agentpair-unified .meta-line>span:not(:last-child)::after{content:'·';margin-left:9px;color:#9aa3b2}
+#agentpair-unified .data-strip{display:flex;height:7px;gap:3px;margin:17px 0 14px;border-radius:3px}
+#agentpair-unified .data-strip span{background:#94b3f4;border-radius:2px}
+#agentpair-unified .data-strip span:nth-child(2){background:#4178e9}
+#agentpair-unified .data-strip span:nth-child(3){background:#7398df}
+#agentpair-unified .data-strip span:nth-child(4){background:#c5d5f0}
+#agentpair-unified .data-strip span:nth-child(5){background:#d9dee7}
+#agentpair-unified .categories{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 20px}
+#agentpair-unified .category{width:100%;padding:14px 0;border:0;border-radius:0;border-bottom:1px solid var(--ap-border);background:transparent;text-align:left;justify-content:space-between;gap:12px}
+#agentpair-unified .category strong{display:block;font-size:14px;font-weight:600}
+#agentpair-unified .category small{display:block;margin-top:3px;color:var(--ap-muted);font-size:12px;line-height:1.55}
+#agentpair-unified .category:hover{background:#fafbfd}
+#agentpair-unified .flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:21px 0 18px;gap:0}
+#agentpair-unified .flow.five{grid-template-columns:repeat(5,minmax(0,1fr))}
+#agentpair-unified .flow-step{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;gap:7px;border:0;border-radius:0;padding:0 4px;background:transparent;color:var(--ap-muted);font-size:12px}
+#agentpair-unified .flow-step::before{content:'';position:absolute;left:50%;width:100%;height:1px;background:#d8dfe9;top:14px;z-index:0}
+#agentpair-unified .flow-step:last-child::before{display:none}
+#agentpair-unified .flow-step .num{z-index:1;position:relative;background:#fff;border:1px solid #cad4e2;border-radius:50%;width:29px;height:29px;display:grid;place-items:center;font-size:12px;color:#75839a;transition:background .2s,border-color .2s}
+#agentpair-unified .flow-step.done .num{background:var(--ap-blue);border-color:var(--ap-blue);color:white}
+#agentpair-unified .flow-step.done::before{background:#89acf7}
+#agentpair-unified .flow-step.current{color:var(--ap-blue);font-weight:600}
+#agentpair-unified .flow-step.current .num{border:2px solid var(--ap-blue);color:var(--ap-blue);background:#f5f8ff}
+#agentpair-unified .flow-step.current::after{content:'';position:absolute;top:12px;left:50%;width:6px;height:6px;background:var(--ap-blue);border-radius:2px;z-index:2;animation:ap-packet .85s ease-in-out 1}
+#agentpair-unified .flow-step:last-child::after{display:none}
+#agentpair-unified .flow-step:hover{background:transparent}
+#agentpair-unified .step-body{border-top:1px solid var(--ap-border);padding-top:17px}
+#agentpair-unified .tool-nodes{display:grid;grid-template-columns:1fr 20px 1fr 20px 1fr;align-items:center;gap:6px;margin:17px 0 8px}
+#agentpair-unified .tool-node{border:1px solid var(--ap-border);border-radius:8px;padding:11px;font-size:12px;min-width:0;background:#fff}
+#agentpair-unified .tool-node b{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
+#agentpair-unified .tool-arrow{color:#7894c2;text-align:center}
+#agentpair-unified .tool-node.current{border-color:#a4bff0;background:#f8faff}
+#agentpair-unified .request-summary{display:flex;justify-content:space-between;align-items:start;gap:14px;flex-wrap:wrap}
+#agentpair-unified .asset-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+#agentpair-unified .asset-name{display:flex;gap:11px;align-items:center;margin-bottom:14px}
+#agentpair-unified .asset-icon{border:1px solid var(--ap-border);background:#f5f7fa;border-radius:8px;width:39px;height:39px;display:grid;place-items:center}
+#agentpair-unified .asset-icon svg{width:20px;height:20px}
+#agentpair-unified .collector-line{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-top:1px solid var(--ap-border);font-size:13px}
+#agentpair-unified .finding{display:grid;grid-template-columns:4px 1fr;gap:16px;padding:18px;border-bottom:1px solid var(--ap-border)}
+#agentpair-unified .finding:last-child{border:0}
+#agentpair-unified .severity-line{background:var(--ap-red);border-radius:3px}
+#agentpair-unified .finding.amber .severity-line{background:var(--ap-amber)}
+#agentpair-unified .finding h3{font-size:16px;margin-top:8px}
+#agentpair-unified .finding-action{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-top:13px}
+#agentpair-unified .evidence-chain{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin:18px 0}
+#agentpair-unified .evidence-node{border-left:2px solid #c5d4ed;padding-left:12px}
+#agentpair-unified .evidence-node strong{display:block;font-size:13px;margin:5px 0}
+#agentpair-unified mark{background:#fff0d4;color:#784916;padding:2px 4px;border-radius:3px}
+#agentpair-unified .facts{display:grid;grid-template-columns:110px minmax(0,1fr);gap:8px 12px;font-size:13px;margin:16px 0}
+#agentpair-unified .facts dt{color:var(--ap-muted)}
+#agentpair-unified .facts dd{margin:0;overflow-wrap:anywhere}
+#agentpair-unified .details{border-top:1px solid var(--ap-border);padding-top:12px;margin-top:17px}
+#agentpair-unified summary{font-size:12px;color:var(--ap-muted);padding:4px 0;cursor:inherit}
+#agentpair-unified .raw{white-space:pre-wrap;overflow-wrap:anywhere;margin:13px 0 0;padding:13px;border:1px solid var(--ap-border);border-radius:7px;background:#fafbfd;font:12px/1.8 ui-monospace,SFMono-Regular,Consolas,monospace;color:#46556a}
+#agentpair-unified .activity{display:flex;gap:10px;align-items:start;margin:13px 0;padding:12px 0;border-bottom:1px solid var(--ap-border)}
+#agentpair-unified .activity:last-child{border:0}
+#agentpair-unified .activity .small-time{font:12px ui-monospace,monospace;color:var(--ap-muted);padding-top:4px;min-width:42px}
+#agentpair-unified .compact-info{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--ap-border);padding-top:15px;margin-top:17px;gap:13px}
+#agentpair-unified .compact-info span{display:block;color:var(--ap-muted);font-size:12px}
+#agentpair-unified .compact-info b{font-weight:600;font-size:13px}
+#agentpair-unified .note{border:1px solid #ead7b9;background:#fffaf2;color:#805d2b;border-radius:8px;padding:11px 13px;font-size:12px;line-height:1.65;margin-top:16px}
+#agentpair-unified .empty{padding:42px 22px;text-align:center}
+#agentpair-unified .empty p{color:var(--ap-muted);font-size:13px;max-width:430px;margin:8px auto 18px}
+#agentpair-unified .drawer{position:absolute;z-index:5;top:58px;right:0;width:min(390px,100%);background:#fff;border:1px solid var(--ap-border);border-radius:12px 0 0 12px;padding:22px;box-shadow:-12px 8px 38px #162b4d16;min-height:500px;max-width:100%;overflow-wrap:anywhere}
+#agentpair-unified .drawer .drawer-title{display:flex;justify-content:space-between;align-items:start;gap:10px;margin-bottom:21px}
+#agentpair-unified .drawer .drawer-title h2{margin:2px 0 0}
+#agentpair-unified .drawer .facts{grid-template-columns:78px 1fr;font-size:12px}
+#agentpair-unified .drawer h3{margin-top:22px}
+#agentpair-unified .toast{padding:10px 14px;background:#edf3ff;color:#315998;border:1px solid #cfddf7;border-radius:8px;font-size:12px;margin:0 0 14px}
+#agentpair-unified .preview-footer{font-size:12px;color:var(--ap-muted);padding:12px 2px 0;display:flex;gap:15px;flex-wrap:wrap}
+#agentpair-unified .native-titlebar{grid-column:1/-1;display:grid;grid-template-columns:92px minmax(0,1fr) 92px;align-items:center;min-height:42px;padding:0 14px;border-bottom:1px solid #dce1e7;border-radius:12px 12px 0 0;background:#f0f2f5;color:#475467;font-size:12px;text-align:center}
+#agentpair-unified .native-controls{display:flex;gap:8px;align-items:center;min-width:0}
+#agentpair-unified .native-controls button{width:14px;height:14px;min-height:0;padding:0;border:1px solid #0000000d;border-radius:50%;background:#b9c0c9}
+#agentpair-unified .native-controls button:nth-child(1){background:#ff6058}
+#agentpair-unified .native-controls button:nth-child(2){background:#ffbd2e}
+#agentpair-unified .native-controls button:nth-child(3){background:#28c840}
+#agentpair-unified .native-caption{overflow-wrap:anywhere;font-weight:600}
+#agentpair-unified .native-caption-tail{font-size:11px;color:#707b8c;text-align:right}
+#agentpair-unified .app.desktop{grid-template-columns:164px minmax(0,1fr);grid-template-rows:auto 1fr auto;min-height:735px;border-color:#d4dbe4;border-radius:12px;box-shadow:0 8px 26px #17233410}
+#agentpair-unified .app.desktop>.sidebar{grid-column:1;grid-row:2;background:#f1f3f6;border-radius:0;padding:22px 10px 15px}
+#agentpair-unified .app.desktop .wordmark{font-size:18px;padding:0 8px}
+#agentpair-unified .app.desktop .brand-description{font-size:11px;padding:5px 8px 21px}
+#agentpair-unified .app.desktop .nav button{padding:9px 8px;font-size:12px;min-height:36px}
+#agentpair-unified .app.desktop .nav button.active{background:#e1e8f4;color:#27569e}
+#agentpair-unified .app.desktop>.workspace{grid-column:2;grid-row:2;min-width:0;background:#f8f9fb}
+#agentpair-unified .app.desktop .web-header{display:none}
+#agentpair-unified .app.desktop .content{padding:22px 22px 24px}
+#agentpair-unified .app.desktop h1{font-size:20px}
+#agentpair-unified .app.desktop .page-head{margin-bottom:18px}
+#agentpair-unified .app.desktop .side-bottom{font-size:11px;padding:24px 8px 0}
+#agentpair-unified .native-statusbar{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid #dde2e9;border-radius:0 0 12px 12px;background:#f2f4f7;padding:8px 14px;font-size:11px;color:#586577}
+#agentpair-unified .native-statusbar button{font-size:11px;padding:0;border:0;background:transparent;color:#536783;min-height:24px}
+#agentpair-unified .native-statusbar .row{gap:7px}
+#agentpair-unified .desktop-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+#agentpair-unified .desktop-tools .source-status{font-size:12px;display:flex;align-items:center;gap:8px;color:#586577}
+#agentpair-unified .desktop-tools button{font-size:12px;padding:6px 10px}
+#agentpair-unified .request-split{display:grid;grid-template-columns:172px minmax(0,1fr);background:#fff;border:1px solid var(--ap-border);border-radius:10px;min-width:0}
+#agentpair-unified .request-inbox{padding:14px 8px;border-right:1px solid var(--ap-border);background:#fcfcfd;border-radius:10px 0 0 10px}
+#agentpair-unified .inbox-title{font-size:12px;color:#667386;padding:0 6px 10px}
+#agentpair-unified .request-choice{display:block;width:100%;text-align:left;border:0;border-radius:7px;padding:11px 9px;background:transparent;font-size:12px;margin-bottom:5px}
+#agentpair-unified .request-choice.active{background:#edf3ff;color:#224f9e}
+#agentpair-unified .request-choice b{display:block;line-height:1.6;font-weight:600;margin:4px 0}
+#agentpair-unified .request-choice small{font-size:11px;color:#6d788a;display:block}
+#agentpair-unified .request-body{padding:18px 20px;min-width:0}
+#agentpair-unified .request-body h2{font-size:16px}
+#agentpair-unified .request-body .categories{grid-template-columns:1fr}
+#agentpair-unified .request-body .category{padding:11px 0}
+#agentpair-unified .request-body .category small br{display:none}
+#agentpair-unified .request-body .category small br::after{content:' · '}
+#agentpair-unified .local-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12px;margin-top:13px}
+#agentpair-unified .local-actions button{font-size:12px}
+#agentpair-unified .app.desktop.inspecting{grid-template-columns:164px minmax(0,1fr) 300px}
+#agentpair-unified .app.desktop .drawer{position:static;grid-column:3;grid-row:2;width:auto;min-width:0;min-height:0;padding:19px 18px;border:0;border-left:1px solid var(--ap-border);border-radius:0;box-shadow:none;background:#fff}
+#agentpair-unified .app.desktop .drawer h2{font-size:16px}
+#agentpair-unified .app.desktop .drawer .raw{font-size:11px}
+#agentpair-unified .app.desktop.inspecting .request-split{grid-template-columns:1fr}
+#agentpair-unified .app.desktop.inspecting .request-inbox{display:none}
+#agentpair-unified .app.desktop.inspecting .tool-nodes{grid-template-columns:1fr}
+#agentpair-unified .app.desktop.inspecting .tool-arrow{display:none}
+#agentpair-unified .app.desktop.inspecting .object-row{grid-template-columns:1fr}
+#agentpair-unified .window-suspend{grid-column:1/-1;text-align:center;padding:48px 22px;background:#f8f9fb}
+#agentpair-unified .window-suspend p{font-size:13px;color:var(--ap-muted)}
+#agentpair-unified .app.desktop.suspended{min-height:0;grid-template-rows:auto auto}
+#agentpair-unified .app.desktop.suspended>.sidebar,#agentpair-unified .app.desktop.suspended>.workspace,#agentpair-unified .app.desktop.suspended>.native-statusbar{display:none}
+#agentpair-unified .app.desktop.expanded{grid-template-columns:1fr}
+#agentpair-unified .app.desktop.expanded>.sidebar{display:none}
+#agentpair-unified .app.desktop.expanded>.workspace{grid-column:1}
+#agentpair-unified .app.desktop.expanded.inspecting{grid-template-columns:minmax(0,1fr) 300px}
+#agentpair-unified .app.desktop.expanded.inspecting>.drawer{grid-column:2}
+#agentpair-unified .app.desktop.windows .native-titlebar{grid-template-columns:1fr auto;border-radius:7px 7px 0 0;background:#fff;text-align:left;padding:0 0 0 15px;min-height:40px}
+#agentpair-unified .app.desktop.windows .native-controls{grid-column:2;grid-row:1;gap:0;flex-direction:row-reverse}
+#agentpair-unified .app.desktop.windows .native-caption{grid-column:1;grid-row:1;font-weight:400}
+#agentpair-unified .app.desktop.windows .native-caption-tail{display:none}
+#agentpair-unified .app.desktop.windows .native-controls button{width:43px;height:39px;border:0;border-radius:0;background:#fff;color:#495568;font-size:15px;display:grid;place-items:center}
+#agentpair-unified .app.desktop.windows .native-controls button:hover{background:#edf0f4}
+#agentpair-unified .app.desktop.windows .native-controls button:first-child:hover{background:#c7353c;color:white}
+#agentpair-unified .app.desktop.windows{border-radius:7px;box-shadow:0 6px 24px #17233414}
+#agentpair-unified .app.desktop.windows .native-statusbar{border-radius:0 0 7px 7px}
+@keyframes ap-packet{0%{left:50%;opacity:0}15%{opacity:1}85%{opacity:1}100%{left:150%;opacity:0}}
+@media(max-width:820px){#agentpair-unified .app{grid-template-columns:174px minmax(0,1fr)}#agentpair-unified .content{padding:22px 20px}#agentpair-unified .topbar{padding:12px 20px}#agentpair-unified .wordmark{font-size:18px}#agentpair-unified .list-head,#agentpair-unified .record-row{grid-template-columns:1fr 100px}#agentpair-unified .record-row>span:last-child,#agentpair-unified .list-head>span:last-child{display:none}#agentpair-unified .tool-nodes{grid-template-columns:1fr}#agentpair-unified .tool-arrow{display:none}#agentpair-unified .asset-grid{grid-template-columns:1fr}#agentpair-unified .evidence-chain{gap:10px}}
+@media(max-width:660px){#agentpair-unified .app{display:block;min-height:750px}#agentpair-unified .sidebar{padding:15px 14px 10px;border-right:0;border-bottom:1px solid var(--ap-border);border-radius:14px 14px 0 0}#agentpair-unified .wordmark{padding:0 3px}#agentpair-unified .brand-description{display:none}#agentpair-unified .nav{display:flex;flex-wrap:wrap;gap:3px;margin-top:12px}#agentpair-unified .nav button{padding:7px 10px;font-size:12px;min-height:35px}#agentpair-unified .nav button svg{display:none}#agentpair-unified .side-group,#agentpair-unified .side-bottom{display:none}#agentpair-unified .topbar{border-radius:0;padding:11px 17px}#agentpair-unified .content{padding:20px 16px}#agentpair-unified .preview-bar{padding-right:95px;gap:6px}#agentpair-unified .preview-label{width:100%}#agentpair-unified .product-picker button{font-size:12px;padding:6px 9px}#agentpair-unified .composer{padding:14px}#agentpair-unified .composer-bottom .small{max-width:190px}#agentpair-unified .surface{padding:17px}#agentpair-unified .record-list{padding:0}#agentpair-unified .categories{grid-template-columns:1fr}#agentpair-unified .evidence-chain{grid-template-columns:1fr;gap:15px}#agentpair-unified .drawer{top:145px;width:100%;border-radius:12px;min-height:480px}#agentpair-unified .flow-step{font-size:11px}#agentpair-unified .compact-info{grid-template-columns:1fr 1fr}}
+@media(max-width:410px){#agentpair-unified .object-row{grid-template-columns:1fr}#agentpair-unified .toolbar{align-items:stretch}#agentpair-unified .toolbar select{flex:1}#agentpair-unified .list-head,#agentpair-unified .record-row{grid-template-columns:1fr}#agentpair-unified .list-head>span:nth-child(2){display:none}#agentpair-unified .record-row{gap:7px}#agentpair-unified .flow.five{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px 0}#agentpair-unified .flow.five .flow-step:nth-child(3)::before,#agentpair-unified .flow.five .flow-step:nth-child(3)::after{display:none}#agentpair-unified .flow.five .flow-step:nth-child(4)::after{display:none}#agentpair-unified .composer-bottom .small{display:none}#agentpair-unified h1{font-size:20px}#agentpair-unified .finding{padding:15px;gap:12px}}
+@media(prefers-reduced-motion:reduce){#agentpair-unified *,#agentpair-unified *::after{transition:none!important;animation:none!important}}
+@media(pointer:coarse){#agentpair-unified button{min-height:44px}#agentpair-unified input,#agentpair-unified textarea{font-size:16px}}
+@media(max-width:900px){#agentpair-unified .app.desktop.inspecting{grid-template-columns:164px minmax(0,1fr)}#agentpair-unified .app.desktop .drawer{grid-column:1/-1;grid-row:3;border-left:0;border-top:1px solid var(--ap-border);padding:20px}#agentpair-unified .app.desktop.inspecting .native-statusbar{grid-row:4}#agentpair-unified .app.desktop.expanded.inspecting{grid-template-columns:1fr}#agentpair-unified .app.desktop.expanded.inspecting>.drawer{grid-column:1}#agentpair-unified .app.desktop .request-split{grid-template-columns:140px minmax(0,1fr)}#agentpair-unified .app.desktop .request-body{padding:16px}}
+@media(max-width:660px){#agentpair-unified .app.desktop,#agentpair-unified .app.desktop.inspecting{display:grid;grid-template-columns:1fr;grid-template-rows:auto auto auto auto}#agentpair-unified .app.desktop>.sidebar{grid-row:2;grid-column:1;padding:13px 14px 10px}#agentpair-unified .app.desktop>.sidebar .wordmark{display:none}#agentpair-unified .app.desktop>.sidebar .nav{margin-top:0}#agentpair-unified .app.desktop>.workspace{grid-row:3;grid-column:1}#agentpair-unified .app.desktop .content{padding:18px 16px}#agentpair-unified .app.desktop .native-statusbar{grid-row:4}#agentpair-unified .app.desktop.inspecting>.drawer{grid-row:4}#agentpair-unified .app.desktop.inspecting .native-statusbar{grid-row:5}#agentpair-unified .app.desktop .request-split{grid-template-columns:1fr}#agentpair-unified .app.desktop .request-inbox{display:flex;flex-wrap:wrap;gap:7px;align-items:start;border-right:0;border-bottom:1px solid var(--ap-border);border-radius:10px 10px 0 0}#agentpair-unified .inbox-title{width:100%;padding-bottom:0}#agentpair-unified .request-choice{width:auto;flex:1;margin:0}#agentpair-unified .app.desktop.inspecting .request-inbox{display:none}#agentpair-unified .native-statusbar{gap:6px}#agentpair-unified .app.desktop.suspended .window-suspend{grid-row:2}}
+@media(pointer:coarse){#agentpair-unified .app.desktop .native-controls{gap:2px}#agentpair-unified .app.desktop .native-controls button{position:relative;width:44px;height:44px;min-height:44px;background:transparent;border:0}#agentpair-unified .app.desktop:not(.windows) .native-controls button::before{content:'';width:14px;height:14px;border-radius:50%;position:absolute;top:15px;left:15px}#agentpair-unified .app.desktop:not(.windows) .native-controls button:nth-child(1)::before{background:#ff6058}#agentpair-unified .app.desktop:not(.windows) .native-controls button:nth-child(2)::before{background:#ffbd2e}#agentpair-unified .app.desktop:not(.windows) .native-controls button:nth-child(3)::before{background:#28c840}#agentpair-unified .app.desktop.windows .native-controls button{width:44px;height:44px;min-height:44px}#agentpair-unified .native-titlebar{grid-template-columns:138px minmax(0,1fr);min-height:50px;padding:0 8px}#agentpair-unified .native-caption-tail{display:none}#agentpair-unified .native-statusbar button{min-height:44px}}
+</style>
+<div class="preview-bar" aria-label="三个产品的设计预览">
+  <span class="preview-label">终端与平台 · 统一风格预览</span>
+  <div class="product-picker">
+    <button type="button" class="cursor-interaction" data-product="app" aria-pressed="true">AppLens 客户端</button>
+    <button type="button" class="cursor-interaction" data-product="session" aria-pressed="false">SessionLens 客户端</button>
+    <button type="button" class="cursor-interaction" data-product="pair" aria-pressed="false">AgentPair 平台</button>
+  </div>
+</div>
+<div class="app" aria-label="统一产品工作台">
+  <div class="native-titlebar" id="up-native-titlebar" hidden><div class="native-controls"><button type="button" data-action="window-close" aria-label="关闭示例应用窗口"></button><button type="button" data-action="window-minimize" aria-label="最小化示例窗口"></button><button type="button" data-action="window-expand" aria-label="切换示例窗口宽布局"></button></div><span class="native-caption" id="up-native-caption"></span><span class="native-caption-tail">桌面应用</span></div>
+  <aside class="sidebar"><div class="wordmark" id="up-brand">AgentPair</div><div class="brand-description" id="up-brand-description">Agent 工作台</div><nav class="nav" id="up-nav" aria-label="产品导航"></nav><div class="side-group" id="up-side-group"></div><div class="side-bottom" id="up-side-bottom"></div></aside>
+  <div class="workspace"><header class="topbar web-header"><span id="up-breadcrumb">平台 / 任务中心</span><div class="row"><span id="up-scope">全局数据</span><span class="avatar" aria-label="示例账号">A</span></div></header><main class="content" id="up-content"></main></div>
+  <section class="drawer" id="up-drawer" hidden role="dialog" aria-modal="false" aria-labelledby="up-drawer-heading"></section>
+  <footer class="native-statusbar" id="up-native-statusbar" hidden></footer>
+  <div class="window-suspend" id="up-window-suspend" hidden></div>
+</div>
+<div class="preview-footer"><span>客户端窗口交互原型 · 示例内容</span><span>顶部产品切换仅供设计对照，安装后的应用独立运行</span></div>
+<script>
+(()=>{
+  const root=document.getElementById('agentpair-unified');
+  const $=id=>root.querySelector('#'+id);
+  const state={product:'app',page:'home',answer:'weather',question:'上海天气网页用了哪些工具？',source:'all',collectionStage:4,executionStage:0,paused:false,pauseStates:{app:false,session:false},detail:false,issueStatus:'待分派',securityFilter:'all',density:'舒适',notice:'',frame:'macOS',request:'weather',suspended:'',expanded:false};
+  let timer=null;
+  const icon=name=>`<i data-lucide="${name}" aria-hidden="true"></i>`;
+  const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const button=(label,attributes='',kind='')=>`<button type="button" class="${kind} cursor-interaction" ${attributes}>${label}</button>`;
+  const chip=(label,color='')=>`<span class="badge ${color}"><span class="dot"></span>${label}</span>`;
+  const pageHead=(title,sub,action='')=>`<div class="page-head"><div><h1>${title}</h1><p class="subtitle">${sub}</p></div>${action}</div>`;
+  const meta=s=>`<div class="meta-line">${s.map(x=>`<span>${x}</span>`).join('')}</div>`;
+  const surface=s=>`<section class="surface">${s}</section>`;
+  const navs={
+    pair:[['home','message-square','任务中心'],['devices','monitor','我的设备'],['data','layers','采集数据'],['security','shield-check','交互安全审计'],['insights','workflow','会话洞察'],['cloud','cloud','云机器'],['packages','package','软件包']],
+    app:[['home','scan-text','采集总览'],['records','files','上传记录'],['settings','settings-2','连接设置']],
+    session:[['home','message-square','智能助手'],['history','history','历史任务'],['sync','refresh-cw','采集与同步']]
+  };
+  const facts=(entries)=>`<dl class="facts">${entries.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+  const weatherStages=[
+    {name:'写网页',title:'把天气页面和接口写到项目里',body:'用户要求做一个上海天气网页。WorkBuddy 创建项目目录，用 Write 写入页面、服务入口和项目配置。',nodes:[['工具调用','Write · 页面与服务源码'],['工具返回','文件已写入项目目录'],['接下来','启动服务并验证页面']],raw:'工具：Write\n目标：上海天气网页项目\n写入：页面源码、服务入口、项目配置'},
+    {name:'启动服务',title:'通过 Bash 启动本地 Node 服务',body:'网页不是只写在回复里。WorkBuddy 运行项目命令，启动本地服务，再检查它是否能被访问。',nodes:[['工具调用','Bash · 启动 Node 服务'],['工具返回','启动日志与命令返回'],['接下来','访问首页和天气接口']],raw:'工具：Bash\n用途：启动本地 Node 服务\n后续验证：http://localhost:3000/'},
+    {name:'检查结果',title:'用 curl 分别检查首页和天气接口',body:'首页记录了 HTTP 200。天气接口返回了 JSON，但记录没有展示该接口的状态码。两次返回分别保留，不能把首页状态套到接口上。',nodes:[['工具调用','curl · 两个本地网址'],['工具返回','首页 200 / 接口 JSON'],['交回 Agent','据此整理交付说明']],raw:'首页：http://localhost:3000/\n返回：明确记录 HTTP 200\n\n天气接口：http://localhost:3000/api/weather\n返回：天气 JSON；未记录 HTTP 状态码'},
+    {name:'交付网页',title:'交付可访问页面，保留验证范围',body:'任务最终交付上海天气网页和启动说明。已有本地访问记录；是否持续运行、天气数据当前是否有效，仍要再次检查。',nodes:[['交付物','网页源码与启动说明'],['已有验证','首页访问 / 接口返回'],['仍需检查','当前可用性与数据时效']],raw:'交付：上海天气网页及启动说明\n已有证据：源码写入、服务启动、curl 调用与返回\n记录边界：未进行本次实时访问'}
+  ];
+  const captureStages=[
+    ['发现请求','WorkBuddy 追加了一个模型输入记录。','先定位新增记录，保留本次请求与会话的标识。'],
+    ['读取正文','读取用户问题与这次带入的上下文。','这里读取的是模型输入，不把工具自身的运行事件当成独立采集结果。'],
+    ['分类保存','按原文中的来源标记分类，保存到本机。','无法确定来源的片段保留为“未确认来源”，原文仍然可查看。'],
+    ['发送平台','这一份请求进入队列并发送。','发送成功仍要等待接收确认；失败会保留在本机重试。'],
+    ['确认接收','AgentPair 已确认收到这份记录。','平台回执只说明采集数据入库，不代表模型服务收到请求。']
+  ];
+  function flow(names,stage,action,five=false){return `<div class="flow ${five?'five':''}" aria-label="${action==='capture-step'?'采集数据流转':'任务执行过程'}">${names.map((n,i)=>button(`<span class="num">${i<stage?icon('check'):i+1}</span><span>${n}</span>`,`data-action="${action}" data-value="${i}" aria-pressed="${i===stage}"`,`flow-step ${i<stage?'done':''} ${i===stage?'current':''}`)).join('')}</div>`}
+  function composer(question,hint,suggestions){return `<form class="composer" id="up-question-form"><label for="up-question" class="question-label">${icon('message-square')} ${state.product==='pair'?'向平台提问':'向本机任务记录提问'}</label><textarea id="up-question" rows="2" placeholder="${state.product==='pair'?'查询设备、采集状态、安全威胁，或继续一项任务':'问项目、一次任务，或当时为什么这样做…'}">${esc(question)}</textarea><div class="composer-bottom"><span class="small muted">${hint}</span><button type="submit" class="primary cursor-interaction">${icon('arrow-up')} 提问</button></div></form><div class="suggestions">${suggestions.map(([l,v])=>button(l,`data-action="ask-example" data-value="${v}"`)).join('')}</div>`}
+  function uploadAnswer(){return `<section class="surface"><div class="row between"><span class="question-label">${icon('check-circle-2')} 查询完成</span>${chip('平台已确认','green')}</div><div class="answer-title">最近一次成功上报是今天 10:42。</div><p>WorkBuddy 的「上海天气网页」已经入库。这台电脑同时接入了 SessionLens 和 AppLens，可以继续查看会话过程，以及带入模型的上下文。</p><div class="object-row">${button(`<span class="small muted">上报设备</span><strong>办公 MacBook Pro</strong><span class="small muted">张明 · 研发 / 示例设备</span>`,`data-go="devices"`,'object')}${button(`<span class="small muted">相关任务</span><strong>上海天气网页</strong><span class="small muted">WorkBuddy · 会话与上下文已关联</span>`,`data-go="data"`,'object')}</div><div class="answer-footer"><span>依据：SessionLens 平台回执</span>${button('查看接收记录 '+icon('arrow-right'),'data-proof="receipt"','link')}</div></section><details class="details"><summary>查看本次查询过程</summary><div class="meta-line"><span>识别上报状态问题</span><span>读取平台回执</span><span>核对来源与任务</span><span>形成回答</span></div></details>`}
+  function pairHome(){return pageHead('任务中心','管理设备、采集、分析与处置。')+composer(state.question,'平台记录 · 全部设备',[['查最近的安全威胁','security'],['哪台设备上报异常','devices'],['最近一次上报','upload']])+(state.notice?`<div class="toast" role="alert">${esc(state.notice)}</div>`:'')+(state.answer==='unavailable'?unavailableAnswer():state.answer==='security'?`<section class="surface"><div class="question-label">${icon('shield-check')} 安全查询完成</div><div class="answer-title">先处理模型输入中的服务器凭据。</div><p>证据能定位到具体请求与设备。另有一条执行隔离线索需要核实，暂时不能认定程序已经越过沙箱。</p><div class="object-row">${button(`<span class="badge red">高风险 · 待处理</span><strong>服务器凭据进入模型输入</strong><span class="small muted">查看请求片段，分派责任人</span>`,`data-go="security"`,'object')}${button(`<span class="badge amber">待核实</span><strong>工具执行未见隔离证据</strong><span class="small muted">核查执行配置与运行记录</span>`,`data-go="security"`,'object')}</div><div class="answer-footer">依据：交互安全审计中的发现与证据${button('查看安全发现 '+icon('arrow-right'),'data-go="security"','link')}</div></section>`:state.answer==='devices'?`<section class="surface"><div class="question-label">${icon('monitor')} 设备状态查询完成</div><div class="answer-title">有一台设备的上报正在重试。</div><p>财务电脑的 SessionLens 数据已保存在本机，尚未取得平台确认。它与“尚未采集到数据”是两种状态。</p><div class="object-row">${button(`<span class="badge amber">正在重试</span><strong>财务电脑 · Windows</strong><span class="small muted">SessionLens · 最近尝试 10:38</span>`,`data-go="devices"`,'object')}${button(`<span class="badge green">正常</span><strong>办公 MacBook Pro</strong><span class="small muted">两个采集器 · 最近确认 10:42</span>`,`data-go="devices"`,'object')}</div></section>`:uploadAnswer());}
+  function devices(){return pageHead('我的设备','按设备查看采集器与最近上报。设备名称、归属与来源都保留。',button(icon('plus')+' 接入设备','data-action="connect"'))+`<div class="toolbar"><label class="small muted" for="up-device-scope">数据范围</label><select id="up-device-scope"><option value="all">全部设备</option><option value="mine">我的设备</option></select><input id="up-device-search" aria-label="搜索设备" placeholder="搜索名称、负责人或地址"></div><div class="asset-grid" id="up-assets"><section class="surface" data-owner="mine" data-asset="办公 MacBook Pro 张明 研发 192.0.2.18"><div class="asset-name"><span class="asset-icon">${icon('laptop')}</span><div><h3>办公 MacBook Pro</h3><span class="small muted">张明 · 研发 · macOS</span></div></div><div class="small muted mono">192.0.2.18 · device-demo-mac-01</div><div class="collector-line"><span>AppLens</span>${chip('正常采集','green')}</div><div class="collector-line"><span>SessionLens</span>${chip('平台已确认','green')}</div><div class="answer-footer"><span>最近成功上报 10:42</span>${button('查看数据','data-go="data"','link')}</div></section><section class="surface" data-owner="other" data-asset="财务电脑 李文 财务 Windows 192.0.2.24"><div class="asset-name"><span class="asset-icon">${icon('monitor')}</span><div><h3>财务电脑</h3><span class="small muted">李文 · 财务 · Windows</span></div></div><div class="small muted mono">192.0.2.24 · device-demo-win-01</div><div class="collector-line"><span>SessionLens</span>${chip('上报重试中','amber')}</div><div class="collector-line"><span>AppLens</span><span class="small muted">未接入</span></div><div class="answer-footer"><span>最近尝试 10:38</span>${button('查看原因','data-proof="retry"','link')}</div></section></div><div class="empty" id="up-no-devices" hidden><h3>没有匹配的设备</h3><p>可以使用负责人、设备名称或地址再次查找。</p></div>`}
+  function dataPage(){return pageHead('采集数据','把会话、模型输入与证据放回同一次任务里。')+`<div class="toolbar"><input id="up-data-search" aria-label="搜索任务与采集内容" placeholder="搜索任务、项目或采集内容…"><select id="up-source" aria-label="数据来源"><option value="all">全部来源</option><option value="session">SessionLens</option><option value="app">AppLens</option></select><span class="small muted">示例记录 · 今天</span></div><div class="surface" id="up-data-task"><div class="request-summary"><div><span class="small muted">任务 · WorkBuddy</span><h2 style="margin-top:5px">上海天气网页</h2><p class="muted small">办公 MacBook Pro · 张明 · weather-web</p></div>${chip('两类记录已关联','blue')}</div><p>用户让 WorkBuddy 做一个上海天气网页。会话记录保留了写代码、启动服务和测试；上下文记录说明每次模型请求带了哪些材料。</p><div class="object-row"><div class="object" data-record-source="session"><span class="small muted">SessionLens · 会话记录</span><strong>需求、回复与工具调用</strong><p class="small muted">查看 Write、Bash、curl 的输入与返回。</p>${button('查看任务过程 '+icon('arrow-right'),'data-go="insights"','link')}</div><div class="object" data-record-source="app"><span class="small muted">AppLens · 模型输入</span><strong>问题、项目背景与工具结果</strong><p class="small muted">查看这次模型请求里包含的正文。</p>${button('查看上下文 '+icon('arrow-right'),'data-proof="context"','link')}</div></div><div class="answer-footer"><span>关联依据：任务目标、项目位置与记录中的标识</span>${button('核对关联依据','data-proof="linkage"','link')}</div></div><div class="section-gap" id="up-data-records"><div class="row between" style="margin-bottom:12px"><h3>相关记录</h3><span class="small muted">按任务组织，保留原始来源</span></div><div class="surface record-list"><div class="list-head"><span>发生了什么</span><span>来源</span><span>时间</span></div>${record('WorkBuddy 检查网页与天气接口','curl 请求、参数和返回一起保存','SessionLens','10:41','curl','session')}${record('测试结果被带入下一次模型输入','首页访问结果与天气接口 JSON','AppLens','10:41','context','app')}${record('上海天气网页的需求与交付','用户要求、Agent 回复与任务关联','SessionLens','10:42','task','session')}</div></div><div class="surface empty section-gap" id="up-no-data" hidden><h3>没有找到相关任务</h3><p>保留当前输入，可以清除条件后重新查找。</p>${button('清除搜索','data-action="clear-data-query"')}</div>`}
+  function record(title,desc,source,time,proof,sourceKey=''){return button(`<span><strong>${title}</strong><span class="desc">${desc}</span></span><span class="small muted">${source}</span><span class="small mono muted">${time}</span>`,`data-proof="${proof}" ${sourceKey?`data-record-source="${sourceKey}"`:''}`,'record-row')}
+  function security(){if(state.detail)return threatDetail();return pageHead('交互安全审计','把问题、受影响的资产、证据和处置放在一起。')+`<div class="toolbar"><div class="segmented">${button('全部发现','data-action="status-filter" data-value="all"',state.securityFilter==='all'?'active':'')}${button('待处理','data-action="status-filter" data-value="open"',state.securityFilter==='open'?'active':'')}${button('待核实','data-action="status-filter" data-value="pending"',state.securityFilter==='pending'?'active':'')}</div><span class="small muted">全部设备 · 示例发现</span></div><section class="surface record-list"><article class="finding" data-finding-status="open"><span class="severity-line"></span><div><div class="row">${chip('高风险','red')}${chip(state.issueStatus)}<span class="small muted">敏感凭据进入模型输入</span></div><h3>服务器登录凭据被带入 WorkBuddy 请求</h3><p class="small muted">模型输入中出现了服务器地址、root 账号和密码片段。可以定位到发现它的请求，而不只是一条风险结论。</p><div class="finding-action"><span class="small muted">办公 MacBook Pro · AppLens</span>${button('查看证据与处置 '+icon('arrow-right'),'data-action="threat-detail"','link')}</div></div></article><article class="finding amber" data-finding-status="pending"><span class="severity-line"></span><div><div class="row">${chip('待核实','amber')}<span class="small muted">执行隔离</span></div><h3>本地服务执行时未见沙箱配置证据</h3><p class="small muted">会话有 Node 服务启动记录，但这些记录无法确认它的隔离边界。需要核对执行器配置和系统侧证据。</p><div class="finding-action"><span class="small muted">上海天气网页 · SessionLens</span>${button('查看待核实项 '+icon('arrow-right'),'data-proof="sandbox"','link')}</div></div></article></section>`}
+  function threatDetail(){return button(icon('arrow-left')+' 返回安全发现','data-action="threat-back"','quiet')+`<div class="page-head" style="margin-top:13px"><div><div class="row" style="margin-bottom:9px">${chip('高风险','red')}${chip(state.issueStatus)}</div><h1>服务器凭据进入模型输入</h1><p class="subtitle">办公 MacBook Pro · WorkBuddy · AppLens</p></div>${button('分派处理','data-action="assign"','primary')}</div><section class="surface"><h2>证据能说明什么</h2><p>这份已采集的模型输入里包含服务器登录信息。如果凭据仍然有效，需要更换密码，并排查它从哪里进入上下文。</p><div class="evidence-chain"><div class="evidence-node"><span class="small muted">用户当时输入</span><strong>「帮我检查服务能不能启动」</strong><span class="small muted">当前问题未包含服务器密码</span></div><div class="evidence-node"><span class="small muted">请求中的项目背景</span><strong>服务器 <mark>192.0.2.10</mark></strong><span class="mono">用户：root<br>密码：DemoPass****</span></div><div class="evidence-node"><span class="small muted">发现位置</span><strong>模型输入正文 / 项目背景</strong><span class="mono muted">request-demo-002<br>10:35 · 本机与平台记录</span></div></div>${button('打开请求证据 '+icon('arrow-right'),'data-proof="credential"','link')}<div class="answer-footer">证据范围：已采集的请求正文；未取得模型服务接收证明。</div></section><section class="surface section-gap"><h2>怎么推动修复</h2><div class="activity"><span class="small-time">01</span><div><h3>先更换仍有效的服务器密码</h3><span class="small muted">交给服务器负责人，登记更换时间。</span></div></div><div class="activity"><span class="small-time">02</span><div><h3>移除项目背景中的明文凭据</h3><span class="small muted">先核实背景来源，再由使用者调整记忆、项目说明或相关配置。</span></div></div><div class="activity"><span class="small-time">03</span><div><h3>再发一个普通问题，核查新请求</h3><span class="small muted">确认后续输入没有再携带这份凭据，留下复验记录。</span></div></div><div class="answer-footer"><span>${state.issueStatus==='待分派'?'负责人尚未分派':'负责人：张明 · 处理中'}</span>${button('查看处置记录','data-proof="remediation"','link')}</div></section>`}
+  function taskReplay(){const s=weatherStages[state.executionStage];return `<section class="surface"><div class="row between"><h3>任务过程</h3><div class="row">${button(icon(timer?'pause':'play')+(timer?' 暂停':' 回放'),'data-action="play-task"')}${button('下一步','data-action="next-task"')}</div></div>${flow(weatherStages.map(x=>x.name),state.executionStage,'task-step')}<div class="step-body" aria-live="polite"><h3>${s.title}</h3><p>${s.body}</p><div class="tool-nodes">${s.nodes.map((n,i)=>`${i?'<span class="tool-arrow">→</span>':''}<div class="tool-node ${i===0?'current':''}"><span class="small muted">${n[0]}</span><b>${n[1]}</b></div>`).join('')}</div><div class="row between" style="margin-top:15px"><span class="small muted">${state.executionStage+1} / 4 · 只展开当前步骤</span>${button('参数与原始返回','data-proof="'+(state.executionStage===2?'curl':'task')+'"','link')}</div><details class="details"><summary>查看执行记录摘要</summary><p class="small muted">工具用途与返回摘要。此处不作为 reasoning 原文。</p><pre class="raw">${esc(s.raw)}</pre></details></div></section>`}
+  function insights(){return pageHead('会话洞察','先看任务的结果，再沿执行过程核对。')+`<section class="surface"><div class="row between"><span class="small muted">WorkBuddy / weather-web</span>${chip('已交付 · 需复验','amber')}</div><h2 style="margin-top:12px">上海天气网页是怎么完成的</h2><p>先写网页与接口，启动本地服务，再用 curl 检查两个网址，最后给出交付说明。</p><div class="compact-info"><div><span>用户目标</span><b>做一个上海天气网页</b></div><div><span>记录来源</span><b>SessionLens + AppLens</b></div><div><span>可以核对</span><b>工具输入、返回与上下文</b></div></div></section><div class="section-gap">${taskReplay()}</div>`}
+  function category(title,meaning,detail,size,proof){return button(`<span><strong>${title} <span class="small muted">${size}</span></strong><small>${meaning}<br>${detail}</small></span>${icon('chevron-right')}`,`data-proof="${proof}"`,'category')}
+  function appRecords(){return pageHead('上传记录','每份模型输入都有自己的保存与接收状态。')+`<div class="surface record-list"><div class="list-head"><span>模型输入 / 上下文</span><span>上报状态</span><span>时间</span></div>${record('上海天气网页 · 检查测试结果','当前需求、项目背景、历史对话、工具返回','平台已确认','10:41','context')}${record('服务启动检查 · 项目背景','包含待核查的服务器凭据片段','平台已确认','10:35','credential')}</div><div class="note">“平台已确认”表示采集记录被平台接收。是否真的到达模型服务，需要相应的网络侧证据。</div>`}
+  function settings(){return pageHead('连接设置','查看保存位置与数据目的地。')+surface(`<div class="row between"><h2>平台连接</h2>${chip('设备已绑定','green')}</div>${facts([['平台','https://www.chuhaijian.com'],['当前设备','办公 MacBook Pro'],['本机保存','应用数据目录 · 原始上下文记录'],['同步内容','已采集请求正文、来源分类与接收状态']])}<div class="answer-footer">设备凭据由客户端保存，界面不展示密钥。${button('查看绑定信息','data-proof="connection"','link')}</div>`)}
+  function unavailableAnswer(){return surface('<div class="empty"><h2>该问题暂没有演示答案</h2><p>这里保留你的新问题，不沿用上一个任务的答案。</p></div>');}
+  function projectAnswer(){return `<section class="surface"><div class="question-label">${icon('folder-open')} WorkBuddy / 本机任务记录</div><div class="answer-title">示例记录里找到一个项目：上海天气网页。</div><p class="small muted">有明确项目目录的开发任务归入项目；临时查询单独保留。</p><div class="object-row">${button(`<span class="small muted">WorkBuddy · weather-web</span><strong>上海天气网页</strong><span class="small muted">写网页、启动服务、验证接口</span>`,`data-action="ask-example" data-value="weather"`,'object')}${button(`<span class="small muted">WorkBuddy · 临时任务</span><strong>溧阳天气查询</strong><span class="small muted">查询天气资料 · 不计为开发项目</span>`,`data-proof="liyang"`,'object')}</div><div class="answer-footer"><span>当前原型只展示示例记录，不代表全量项目清单</span></div></section>`}
+  function sessionAnswer(){return `<section class="surface"><div class="row between"><span class="question-label">${icon('check-circle-2')} 找到相关任务</span>${chip('已有执行记录','green')}</div><div class="answer-title">${state.answer==='verification'?'它用 curl 检查了首页和天气接口。':'主要用了 Write 和 Bash，Bash 中又运行了 curl。'}</div><p>Write 负责写网页与服务代码；Bash 负责启动服务和测试。curl 访问了 <span class="mono">localhost:3000/</span> 和 <span class="mono">localhost:3000/api/weather</span>。</p><div class="answer-footer"><span>任务：上海天气网页 · WorkBuddy</span>${button('查看 curl 参数与返回','data-proof="curl"','link')}</div></section>${meta(['上海天气网页','本机任务记录','已交付 · 当前可用性需复验'])}${taskReplay()}`}
+  function history(){return pageHead('历史任务','按需求回溯对话与执行；一项任务可以包含多轮交流。')+`<div class="toolbar"><input id="up-history-search" aria-label="搜索历史任务" placeholder="搜索问题、项目或执行内容…"><select id="up-history-source" aria-label="Agent 来源"><option value="all">全部 Agent</option><option value="WorkBuddy">WorkBuddy</option><option value="Codex">Codex</option></select></div><div class="surface record-list"><div class="list-head"><span>任务 / 目标</span><span>Agent</span><span>状态</span></div>${button(`<span><strong>上海天气网页</strong><span class="desc">写网页 → 启动服务 → 检查 → 交付</span></span><span class="small muted">WorkBuddy</span><span class="badge amber">需复验</span>`,'data-action="ask-example" data-value="weather" data-agent="WorkBuddy" data-history-task="上海天气网页"','record-row')}${button(`<span><strong>溧阳天气查询</strong><span class="desc">WebSearch 搜索天气资料并整理</span></span><span class="small muted">WorkBuddy</span><span class="badge green">已回复</span>`,'data-proof="liyang" data-agent="WorkBuddy" data-history-task="溧阳天气查询"','record-row')}${button(`<span><strong>AgentPair 采集接入</strong><span class="desc">接入采集器，核对问答与关联</span></span><span class="small muted">Codex</span><span class="badge green">有记录</span>`,'data-proof="codex-project" data-agent="Codex" data-history-task="AgentPair 采集接入"','record-row')}</div>`}
+  function sync(){return pageHead('采集与同步','实时追加优先，历史任务渐进整理。',button(icon(state.paused?'play':'pause')+(state.paused?' 恢复采集':' 暂停采集'),'data-action="pause"'))+`<section class="surface"><div class="row between"><h2>会话来源</h2>${chip(state.paused?'已暂停':'增量采集中',state.paused?'amber':'green')}</div><div class="collector-line"><div><strong>Codex</strong><div class="small muted">用户提问、回复、工具调用与返回</div></div>${chip('已接入','green')}</div><div class="collector-line"><div><strong>WorkBuddy</strong><div class="small muted">任务对话、已记录思路与执行记录</div></div>${chip('已接入','green')}</div><div class="compact-info"><div><span>当前优先处理</span><b>新会话追加</b></div><div><span>历史整理</span><b>按批次进行</b></div><div><span>保存与检索</span><b>本机任务库</b></div></div></section><section class="surface section-gap"><div class="row between"><h2>最近上报</h2>${chip('平台已确认','green')}</div><p>上海天气网页的任务对话与工具执行记录已被平台接收。</p>${facts([['最近确认','今天 10:42'],['数据目的地','www.chuhaijian.com'],['已整理内容','用户需求、回复、工具输入与返回、任务关联'],['本地处理','索引与历史问答；上报状态单独记录']])}<div class="answer-footer">本机保存、任务整理、平台接收分开显示。${button('查看平台回执','data-proof="receipt"','link')}</div></section>`}
+  function secondary(){return pageHead(state.page==='cloud'?'云机器':'软件包',state.page==='cloud'?'机器状态与后续任务沿用同一工作台。':'按设备环境提供可安装版本。')+surface(`<div class="empty"><h2>${state.page==='cloud'?'目前没有运行中的云机器':'安装客户端，接入这台设备'}</h2><p>${state.page==='cloud'?'创建前说明配置与费用，创建后核查连接，再继续你的实际任务。':'AppLens 采集模型上下文；SessionLens 保留任务记录与历史问答。'}</p>${button(state.page==='cloud'?'回任务中心说明需求':'查看接入设备',`data-go="${state.page==='cloud'?'home':'devices'}"`,'primary')}</div>`)}
+  function appDesktop(){
+    const selected=state.request==='credential',stage=captureStages[state.collectionStage];
+    const title=selected?'服务启动检查':'上海天气网页';
+    return pageHead('上下文采集','本机 WorkBuddy · 每次模型输入单独保存。')+
+      `<div class="desktop-tools"><div class="source-status">${icon('circle-check')} WorkBuddy 运行中 ${chip(state.paused?'采集已暂停':'采集开启',state.paused?'amber':'green')}</div><div class="row">${button(icon(state.paused?'play':'pause')+(state.paused?' 恢复采集':' 暂停采集'),'data-action="pause"')}${button(icon('folder-open')+' 本机记录','data-proof="local-folder"')}</div></div>
+      <section class="request-split" aria-label="本机模型请求列表与详情">
+        <div class="request-inbox"><div class="inbox-title">最近请求 · WorkBuddy</div>
+          ${button(`<small>10:41 · request-001</small><b>上海天气网页</b><small>需求、背景、工具结果</small>`,`data-action="select-request" data-value="weather" aria-pressed="${!selected}"`,`request-choice ${!selected?'active':''}`)}
+          ${button(`<small>10:35 · request-002</small><b>服务启动检查</b><small>附带的项目背景</small>`,`data-action="select-request" data-value="credential" aria-pressed="${selected}"`,`request-choice ${selected?'active':''}`)}
+        </div>
+        <div class="request-body"><div class="row between"><span class="small muted">选中请求 · 模型输入</span><span class="badge">本机已保存</span></div><h2 style="margin-top:9px">${title}</h2><div class="small muted">用户输入</div><p style="margin:3px 0 14px;font-weight:500">${selected?'帮我检查服务能不能启动':'做一个上海天气网页'}</p><div class="small muted">随这次问题带上的内容</div>
+        ${selected?`<div class="categories">${category('项目背景','服务位置与登录材料','192.0.2.10 · root · DemoPass****','示例','credential')}${category('当前需求','用户这次提出的问题','检查服务是否能启动','示例','credential')}${category('未确认来源','部分材料缺少来源标记','保留正文，等待核对','示例','unknown')}</div>`:`<div class="categories">${category('当前需求','用户要做什么','上海天气网页的开发目标','2.1 KB','user')}${category('项目背景','Agent 参考的工作环境','项目位置、现有代码与运行约定','7.5 KB','project')}${category('历史对话','前面讨论和执行过什么','需求补充、说明与之前的回复','9.6 KB','history')}${category('工具返回','这次带上的执行结果','首页 200 与天气接口 JSON','9.3 KB','embedded-tool')}${category('未确认来源','原文缺少充分的分类标记','保留正文，可进一步核对','1.5 KB','unknown')}</div>`}
+        <div class="local-actions">${button('打开选中请求正文 '+icon('panel-right-open'),`data-proof="${selected?'credential':'context'}"`,'link')}${button('查看保存与回执','data-proof="capture-receipt"','link')}${button('在平台查看 '+icon('external-link'),'data-product="pair" data-preview-page="data"','link')}</div></div>
+      </section>
+      <section class="surface section-gap"><div class="row between"><h3>采集与上报过程</h3><div class="row">${button(icon(timer?'pause':'play')+(timer?' 暂停回放':' 回放采集'),'data-action="play-capture"')}${button('下一步','data-action="next-capture"')}</div></div>${flow(captureStages.map(x=>x[0]),state.collectionStage,'capture-step',true)}<div class="step-body" aria-live="polite"><h3>${stage[1]}</h3><p class="small muted">${stage[2]}</p><div class="row between"><span class="small muted">本机保存与平台接收分别记录</span>${chip(state.collectionStage===4?'平台已确认':'正在流转',state.collectionStage===4?'green':'blue')}</div></div></section>`;
+  }
+  function sessionDesktop(){
+    const output=state.answer==='unavailable'?unavailableAnswer():state.answer==='empty'?surface('<div class="empty"><h3>从你过去的任务中找答案</h3><p>可以问做过哪些项目、一次任务怎么完成，或为什么这样改代码。</p></div>'):state.answer==='projects'?projectAnswer():sessionAnswer();
+    return pageHead('智能助手','问项目、任务和当时的执行依据。',button(icon('square-pen')+' 新对话','data-action="new-chat"'))+
+      composer(state.question,'本机历史知识库 · Enter 提问，Shift + Enter 换行',[['WorkBuddy 做过哪些项目','projects'],['天气网页用了哪些工具','weather'],['当时怎么验证','verification']])+
+      (state.notice?`<div class="toast" role="alert">${esc(state.notice)}</div>`:'')+output;
+  }
+  function nativeChrome(){
+    const app=root.querySelector('.app'),native=state.product!=='pair';
+    app.classList.toggle('desktop',native);app.classList.toggle('windows',native&&state.frame==='Windows');app.classList.toggle('suspended',native&&!!state.suspended);app.classList.toggle('expanded',native&&state.expanded);app.classList.toggle('inspecting',native&&!$('up-drawer').hidden);
+    app.setAttribute('aria-label',native?(state.product==='app'?'AppLens 独立桌面应用':'SessionLens 独立桌面应用'):'AgentPair Web 平台');
+    $('up-native-titlebar').hidden=!native;$('up-native-statusbar').hidden=!native;$('up-window-suspend').hidden=!native||!state.suspended;
+    $('up-native-caption').textContent=native?(state.product==='app'?'AppLens — 上下文采集':'SessionLens — 本机任务助手'):'';
+    const controls=$('up-native-titlebar').querySelectorAll('button');
+    controls.forEach((b,i)=>b.textContent=state.frame==='Windows'?['×','−','□'][i]:'');
+    if(!native)return;
+    $('up-native-statusbar').innerHTML=state.product==='app'?`<span class="row">${icon('hard-drive')} 本机保存 · ${state.paused?'采集已暂停':'采集运行中'}</span><span class="row">${icon('upload')} ${state.collectionStage===4?'平台回执已确认':'上报过程回放中'} ${button('同步详情','data-proof="capture-receipt"','link')}</span>`:`<span class="row">${icon('database')} 本机任务库 · Codex / WorkBuddy</span><span class="row">历史问答保存在本机 ${button('采集与同步','data-go="sync"','link')}</span>`;
+    if(state.suspended){const closed=state.suspended==='closed';$('up-window-suspend').innerHTML=`<h2>${closed?'示例客户端已关闭':'示例窗口已最小化'}</h2><p>${closed?'按当前客户端行为，关闭会停止采集。':'最小化隐藏窗口，采集状态保持不变。'}</p>${button(closed?'重新打开示例客户端':'恢复示例窗口','data-action="window-restore"','primary')}`;}
+  }
+  function render(){
+    const brands={pair:['AgentPair','Agent 工作台','平台 · 全局数据'],app:['AppLens','模型上下文采集','本机 · 记录保存在设备'],session:['SessionLens','任务知识助手','本机 · Codex 与 WorkBuddy']};
+    $('up-brand').textContent=brands[state.product][0];if(state.product==='app'){const logo=document.createElement('img');logo.src='data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDI0IDEwMjQiPgogIDx0aXRsZT5BcHBMZW5zIOKAlCDlupTnlKjpgI/plZw8L3RpdGxlPgogIDxyZWN0IHdpZHRoPSIxMDI0IiBoZWlnaHQ9IjEwMjQiIHJ4PSIyMjQiIGZpbGw9IiMyNDYzZWIiLz4KICA8cGF0aCBkPSJNNjMyIDYzMkw3ODAgNzgwIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iODgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjQ3MCIgY3k9IjQ1NCIgcj0iMjI2IiBmaWxsPSJub25lIiBzdHJva2U9IiNmZmYiIHN0cm9rZS13aWR0aD0iNjgiLz4KICA8cmVjdCB4PSIzMzYiIHk9IjQzNiIgd2lkdGg9IjU2IiBoZWlnaHQ9IjExMiIgcng9IjI4IiBmaWxsPSIjYTVmM2ZjIi8+CiAgPHJlY3QgeD0iNDQ0IiB5PSIzNDgiIHdpZHRoPSI1NiIgaGVpZ2h0PSIyMDAiIHJ4PSIyOCIgZmlsbD0iI2ZmZiIvPgogIDxyZWN0IHg9IjU1MiIgeT0iMzkyIiB3aWR0aD0iNTYiIGhlaWdodD0iMTU2IiByeD0iMjgiIGZpbGw9IiNhNWYzZmMiLz4KPC9zdmc+Cg==';logo.alt='';$('up-brand').prepend(logo);}$('up-brand-description').textContent=brands[state.product][1];$('up-side-bottom').innerHTML=`<div class="row">${icon(state.product==='pair'?'globe':'laptop')} ${state.product==='pair'?'www.chuhaijian.com':'本机任务与采集记录'}</div><div style="margin-top:7px">${state.product==='pair'?'admin · 平台管理员':'已连接 AgentPair'}</div>`;
+    $('up-scope').textContent=state.product==='pair'?'admin · 全部设备':'本机';
+    $('up-nav').innerHTML=navs[state.product].map(([p,i,l])=>button(icon(i)+l,`data-go="${p}" ${state.page===p?'aria-current="page"':''}`,state.page===p?'active':'')).join('');
+    const pageName=navs[state.product].find(x=>x[0]===state.page)?.[2]||'任务';
+    $('up-breadcrumb').textContent=`${state.product==='pair'?'平台':'本机'} / ${pageName}`;
+    $('up-side-group').innerHTML=`<div class="side-label">${state.product==='pair'?'最近的任务':state.product==='session'?'最近问过':'关注的应用'}</div>${button(`<span>${state.product==='app'?'WorkBuddy':state.product==='session'?'上海天气网页用了什么工具':'采集状态查询'}<small>${state.product==='app'?'模型输入 · 已接入':state.product==='session'?'历史问答 · WorkBuddy':'已回答 · 查看平台回执'}</small></span>`,`data-action="recent"`,'task-link selected')}${button(`<span>${state.product==='app'?'Codex':state.product==='session'?'WorkBuddy 开发过哪些项目':'安全威胁查询'}<small>${state.product==='app'?'等待来源适配核验':state.product==='session'?'项目与相关任务':'待处理与待核实'}</small></span>`,`data-action="${state.product==='app'?'app-source':'ask-example'}" data-value="${state.product==='session'?'projects':'security'}"`,'task-link')}`;
+    let html='';
+    if(state.product==='pair')html=({home:pairHome,devices,data:dataPage,security,insights,cloud:secondary,packages:secondary}[state.page]||pairHome)();
+    else if(state.product==='app')html=({home:appDesktop,records:appRecords,settings}[state.page]||appDesktop)();
+    else html=({home:sessionDesktop,history,sync}[state.page]||sessionDesktop)();
+    $('up-content').innerHTML=html;
+    root.querySelectorAll('[data-product]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.product===state.product)));
+    if($('up-source'))$('up-source').value=state.source;
+    root.style.setProperty('--ap-gap',state.density==='紧凑'?'16px':'22px');
+    root.querySelectorAll('button').forEach(b=>b.classList.add('cursor-interaction'));
+    if(state.product!=='pair'){
+      $('up-side-bottom').innerHTML=state.product==='app'?`<div class="row">${icon('laptop')} 本机采集器</div><div style="margin-top:7px">WorkBuddy · ${state.paused?'已暂停':'监听开启'}</div>`:`<div class="row">${icon('database')} 本机任务库</div><div style="margin-top:7px">Codex · WorkBuddy</div>`;
+      if(state.product==='app')$('up-side-group').innerHTML=`<div class="side-label">本机操作</div>${button(icon('folder-open')+' 打开记录目录','data-proof="local-folder"','task-link')}${button(icon('upload')+' 查看同步状态','data-proof="capture-receipt"','task-link')}`;
+      else $('up-side-group').innerHTML=`<div class="side-label">最近问过</div>${button('<span>天气网页用了哪些工具<small>WorkBuddy · 本机记录</small></span>','data-action="ask-example" data-value="weather"','task-link selected')}${button('<span>WorkBuddy 做过哪些项目<small>项目与临时任务分开</small></span>','data-action="ask-example" data-value="projects"','task-link')}`;
+    }
+    nativeChrome();filterData();filterSecurity();
+    if(globalThis.lucide)lucide.createIcons({attrs:{width:16,height:16}});
+  }
+  const proofs={
+    'local-folder':{title:'本机保存位置',label:'客户端 / 本地文件',status:['保存在本机','green'],entries:[],heading:'本机记录与平台上报分开',text:'这里展示客户端自己的保存目录。上报未获确认时，记录继续留在本机。',raw:'原型只展示本机保存位置，不打开真实文件夹。'},
+    'capture-receipt':{title:'模型输入保存与回执',label:'AppLens / 选中请求',status:['平台回执已确认','green'],entries:[['来源','WorkBuddy / AppLens'],['请求','request-demo-001'],['本机','原文已保存'],['平台','采集记录已接收']],heading:'哪些阶段已经确认',text:'本机保存、发送批次与平台确认分别保留。接收回执只证明采集记录入库。',raw:'request_id: request-demo-001\n保存：原始模型输入\n回执：receipt-demo-applens-001\n正文哈希：示例，不展示虚构完整校验值'},
+    shutdown:{title:'关闭客户端',label:'桌面窗口 / 当前行为',status:['关闭会停止采集','amber'],entries:[],heading:'关闭窗口并停止运行？',text:'当前客户端关闭窗口会退出并停止采集。最小化窗口会保留运行状态。',raw:'这是窗口行为原型，不会关闭电脑上真正运行的采集器。',actions:true},
+    receipt:{title:'平台接收记录',label:'SessionLens · 上报证据',status:['接收已确认','green'],entries:[['设备','办公 MacBook Pro'],['任务','上海天气网页'],['来源','WorkBuddy / SessionLens'],['接收时间','示例 · 今天 10:42'],['回执','receipt-demo-001']],heading:'平台确认了什么',text:'确认接收这一批任务对话与执行记录。未确认的批次继续留在本机。',raw:'batch_id: batch-demo-001\nreceipt_id: receipt-demo-001\ncollector: SessionLens\nstatus: accepted'},
+    'embedded-tool':{title:'请求内的工具返回',label:'AppLens · request-demo-001 / 输入正文',status:['原文位置可定位','blue'],entries:[['任务','上海天气网页'],['采集位置','模型输入中的工具消息'],['内容作用','把测试结果送入下一轮模型请求']],heading:'这是附带在请求里的材料',text:'请求正文中包含首页访问结果和天气接口 JSON。独立的 Bash 调用与返回由 SessionLens 保留，二者分别提供证据。',raw:'模型输入 / tool 消息片段摘要\n首页：HTTP 200\n天气接口：JSON 返回\n来源位置：request-demo-001 / tool message'},
+    'codex-project':{title:'AgentPair 项目与任务',label:'Codex · 本机任务记录',status:['项目线索可定位','blue'],entries:[['项目','AgentPair'],['来源','Codex'],['相关任务','采集接入、任务问答与安全分析']],heading:'按项目查看相关执行',text:'与 WorkBuddy 的天气网页项目分开保留，不因为它们在同一台设备上就合并。',raw:'Agent：Codex\n项目：AgentPair\n任务：采集接入与问答验收'},
+    curl:{title:'curl 调用了什么',label:'工具调用与返回',status:['有原始记录','green'],entries:[['任务','上海天气网页'],['执行工具','Bash'],['命令用途','访问本机网页与天气接口']],heading:'两个网址，分别看结果',text:'首页明确记录 HTTP 200；天气接口返回 JSON，记录没有提供其状态码。',raw:'请求 1\nhttp://localhost:3000/\n结果：HTTP 200\n\n请求 2\nhttp://localhost:3000/api/weather\n结果：天气 JSON\n状态码：原记录未提供',note:'此原型显示核对后的摘要。完整命令与 JSON 正文在接入真实记录后逐字展示。'},
+    context:{title:'这次带入的上下文',label:'AppLens · 模型输入',status:['原文已保存','green'],entries:[['任务','上海天气网页'],['来源','WorkBuddy / AppLens'],['请求','request-demo-001'],['分类依据','原文角色与来源标记']],heading:'这些材料为什么出现',text:'当前需求说明要做什么；项目背景提供工作环境；历史消息维持多轮任务；工具返回提供测试结果。',raw:'当前需求：做一个上海天气网页\n项目背景：weather-web 项目与运行约定\n历史消息：需求补充与执行说明\n工具返回：首页 200 / 天气接口 JSON\n未确认来源：保留正文，等待核对',note:'平台入库与模型服务接收是两个阶段。'},
+    user:{title:'当前需求',label:'AppLens · 分类内容',status:['来源标记可定位','blue'],entries:[['来自哪里','用户消息'],['回答哪件事','上海天气网页'],['在请求里的作用','定义本次任务目标']],heading:'用户原本要什么',text:'做一个上海天气网页。此分类只展示请求中的用户需求，不把项目背景当成这次用户亲自输入。',raw:'演示需求：做一个上海天气网页'},
+    project:{title:'项目背景',label:'任务与项目关联',status:['来源可回溯','blue'],entries:[['项目','weather-web / 示例项目'],['作用','代码位置与运行约定'],['与任务关系','任务的工作目录']],heading:'帮助 Agent 理解工作环境',text:'项目背景可能在多轮请求中重复出现。它与当前用户输入分开保存，也应保留来源及修改记录。',raw:'示例：项目位置、已有文件、运行方式\n核查：是当前项目材料，还是来自其他背景'},
+    history:{title:'历史对话',label:'AppLens · 请求中的消息',status:['多轮记录','blue'],entries:[['相关需求','上海天气网页'],['用途','保留任务讨论与执行结果']],heading:'“做”也要关联到完整需求',text:'继续、好的、做等短回复，应该结合前面的任务目标、上下文与执行证据关联；新的独立需求应另外分组。',raw:'需求提出 → 补充要求 → 确认执行\n工具调用 → 返回结果 → 继续讨论\n同一会话可以含多个独立任务'},
+    unknown:{title:'未确认来源',label:'AppLens · 保留原文',status:['需要核对','amber'],entries:[['为什么未分类','原文缺少充分的来源标记'],['处理方式','保留正文与原始位置']],heading:'知道采到了，不代表知道来自哪里',text:'不能仅凭内容相似，就把一段正文判为项目记忆或文件全文。核实后才更新分类。',raw:'片段位置与原文保留\n来源：暂未确认'},
+    credential:{title:'服务器凭据的请求证据',label:'模型输入中的敏感内容',status:['请求正文可定位','red'],entries:[['设备','办公 MacBook Pro'],['应用','WorkBuddy'],['请求','request-demo-002'],['发现位置','项目背景 / 模型输入正文']],heading:'这次输入与附带材料',text:'当前用户问的是服务能不能启动。服务器凭据位于附带的项目背景中，需要追查背景来源。',raw:'用户输入：帮我检查服务能不能启动\n\n项目背景：\n服务器：192.0.2.10\n用户：root\n密码：DemoPass****',note:'以上为演示凭据与文档专用 IP，不是真实泄露证据。'},
+    task:{title:'任务的执行依据',label:'SessionLens · 上海天气网页',status:['有执行记录','green'],entries:[['用户目标','做一个上海天气网页'],['主要工具','Write、Bash'],['阶段','写代码 / 启动 / 测试 / 交付']],heading:'回答与执行分开核对',text:'Agent 的说明来自会话；实际执行通过对应工具输入与返回核实。返回缺失时标注缺失，不用一段结论替代证据。',raw:'Write → 文件写入返回\nBash → 启动日志\ncurl → 首页与接口结果\nAgent → 交付说明'},
+    linkage:{title:'为什么关联成一次任务',label:'会话与模型输入的关联依据',status:['需可复核','blue'],entries:[['会话来源','WorkBuddy / SessionLens'],['上下文来源','WorkBuddy / AppLens'],['任务目标','上海天气网页'],['项目线索','weather-web']],heading:'标识优先，语义补充',text:'先核对请求、消息或会话标识，再结合任务目标、项目和工具返回。不只因为时间靠近就合并。',raw:'同源标识 → 项目位置 → 任务目标\n工具输入/返回 → 请求内对应内容\n发生冲突时保留候选，要求确认'},
+    sandbox:{title:'执行隔离待核实项',label:'SessionLens · 运行记录',status:['待核实','amber'],entries:[['已看到','Bash 启动 Node 服务'],['缺少','隔离配置与系统侧执行证据']],heading:'下一步需要什么证据',text:'检查执行器配置、启动命令和进程侧信息。仅凭 Node 服务启动，不能判定是否运行在沙箱内。',raw:'会话记录可证实：工具启动了本地服务\n尚不能证实：隔离边界、权限限制'},
+    retry:{title:'上报为什么在重试',label:'设备 / SessionLens',status:['数据仍在本机','amber'],entries:[['设备','财务电脑'],['本机状态','记录已保存'],['平台确认','尚未取得'],['最近尝试','示例 · 10:38']],heading:'本地采集与平台接收分开看',text:'检查连接和设备绑定状态。平台没有回执时保留待发送批次，不能显示为同步完成。',raw:'本机保存：已完成\n发送队列：等待重试\n平台确认：无'},
+    connection:{title:'设备绑定信息',label:'AppLens / 连接设置',status:['已绑定','green'],entries:[['平台','www.chuhaijian.com'],['设备','办公 MacBook Pro'],['所属账号','示例账号']],heading:'重启后继续使用设备凭据',text:'设备绑定负责识别数据来源与归属。查看连接状态无需展示密钥。',raw:'连接配置：已保存\n设备凭据：由客户端安全保存'},
+    remediation:{title:'处置记录',label:'敏感凭据进入模型输入',status:[state.issueStatus,'amber'],entries:[['负责人','待分派或示例负责人'],['处置目标','更换密码、移除背景凭据、复验']],heading:'修复要有结果和验证',text:'记录谁负责、做了哪些处理，以及下一次请求是否还包含凭据。',raw:'分派 → 处理 → 复验\n只有复验有证据，才能关闭发现。'},
+    liyang:{title:'溧阳天气查询',label:'独立任务 · WorkBuddy',status:['与上海网页分开','blue'],entries:[['用户需求','查一下溧阳最近的天气'],['执行工具','WebSearch'],['任务类型','临时查询，无需项目归属']],heading:'同一会话，不等于同一任务',text:'它的目标是查询天气资料；上海任务的目标是开发网页。检索时应返回各自的上下文。',raw:'溧阳：WebSearch 查询天气\n上海：Write / Bash 开发与测试网页'}
+  };
+  function openProof(key){
+    const p={...(proofs[key]||proofs.task)};
+    if(key==='remediation'){p.status=[state.issueStatus,'amber'];p.entries=[['负责人',state.issueStatus==='待分派'?'尚未分派':'张明'],['处置目标','更换密码、移除背景凭据、复验']];}
+    if(key==='local-folder')p.entries=[['客户端',state.product==='app'?'AppLens':'SessionLens'],['位置',state.frame==='Windows'?(state.product==='app'?'%LOCALAPPDATA%\\AgentPair':'%LOCALAPPDATA%\\SessionLens'):(state.product==='app'?'~/Library/Application Support/AppLens/telemetry':'~/Library/Application Support/SessionLens')]];
+    if(key==='capture-receipt'){const id=state.request==='credential'?'request-demo-002':'request-demo-001';p.entries=[['来源','WorkBuddy / AppLens'],['请求',id],['本机','原文已保存'],['平台',state.collectionStage===4?'采集记录已接收':'回放中的当前阶段未获确认']];p.status=state.collectionStage===4?['平台回执已确认','green']:['等待平台确认','blue'];p.raw='request_id: '+id+'\n保存：原始模型输入\n回执：按请求分别记录';}
+    if(key==='shutdown')p.title='关闭 '+(state.product==='app'?'AppLens':'SessionLens');
+    $('up-drawer').innerHTML=`<div class="drawer-title"><div><span class="small muted">${p.label}</span><h2 id="up-drawer-heading">${p.title}</h2></div>${button(icon('x'),'data-action="close-proof" aria-label="收起详情"','quiet')}</div>${chip(...p.status)}${facts(p.entries)}<h3>${p.heading}</h3><p>${p.text}</p><details class="details" ${p.actions?'':'open'}><summary>查看记录摘要</summary><pre class="raw">${esc(p.raw)}</pre></details>${p.note?`<div class="note">${p.note}</div>`:''}${p.actions?`<div class="local-actions">${button('取消','data-action="close-proof"')}${button('关闭示例客户端','data-action="window-confirm-close"','primary')}</div>`:''}`;
+    $('up-drawer').hidden=false;nativeChrome();if(globalThis.lucide)lucide.createIcons({attrs:{width:16,height:16}});$('up-drawer').querySelector('button').focus();save();
+  }
+  function closeProof(){$('up-drawer').hidden=true;nativeChrome();}
+  function stop(){if(timer)clearInterval(timer);timer=null;}
+  function go(page){stop();closeProof();state.page=page;state.notice='';if(page!=='security')state.detail=false;render();save();}
+  const questions={upload:'SessionLens 最近一次上报是什么时候？',security:'最近发现哪些安全威胁，先处理什么？',devices:'哪台设备上报异常？',weather:'上海天气网页用了哪些工具？',projects:'WorkBuddy 开发过哪些项目？',verification:'上海天气网页当时怎么验证结果？'};
+  function askExample(value){stop();closeProof();state.page='home';state.answer=value;state.question=questions[value]||questions.weather;state.notice='';state.executionStage=value==='verification'?2:0;render();save();}
+  function submit(question){
+    const q=question.trim();if(!q)return;
+    const normalize=s=>s.replace(/[\s？?。.!！]/g,'').toLowerCase();
+    const allowed=state.product==='pair'?['upload','security','devices']:['projects','weather','verification'];
+    let a=allowed.find(key=>normalize(questions[key])===normalize(q))||null;
+    if(state.product==='session'&&['weather','verification'].includes(state.answer)&&normalize(q)==='curl访问了哪些网址')a='verification';
+    if(a){askExample(a);state.question=q;render();save();}
+    else{state.question=q;state.answer='unavailable';state.notice='这是界面原型，还未连接检索。请选择示例问题预览回答与证据交互；你的输入会保留。';render();save();}
+  }
+  function play(type){
+    if(timer){stop();render();return;}
+    const isCapture=type==='capture',key=isCapture?'collectionStage':'executionStage',max=isCapture?4:3;
+    state[key]=0;
+    timer=setInterval(()=>{state[key]++;if(state[key]>=max)stop();render();save();},1800);
+    render();save();
+  }
+  function save(){if(!window.openai?.setWidgetState)return;window.openai.setWidgetState({modelContent:{design:'AppLens、SessionLens 独立桌面应用 / AgentPair Web 平台',product:state.product,page:state.page,density:state.density},privateContent:{desktopReview:2,product:state.product,page:state.page,answer:state.answer,question:Object.values(questions).includes(state.question)?state.question:'',collectionStage:state.collectionStage,executionStage:state.executionStage,paused:state.paused,pauseStates:{...state.pauseStates},detail:state.detail,issueStatus:state.issueStatus,securityFilter:state.securityFilter,density:state.density,frame:state.frame,request:state.request,expanded:state.expanded}}).catch(()=>{});}
+  root.addEventListener('click',e=>{
+    const b=e.target.closest('button');if(!b||!root.contains(b))return;
+    if(b.dataset.product){stop();closeProof();state.product=b.dataset.product;state.page=b.dataset.previewPage||'home';state.question=state.product==='session'?questions.weather:questions.upload;state.answer=state.product==='session'?'weather':'upload';state.notice='';state.suspended='';state.expanded=false;state.paused=state.pauseStates[state.product]||false;render();save();return;}
+    if(b.dataset.go){go(b.dataset.go);return;}
+    if(b.dataset.proof){openProof(b.dataset.proof);return;}
+    const action=b.dataset.action,val=b.dataset.value;
+    if(action==='close-proof'){closeProof();return;}
+    if(action==='ask-example'){askExample(val);return;}
+    if(action==='recent'){state.product==='session'?askExample('weather'):go('home');return;}
+    if(action==='app-source'){openProof('unknown');return;}
+    if(action==='play-task'){play('task');return;}
+    if(action==='play-capture'){play('capture');return;}
+    if(action==='task-step'||action==='capture-step'){stop();state[action==='task-step'?'executionStage':'collectionStage']=Number(val);render();save();return;}
+    if(action==='next-task'||action==='next-capture'){stop();const key=action==='next-task'?'executionStage':'collectionStage',max=action==='next-task'?4:5;state[key]=(state[key]+1)%max;render();save();return;}
+    if(action==='pause'){state.paused=!state.paused;state.pauseStates[state.product]=state.paused;render();save();return;}
+    if(action==='select-request'){closeProof();state.request=val==='credential'?'credential':'weather';render();save();return;}
+    if(action==='new-chat'){stop();closeProof();state.answer='empty';state.question='';state.notice='';state.page='home';render();$('up-question').focus();save();return;}
+    if(action==='window-close'){openProof('shutdown');return;}
+    if(action==='window-confirm-close'){stop();closeProof();state.paused=true;state.pauseStates[state.product]=true;state.suspended='closed';render();save();return;}
+    if(action==='window-minimize'){stop();closeProof();state.suspended='minimized';render();return;}
+    if(action==='window-restore'){if(state.suspended==='closed'){state.paused=false;state.pauseStates[state.product]=false;}state.suspended='';render();save();return;}
+    if(action==='window-expand'){state.expanded=!state.expanded;render();save();return;}
+    if(action==='threat-detail'){state.detail=true;render();save();return;}
+    if(action==='threat-back'){state.detail=false;render();save();return;}
+    if(action==='assign'){state.issueStatus='处理中';render();state.notice='原型演示：已分派给张明，未修改服务器记录。';openProof('remediation');save();return;}
+    if(action==='connect'){openProof('connection');return;}if(action==='clear-data-query'){$('up-data-search').value='';filterData();return;}
+    if(action==='status-filter'){state.securityFilter=val;render();save();return;}
+  });
+  root.addEventListener('submit',e=>{if(e.target.id!=='up-question-form')return;e.preventDefault();submit($('up-question').value);});
+  function filterDevices(){if(!$('up-device-search'))return;const q=$('up-device-search').value.toLowerCase().trim(),scope=$('up-device-scope').value;let n=0;root.querySelectorAll('[data-asset]').forEach(x=>{x.hidden=!x.dataset.asset.toLowerCase().includes(q)||(scope==='mine'&&x.dataset.owner!=='mine');if(!x.hidden)n++;});$('up-no-devices').hidden=n>0;}
+  function filterHistory(){if(!$('up-history-search'))return;const q=$('up-history-search').value.toLowerCase().trim(),agent=$('up-history-source').value;root.querySelectorAll('[data-history-task]').forEach(x=>{x.hidden=!x.textContent.toLowerCase().includes(q)||(agent!=='all'&&x.dataset.agent!==agent);});}
+  function filterData(){if(!$('up-data-search'))return;const q=$('up-data-search').value.toLowerCase().trim();const match=($('up-data-task').textContent+' 上海天气网页 weather-web').toLowerCase().includes(q);$('up-data-task').hidden=!match;$('up-data-records').hidden=!match;$('up-no-data').hidden=match;root.querySelectorAll('[data-record-source]').forEach(x=>{x.hidden=(state.source!=='all'&&x.dataset.recordSource!==state.source)||!(x.textContent+' 上海天气网页 weather-web').toLowerCase().includes(q);});}
+  function filterSecurity(){root.querySelectorAll('[data-finding-status]').forEach(x=>{x.hidden=state.securityFilter!=='all'&&x.dataset.findingStatus!==state.securityFilter;});}
+  root.addEventListener('input',e=>{if(e.target.id==='up-question')state.question=e.target.value;if(e.target.id==='up-device-search')filterDevices();if(e.target.id==='up-history-search')filterHistory();if(e.target.id==='up-data-search')filterData();});
+  root.addEventListener('change',e=>{if(e.target.id==='up-source'){state.source=e.target.value;filterData();save();}if(e.target.id==='up-device-scope')filterDevices();if(e.target.id==='up-history-source')filterHistory();});
+  root.addEventListener('keydown',e=>{if(e.key==='Escape')closeProof();if(e.target.id==='up-question'&&e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit(e.target.value);}});
+  function restore(saved){if(!saved||saved.desktopReview!==2||!['pair','app','session'].includes(saved.product))return;stop();Object.assign(state,saved);state.pauseStates={app:false,session:false,...saved.pauseStates};state.frame=saved.frame==='Windows'?'Windows':'macOS';state.suspended='';state.collectionStage=Math.max(0,Math.min(4,Number(saved.collectionStage)||0));state.executionStage=Math.max(0,Math.min(3,Number(saved.executionStage)||0));if(!navs[state.product].some(x=>x[0]===state.page))state.page='home';closeProof();render();}
+  render();restore(window.openai?.widgetState?.privateContent);
+  window.addEventListener('openai:set_globals',e=>restore(e.detail?.globals?.widgetState?.privateContent));
+  if(globalThis.Tweak){const tweak=new Tweak({container:root,onChange:render});tweak.addSelect(state,'density',{label:'信息密度',options:['舒适','紧凑'],reference:'ap.density'});tweak.addSelect(state,'frame',{label:'终端窗口外壳预览',options:['macOS','Windows'],reference:'ap.nativeFrame'});}
+})();
+</script>
+</div>

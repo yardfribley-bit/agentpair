@@ -1,5 +1,5 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>远程软件安装 · AgentPair</title><link rel="stylesheet" href="/devices.css"></head><body>
-<main><a href="/packages">← 软件包目录</a> · <a href="/">返回平台 / 登录</a><h1>远程软件安装</h1><p>管理员下发安装任务。下载、校验、安装、版本验证分别回传；应用启动与账号登录不冒充已完成。</p>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>远程软件安装 · AgentPair</title><link rel="stylesheet" href="/devices.css"><link rel="stylesheet" href="/product_ui.css?v=20261007" data-product-ui></head><body class="agentpair-web">
+<aside><a class="brand" href="/">◢ <span>AgentPair<small>Agent 工作台</small></span></a><nav class="primary-nav" aria-label="主导航"><a href="/"><span>任务中心</span></a><a href="/devices"><span>我的设备</span></a><a href="/model-data"><span>采集数据</span></a><a href="/model-security"><span>交互安全审计</span></a><a href="/session-insights/"><span>会话洞察</span></a><a href="/cloud-machines"><span>云机器</span></a><a class="active" aria-current="page" href="/packages"><span>软件包</span></a></nav></aside><main><header><span>软件包 / 远程安装</span><a href="/packages">软件包目录</a></header><a href="/packages">← 软件包目录</a> · <a href="/">返回平台 / 登录</a><h1>远程软件安装</h1><p>管理员下发安装任务。下载、校验、安装、版本验证分别回传；应用启动与账号登录不冒充已完成。</p>
 <p id="notice" role="status"></p><form id="install"><label>执行设备 <select id="device" required></select></label><label>软件 <select id="software" required></select></label><button>下发安装任务</button></form>
 <section><h2>安装进度与日志</h2><div id="status">尚未下发任务</div><pre id="log"></pre></section>
 <details><summary>登记 Windows 安装方案（管理员）</summary><p>支持 Inno Setup、MSI 或便携 ZIP。必须固定版本和安装包 SHA256；便携包还需填写相对 EXE 入口，完整解压后运行应用自检，不接收任意命令。</p><form id="register">
@@ -7,4 +7,4 @@
 <label>安装器 <select name="installer" id="installer-kind"><option value="inno">Inno Setup</option><option value="msi">MSI</option><option value="portable_zip">便携 ZIP（SessionLens）</option></select></label>
 <label>官方 HTTPS 安装包地址 <input name="url" type="url" required></label><label>SHA256 <input name="sha256" pattern="[0-9a-f]{64}" required></label>
 <label id="display-name-field">安装记录精确 DisplayName <input name="displayName" required></label><label id="portable-entry-field" hidden>相对 EXE 入口 <input name="entryPoint" placeholder="SessionLens/SessionLens.exe"></label><label>精确版本 <input name="version" required></label><button>保存方案</button></form></details>
-</main><script src="/software.js"></script></body></html>
+</main><script src="/software.js"></script><script src="/product_ui.js?v=20261007" defer></script></body></html>

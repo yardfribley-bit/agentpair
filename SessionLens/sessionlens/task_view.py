@@ -23,12 +23,12 @@ class Brain(QWidget):
     def __init__(self):super().__init__();self.setFixedSize(78,78);self.phase=0;self.active=False
     def paintEvent(self,event):
         p=QPainter(self);p.setRenderHint(QPainter.Antialiasing);p.setPen(QPen(QColor('#c5d8eb'),1));p.setBrush(QColor('#eaf3fb'));p.drawEllipse(4,4,70,70)
-        p.setPen(QPen(QColor('#1769ef'),2));path=QPainterPath();path.moveTo(39,57);path.lineTo(39,23)
+        p.setPen(QPen(QColor('#2463EB'),2));path=QPainterPath();path.moveTo(39,57);path.lineTo(39,23)
         for x,y in [(29,28),(23,36),(25,47),(32,54),(49,28),(55,36),(53,47),(46,54)]:
             p.drawEllipse(x-3,y-3,6,6);path.moveTo(39,39);path.lineTo(x,y)
         p.drawPath(path)
         if self.active:
-            p.setPen(QPen(QColor('#1769ef'),3));p.drawArc(1,1,76,76,self.phase*16,75*16)
+            p.setPen(QPen(QColor('#2463EB'),3));p.drawArc(1,1,76,76,self.phase*16,75*16)
 
 class TaskView(QWidget):
     evidenceRequested=Signal(str)
@@ -37,16 +37,16 @@ class TaskView(QWidget):
     contentChanged=Signal()
     def __init__(self,parent=None):
         super().__init__(parent);self.data={};self.index=0;self.position=0;self.key='overview'
-        self.setStyleSheet('QWidget{background:transparent;} QFrame#player{background:white;border:1px solid #E6E8EC;border-radius:12px;} QFrame#node{background:white;border:1px solid #dbe3ec;border-radius:7px;} QPushButton{background:white;color:#33516f;border:1px solid #dbe3ec;border-radius:6px;padding:7px 12px;} QPushButton:checked{background:#edf4fb;color:#1769ef;border-color:#1769ef;} QComboBox{background:white;border:1px solid #E6E8EC;border-radius:6px;padding:5px;color:#203044;}')
+        self.setStyleSheet('QWidget{background:transparent;} QFrame#player{background:white;border:1px solid #E6E8EC;border-radius:12px;} QFrame#node{background:white;border:1px solid #dbe3ec;border-radius:7px;} QPushButton{background:white;color:#33516f;border:1px solid #dbe3ec;border-radius:6px;padding:7px 12px;} QPushButton:checked{background:#edf4fb;color:#2463EB;border-color:#2463EB;} QComboBox{background:white;border:1px solid #E6E8EC;border-radius:6px;padding:5px;color:#172334;}')
         v=QVBoxLayout(self);v.setAlignment(Qt.AlignTop);v.setContentsMargins(0,0,0,0);v.setSpacing(14)
         self.heading=label('', 'font-size:15px;font-weight:600;');v.addWidget(self.heading)
-        self.original_task=label('');self.original_task.hide();self.meta=label('','font-size:12px;color:#61748c;');meta_row=QHBoxLayout();meta_row.addWidget(self.meta,1);self.delivered=label('');self.trust=label('');meta_row.addWidget(self.delivered);meta_row.addWidget(self.trust);v.addLayout(meta_row)
-        project_row=QHBoxLayout();self.project_label=label('未关联项目','font-size:12px;color:#61748c;');project_row.addWidget(self.project_label,1)
+        self.original_task=label('');self.original_task.hide();self.meta=label('','font-size:12px;color:#637084;');meta_row=QHBoxLayout();meta_row.addWidget(self.meta,1);self.delivered=label('');self.trust=label('');meta_row.addWidget(self.delivered);meta_row.addWidget(self.trust);v.addLayout(meta_row)
+        project_row=QHBoxLayout();self.project_label=label('未关联项目','font-size:12px;color:#637084;');project_row.addWidget(self.project_label,1)
         self.project_button=QPushButton('修正项目关联');self.project_button.clicked.connect(lambda:self.projectRequested.emit());project_row.addWidget(self.project_button);v.addLayout(project_row)
         self.requirement_toolbar=QWidget();requirement_row=QHBoxLayout(self.requirement_toolbar);requirement_row.setContentsMargins(0,0,0,0)
         self.requirement_button=QPushButton('查看需求与确认过程');self.requirement_button.clicked.connect(self.requirement_original);requirement_row.addWidget(self.requirement_button);self.requirement_button.hide()
         self.association_button=QPushButton('修正任务关联');self.association_button.clicked.connect(lambda:self.associationRequested.emit());requirement_row.addWidget(self.association_button);self.association_button.hide();requirement_row.addStretch();v.addWidget(self.requirement_toolbar);self.requirement_toolbar.hide()
-        self.summary=label('','font-size:17px;color:#203044;');v.addWidget(self.summary)
+        self.summary=label('','font-size:17px;color:#172334;');v.addWidget(self.summary)
         tabs=QHBoxLayout();self.tabs={}
         for title,key in [('怎么做的 / 做成了吗','overview'),('当时怎么想','reasoning'),('调用了什么','calls'),('用到什么上下文','context'),('交付与验证','delivery')]:
             b=QPushButton(title);b.setCheckable(True);b.clicked.connect(lambda checked=False,k=key:self.select(k));self.tabs[key]=b;tabs.addWidget(b)
@@ -55,15 +55,15 @@ class TaskView(QWidget):
         row=QHBoxLayout();self.paneltitle=label('任务回放','font-size:15px;font-weight:600;');row.addWidget(self.paneltitle,1)
         self.play=QPushButton('播放回放');self.play.clicked.connect(self.toggle);row.addWidget(self.play);next_button=QPushButton('下一段');next_button.clicked.connect(self.next);self.next_button=next_button;row.addWidget(next_button)
         self.speed=QComboBox();self.speed.addItems(['1.0×','2.0×']);row.addWidget(self.speed);pv.addLayout(row);pv.addLayout(tabs)
-        thinking=QHBoxLayout();thinking.setSpacing(18);self.brain=Brain();thinking.addWidget(self.brain,0,Qt.AlignTop);tokens=QVBoxLayout();self.stage=label('','color:#61748c;font-size:12px;');tokens.addWidget(self.stage);self.reason=label('','border-left:2px solid #1769ef;padding:10px 14px;font-size:15px;');self.reason.setMinimumHeight(70);tokens.addWidget(self.reason);thinking.addLayout(tokens,1);pv.addLayout(thinking)
+        thinking=QHBoxLayout();thinking.setSpacing(18);self.brain=Brain();thinking.addWidget(self.brain,0,Qt.AlignTop);tokens=QVBoxLayout();self.stage=label('','color:#637084;font-size:12px;');tokens.addWidget(self.stage);self.reason=label('','border-left:2px solid #2463EB;padding:10px 14px;font-size:15px;');self.reason.setMinimumHeight(70);tokens.addWidget(self.reason);thinking.addLayout(tokens,1);pv.addLayout(thinking)
         flow=QHBoxLayout();self.nodes=[];self.arrows=[];self.node_labels=[]
         for i,title in enumerate(('动作','返回','后续调整')):
             if i:
                 arrow=label('→','color:#8294a8;font-size:19px;');self.arrows.append(arrow);flow.addWidget(arrow,0)
-            frame=QFrame();frame.setObjectName('node');nv=QVBoxLayout(frame);nv.setContentsMargins(12,12,12,12);node_label=label(title,'color:#61748c;font-size:12px;');self.node_labels.append(node_label);nv.addWidget(node_label);text=label('');nv.addWidget(text);flow.addWidget(frame,1);self.nodes.append((frame,text))
+            frame=QFrame();frame.setObjectName('node');nv=QVBoxLayout(frame);nv.setContentsMargins(12,12,12,12);node_label=label(title,'color:#637084;font-size:12px;');self.node_labels.append(node_label);nv.addWidget(node_label);text=label('');nv.addWidget(text);flow.addWidget(frame,1);self.nodes.append((frame,text))
         pv.addLayout(flow);original=QPushButton('查看这一段 reasoning 原文');original.clicked.connect(self.original);self.original_button=original;pv.addWidget(original,0,Qt.AlignLeft);v.addWidget(self.player)
         self.details=QWidget();self.detail_layout=QVBoxLayout(self.details);self.detail_layout.setContentsMargins(0,0,0,0);self.detail_layout.setSpacing(14);pv.addWidget(self.details)
-        self.note=label('','font-size:12px;color:#61748c;');v.addWidget(self.note)
+        self.note=label('','font-size:12px;color:#637084;');v.addWidget(self.note)
         self.timer=QTimer(self);self.timer.setInterval(65);self.timer.timeout.connect(self.tick)
     def load(self,result):
         self.stop();self.result=result;self.data=result['presentation'];self.index=0;self.position=0
@@ -137,8 +137,8 @@ class TaskView(QWidget):
             if i:
                 line=label('────','color:#b7cbed;');line.setContentsMargins(0,14,0,0);line.setFixedHeight(40);self.timeline_layout.addWidget(line,1,Qt.AlignTop)
             cell=QWidget();layout=QVBoxLayout(cell);layout.setContentsMargins(0,0,0,0);layout.setSpacing(8);center=QHBoxLayout();center.addStretch()
-            b=QPushButton(str(i+1));b.setCheckable(True);b.setFixedSize(34,34);b.setStyleSheet('QPushButton{border:1px solid #1769ef;border-radius:17px;background:white;color:#1769ef;padding:0;font-size:15px;} QPushButton:checked{background:#1769ef;color:white;}');b.clicked.connect(lambda checked=False,n=i:self.choose_step(n));b.setToolTip('查看这一步；提示词步骤由实际输入参数分拆展示' if step['phase']=='prepare' else '查看这次工具调用及返回');center.addWidget(b);center.addStretch();layout.addLayout(center)
-            title=QPushButton(step['title']);title.setStyleSheet('QPushButton{border:0;background:transparent;color:#203044;padding:0;}');title.clicked.connect(lambda checked=False,n=i:self.choose_step(n));layout.addWidget(title);self.timeline_layout.addWidget(cell,2);self.step_buttons.append(b);self.step_titles.append(title)
+            b=QPushButton(str(i+1));b.setCheckable(True);b.setFixedSize(34,34);b.setStyleSheet('QPushButton{border:1px solid #2463EB;border-radius:17px;background:white;color:#2463EB;padding:0;font-size:15px;} QPushButton:checked{background:#2463EB;color:white;}');b.clicked.connect(lambda checked=False,n=i:self.choose_step(n));b.setToolTip('查看这一步；提示词步骤由实际输入参数分拆展示' if step['phase']=='prepare' else '查看这次工具调用及返回');center.addWidget(b);center.addStretch();layout.addLayout(center)
+            title=QPushButton(step['title']);title.setStyleSheet('QPushButton{border:0;background:transparent;color:#172334;padding:0;}');title.clicked.connect(lambda checked=False,n=i:self.choose_step(n));layout.addWidget(title);self.timeline_layout.addWidget(cell,2);self.step_buttons.append(b);self.step_titles.append(title)
     def set_status(self):
         delivered=False;failed=False
         for c in self.data['calls']:
@@ -156,7 +156,7 @@ class TaskView(QWidget):
         if not self.steps:self.stage.setText('没有记录工具步骤');self.reason.setText('');self.play.setEnabled(False);return
         step=self.steps[self.selected_step];call=self.data['calls'][step['call']];note=self.call_note(call)
         for i,b in enumerate(self.step_buttons):
-            b.setChecked(i==self.selected_step);self.step_titles[i].setStyleSheet('QPushButton{border:0;background:transparent;padding:0;color:'+('#1769ef' if i==self.selected_step else '#203044')+';}')
+            b.setChecked(i==self.selected_step);self.step_titles[i].setStyleSheet('QPushButton{border:0;background:transparent;padding:0;color:'+('#2463EB' if i==self.selected_step else '#172334')+';}')
         frame=self.data['frames'][step['frame']] if step['frame'] is not None else None
         text=frame['reasoning']['text'] if frame else ''
         sentences=[x.strip() for x in re.split(r'[。\n]',text.strip()) if x.strip()]
@@ -177,7 +177,7 @@ class TaskView(QWidget):
         for w,title in zip(self.node_labels,('动作','输入规格','接下来') if step['phase']=='prepare' else ('动作','返回','后续调整')):w.setText(title)
         for (_,w),text in zip(self.nodes,values):w.setText(text)
     def field(self,layout,title,value):
-        row=QHBoxLayout();name=label(title,'color:#61748c;font-size:13px;');name.setFixedWidth(110);row.addWidget(name,0,Qt.AlignTop);row.addWidget(label(value),1);layout.addLayout(row)
+        row=QHBoxLayout();name=label(title,'color:#637084;font-size:13px;');name.setFixedWidth(110);row.addWidget(name,0,Qt.AlignTop);row.addWidget(label(value),1);layout.addLayout(row)
     def card(self,title,description=''):
         frame=QFrame();frame.setObjectName('callCard');frame.setStyleSheet('QFrame#callCard{border:0;border-bottom:1px solid #dbe3ec;}');layout=QVBoxLayout(frame);layout.setContentsMargins(0,12,0,14);layout.setSpacing(9);layout.addWidget(label(title,'font-size:15px;font-weight:600;'))
         if description:layout.addWidget(label(short(description,110)))
@@ -241,6 +241,8 @@ class TaskView(QWidget):
         if self.steps:self.choose_step((self.selected_step+1)%len(self.steps))
     def plain_text(self):return '\n'.join(w.text() for w in self.findChildren(QLabel) if w.isVisibleTo(self))
     def show_raw(self,title,text):
+        if getattr(self,'raw_handler',None):
+            self.stop();self.raw_handler(title,text);return
         dialog=QDialog(self);dialog.setWindowTitle(title);dialog.resize(850,620);v=QVBoxLayout(dialog);edit=QPlainTextEdit();edit.setReadOnly(True);edit.setPlainText(text);v.addWidget(edit);dialog.exec()
     def original(self):
         if self.steps and self.steps[self.selected_step]['frame'] is not None:self.show_raw('这一段思路原文',self.data['frames'][self.steps[self.selected_step]['frame']]['reasoning']['text'])

@@ -15,7 +15,8 @@ from sessionlens.desktop import Runtime,defaults,state_root,LABELS
 from sessionlens.i18n import language,t,localize_widgets
 from sessionlens.database import connection
 
-STYLE='''QWidget {font-family: Arial; font-size:14px; color:#233247; background:#F7F8FA;} QMainWindow {background:#F7F8FA;} QLabel {background:transparent;} QLabel#title {font-size:28px;font-weight:700;} QLabel#sub {color:#6a7a91;} QGroupBox {background:white;border:1px solid #E6E8EC;border-radius:10px;margin-top:12px;padding:18px;} QGroupBox::title {subcontrol-origin:margin;left:16px;padding:0 5px;font-weight:600;} QPushButton {background:#1769ef;color:white;border:0;border-radius:6px;padding:10px 16px;} QPushButton:checked {background:#e9f0fb;color:#275eb2;border:1px solid #275eb2;} QPushButton:disabled {background:#9aaac3;} QTextBrowser,QListWidget,QLineEdit,QPlainTextEdit,QTableWidget {background:white;border:1px solid #E6E8EC;border-radius:5px;padding:5px;} QListWidget::item:selected {background:#e9f0fb;color:#202d3d;} QTextBrowser {padding:14px;} QHeaderView::section {background:#edf2fa;padding:9px;border:0;font-weight:600;} QProgressBar {border:0;background:#e4eaf5;height:8px;border-radius:4px;text-align:center;} QProgressBar::chunk {background:#1769ef;border-radius:4px;}'''
+from sessionlens.theme import STYLE
+
 
 def display_time(value):
     try:

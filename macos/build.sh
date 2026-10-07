@@ -10,6 +10,8 @@ cp workbuddy_hook.py install_workbuddy_hooks.py build/AppLens.app/Contents/Resou
 cp workbuddy_context.py build/AppLens.app/Contents/Resources/
 cp workbuddy_network_context.py build/AppLens.app/Contents/Resources/
 cp collector.html build/AppLens.app/Contents/Resources/
+cp ../assets/applens/applens.svg build/AppLens.app/Contents/Resources/
+cp ../client-ui/context.js build/AppLens.app/Contents/Resources/
 cp ../client-ui/capture.html build/AppLens.app/Contents/Resources/
 clang -fobjc-arc -framework Cocoa -framework WebKit -framework Security -o build/AppLens.app/Contents/MacOS/AppLens AppLens.m
 cp Info.plist build/AppLens.app/Contents/Info.plist

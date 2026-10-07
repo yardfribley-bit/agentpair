@@ -1,0 +1,46 @@
+name: AppLens desktop macOS
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'macos/**'
+      - 'client-ui/**'
+      - 'assets/applens/**'
+      - '.github/workflows/applens-desktop-macos.yml'
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native application and verify local bridge
+        run: sh macos/build.sh
+      - name: Verify native desktop rendering and selected-request evidence
+        run: macos/build/AppLens.app/Contents/MacOS/AppLens --ui-self-test macos/build/AppLens-desktop-acceptance.png
+      - name: Check capture display JavaScript
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify collection evidence, state and receipt rendering
+        run: |
+          npm install --prefix "$RUNNER_TEMP/applens-ui-tests" playwright linkedom
+          LINKEDOM_MODULE="$RUNNER_TEMP/applens-ui-tests/node_modules/linkedom" node client-ui/test-desktop.cjs
+          "$RUNNER_TEMP/applens-ui-tests/node_modules/.bin/playwright" install chromium
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/applens-ui-tests/node_modules/playwright" node client-ui/test-capture.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AppLens-macOS-${{ runner.arch }}
+          path: macos/build/AppLens-macOS.zip
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AppLens-desktop-acceptance-${{ runner.arch }}
+          path: macos/build/AppLens-desktop-acceptance.png
+          if-no-files-found: error

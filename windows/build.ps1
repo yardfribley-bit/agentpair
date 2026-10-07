@@ -38,6 +38,8 @@ $p=Start-Process (Join-Path $install 'AgentPairWindows.exe') -ArgumentList '--se
 if($p.ExitCode -ne 0) {throw 'Installed binary self-test failed'}
 $captureTest=Start-Process (Join-Path $install 'AgentPairWindows.exe') -ArgumentList '--capture-ui-self-test' -Wait -PassThru
 if($captureTest.ExitCode -ne 0){throw 'Native capture content/receipt UI acceptance failed'}
+$desktopTest=Start-Process (Join-Path $install 'AgentPairWindows.exe') -ArgumentList '--desktop-ui-self-test' -Wait -PassThru
+if($desktopTest.ExitCode -ne 0){throw 'Native AppLens desktop request/detail/receipt UI acceptance failed'}
 $p=Start-Process (Join-Path $install 'AgentPairWindows.exe') -PassThru
 Start-Sleep -Seconds 3
 if($p.HasExited) {throw 'Installed GUI exited unexpectedly'}

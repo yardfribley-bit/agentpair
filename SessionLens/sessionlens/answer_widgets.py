@@ -7,10 +7,10 @@ from PySide6.QtWidgets import (
 )
 from .i18n import t
 
-INK = '#202834'
-SOFT = '#626d7d'
-LINE = '#e6e8ec'
-BLUE = '#2563eb'
+INK = '#172334'
+SOFT = '#637084'
+LINE = '#E6E8EC'
+BLUE = '#2463EB'
 
 
 def short(value, limit=180):
@@ -184,7 +184,7 @@ class RelationFlow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName('relationFlow')
-        self.setMinimumHeight(164)
+        self.setMinimumHeight(136)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.names = {'agent': 'Agent 来源未知', 'model': '模型身份未知', 'tool': '工具未记录'}
         self.edges = []
@@ -231,7 +231,7 @@ class RelationFlow(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor('#f1f4f8'))
+        painter.setBrush(QColor('#FFFFFF'))
         painter.drawRoundedRect(self.rect(), 8, 8)
         gap, margin = 12, 16
         width = max(20, (self.width() - 2 * margin - 2 * gap) / 3)

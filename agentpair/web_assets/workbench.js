@@ -38,6 +38,6 @@ document.querySelector('.brief-guide').append(demo);
 methodOptions.pair[1]='Navigator 规划与复核，独立 Driver 执行。优先复用租约；浏览器与原生工具运行在云机，不使用 Docker。参考 ¥0.15/小时，模型费用另计。';methodSelect.onchange();
 executionSelect.replaceChildren();for(const [value,label] of [['none','讨论与分析 · 不运行工具'],['browser','网页助手 · 打开 / 读取 / 点击（实验性）'],['native','原生开发 · 文件 / 终端 / 浏览器（实验性）']]){const option=el('option',label);option.value=value;executionSelect.append(option);}
 executionSelect.onchange=()=>{if(executionSelect.value!=='none'){methodSelect.value='pair';methodSelect.onchange();}};
-document.querySelector('.brand small').textContent='YOUR AGENT WORKSPACE';
-document.querySelector('.crumb').textContent='工作台 / 任务与成果';
+document.querySelector('.brand small').textContent='Agent 工作台';
+document.querySelector('.crumb').textContent='平台 / 任务中心';
 document.querySelector('.delivery-note p').textContent='结果、浏览器证据、执行记录和限额内的文本文件保存在任务中，可直接下载。最多保存 20 个文本文件、合计 250KB；大型文件与二进制尚不自动回传。不会自动推送 GitHub。';

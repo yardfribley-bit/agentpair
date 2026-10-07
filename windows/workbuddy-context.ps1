@@ -93,7 +93,15 @@ function Sync-WorkBuddyContext($identity,$folder,$WorkBuddyRoot=(Join-Path $env:
     foreach($network in @(Get-WorkBuddyNetworkContext $folder $since)){$calls.Add($network)}
     $calls=@($calls|Sort-Object timestamp -Descending|Select-Object -First 100)
     $errorMessage='';$view=New-Object System.Collections.Generic.List[object]
+    $contextFolder=Join-Path $folder 'contexts';New-Item -ItemType Directory -Force $contextFolder|Out-Null
+    $visibleBodies=@{}
     foreach($call in $calls){
+        # Keep selected historical bodies local; the window verifies the hash before showing one.
+        $bodyPath=Join-Path $contextFolder ($call.id+'-'+$call.bodySHA256+'.txt')
+        $visibleBodies[[IO.Path]::GetFileName($bodyPath)]=$true
+        $validBody=$false
+        if(Test-Path $bodyPath){try {$validBody=((Get-ContextDigest ([IO.File]::ReadAllText($bodyPath,[Text.Encoding]::UTF8))) -eq $call.bodySHA256)}catch [IO.IOException] {}}
+        if(!$validBody){[IO.File]::WriteAllText(($bodyPath+'.tmp'),$call.body,(New-Object Text.UTF8Encoding($false)));Move-Item ($bodyPath+'.tmp') $bodyPath -Force}
         $signature=$call.bodySHA256+'|'+$call.model+'|'+$call.recordStatus+'|'+$call.sessionId
         if($receipts[$call.id] -ne $signature){try{
             Write-CaptureEvent $folder $call 'queued' $identity.deviceId
@@ -106,6 +114,9 @@ function Sync-WorkBuddyContext($identity,$folder,$WorkBuddyRoot=(Join-Path $env:
         $summary=@{};foreach($name in $call.Keys){if($name -ne 'body'){$summary[$name]=$call[$name]}}
         $summary.preview=$call.body.Substring(0,[Math]::Min(1200,$call.body.Length));$summary.bodyBytes=[Text.Encoding]::UTF8.GetByteCount($call.body);$summary.receipt=($receipts[$call.id] -eq $signature);$view.Add($summary)
     }
+    # This is a bounded view cache for the 100 visible requests, not the source archive.
+    # Original traces/network logs remain untouched. Prune only our own cache filenames.
+    Get-ChildItem $contextFolder -Filter '*.txt'|Where-Object {$_.Name -match '^[a-f0-9]{64}-[a-f0-9]{64}\.txt$' -and !$visibleBodies.ContainsKey($_.Name)}|Remove-Item -Force
     [IO.File]::WriteAllText($receiptsPath,(@{deviceId=$identity.deviceId;receipts=$receipts}|ConvertTo-Json -Depth 5 -Compress),[Text.Encoding]::UTF8)
     $first=@($calls|Select-Object -First 1);$firstBody=if($first.Count){$first[0].body}else{''};$firstId=if($first.Count){$first[0].id}else{''};$firstHash=if($first.Count){$first[0].bodySHA256}else{''}
     $state=@{captureBody=$firstBody;captureBodyId=$firstId;captureBodySHA256=$firstHash;deviceId=$identity.deviceId;server=$Server;active=$true;updatedAt=(Get-Date).ToString('o');calls=$view.ToArray();error=$errorMessage;appRunning=(@(Get-Process -Name '*workbuddy*' -ErrorAction SilentlyContinue).Count -gt 0)}
