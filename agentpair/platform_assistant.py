@@ -30,7 +30,7 @@ class PlatformAssistant:
                     (r'访问.*(?:系统|平台)|谁.*访问|who.*access','access_audit'),
                     (r'我的设备|设备列表|my devices','devices'),
                     (r'会话洞察|会话列表|session insights','sessions'),
-                    (r'模型数据|model data','model_data'),
+                    (r'采集数据|模型数据|collected data|model data','model_data'),
                     (r'云机器|机器列表|cloud machines','machines'))
             if querying:
                 action=next((action for pattern,action in routes if re.search(pattern,question)),None)
@@ -143,8 +143,8 @@ class PlatformAssistant:
                     if action=='model_calls':
                         result['items'].extend({k:c.get(k) for k in ('id','model','source','sessionId','sessionName','timestamp','bodyBytes','collectorName','application','recordType')} for c in data.get('calls',[])[:20])
                     else:result['items'].append({'id': row['id'], 'name': row['name'], 'recentCalls': len(data.get('calls', []))})
-                text = '已检查你设备的模型数据。下列数量是最近查询窗口中的记录，不是全部历史；原文和请求详情请打开对应设备。'
-                result['links'] = [{'label': r['name']+' · 模型数据', 'url': '/model-data?'+urlencode({'device': r['id']})} for r in rows if not selected or r['id']==selected]
+                text = '已检查你设备的采集数据。下列数量是最近查询窗口中的记录，不是全部历史；原文和请求详情请打开对应设备。'
+                result['links'] = [{'label': r['name']+' · 采集数据', 'url': '/model-data?'+urlencode({'device': r['id']})} for r in rows if not selected or r['id']==selected]
             elif action in ('security','security_detail'):
                 # This is the same globally visible audit scope as /api/audit/credential-threats.
                 data = self.devices.credential_threats.inventory(tool.get('deviceId'))
@@ -188,8 +188,8 @@ class PlatformAssistant:
         if status=='completed':
             prompts={
                 'machines':['检查机器是否可以使用','查看机器到期时间'],
-                'devices':['查看这台设备的模型数据','查看这台设备的安全事件'],
-                'device_detail':['查看这台设备的模型数据','查看这台设备的安全事件'],
+                'devices':['查看这台设备的采集数据','查看这台设备的安全事件'],
+                'device_detail':['查看这台设备的采集数据','查看这台设备的安全事件'],
                 'model_data':['展开这台设备最近的模型调用'],
                 'model_calls':['查看相关安全事件'],
                 'security':['查看这项事件的证据和处理状态'],
@@ -202,7 +202,7 @@ class PlatformAssistant:
             saved = self.engine._load(tid)
             if saved['status'] in ('cancelling', 'cancelled'): return True
             result['summary'] = text
-            result['basis']=result.get('coverage') or {'security':'已有审计发现，未启动新分析','security_detail':'已有发现与请求记录，未验证凭据是否仍有效','sessions':'已接收的会话记录','session_detail':'已接收的会话和工具配对记录','devices':'设备注册记录与心跳','device_detail':'设备注册记录与心跳','model_data':'最近模型数据查询窗口','model_calls':'最近模型调用查询窗口','machines':'机器租约记录，登录状态单独核验'}.get(action,'平台真实查询结果')
+            result['basis']=result.get('coverage') or {'security':'已有审计发现，未启动新分析','security_detail':'已有发现与请求记录，未验证凭据是否仍有效','sessions':'已接收的会话记录','session_detail':'已接收的会话和工具配对记录','devices':'设备注册记录与心跳','device_detail':'设备注册记录与心跳','model_data':'最近采集数据查询窗口','model_calls':'最近模型调用查询窗口','machines':'机器租约记录，登录状态单独核验'}.get(action,'平台真实查询结果')
             saved['platformResult'] = dict(result, round=saved['round'])
             saved['status'] = status
             saved['messages'].append({'role': 'navigator', 'stage': 'review', 'round': saved['round'],
