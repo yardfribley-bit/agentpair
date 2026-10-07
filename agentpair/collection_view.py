@@ -2,9 +2,22 @@
 import hashlib
 import json
 import time
+import math
 from datetime import datetime
 
 KINDS={'user_message':'用户提问','assistant_message':'模型回复','message':'对话消息','reasoning':'已记录思路','tool_call':'工具调用','tool_result':'工具返回','turn_completed':'轮次完成','turn_aborted':'轮次中断','parse_error':'未解析记录'}
+
+def event_seconds(value):
+    """Normalize display time without rewriting source evidence."""
+    if isinstance(value, bool): return 0
+    if isinstance(value, str):
+        try: value=float(value)
+        except ValueError:
+            try: return datetime.fromisoformat(value.replace('Z','+00:00')).timestamp()
+            except (ValueError, OverflowError): return 0
+    if not isinstance(value,(int,float)) or not math.isfinite(value): return 0
+    if abs(value)>=100_000_000_000: value/=1000
+    return value if 0 < value < 253402300800 else 0
 
 class CollectionView:
     def __init__(self,devices,sessions):self.devices=devices;self.sessions=sessions
@@ -44,10 +57,10 @@ class CollectionView:
         found,ids=self.identities(owner,device);hits=[];marks=','.join('?' for _ in ids)
         if collector in ('all','sessionlens'):
             with self.sessions.connect() as db:
-                rows=db.execute('SELECT event FROM session_events WHERE owner=? AND device IN ('+marks+') AND instr(lower(event),lower(?))>0 ORDER BY rowid DESC LIMIT 50',[owner,*ids,query]).fetchall()
+                rows=db.execute('SELECT event FROM session_events WHERE owner=? AND device IN ('+marks+') AND instr(lower(json_extract(event,"$.payload")),lower(?))>0 ORDER BY rowid DESC LIMIT 50',[owner,*ids,query]).fetchall()
             for row in rows:
                 e=json.loads(row[0]);body=json.dumps(e.get('payload',{}),ensure_ascii=False);at=body.lower().find(query.lower());start=max(0,at-70)
-                hits.append({'id':'sessionlens:'+e['id'],'collector':'sessionlens','source':e['source'],'sessionId':e['sessionId'],'kind':KINDS.get(e['kind'],'其他会话记录'),'excerpt':body[start:start+280],'timestamp':e.get('timestamp')})
+                hits.append({'id':'sessionlens:'+e['id'],'collector':'sessionlens','source':e['source'],'sessionId':e['sessionId'],'kind':KINDS.get(e['kind'],'其他会话记录'),'excerpt':body[start:start+280],'timestamp':event_seconds(e.get('timestamp') or e.get('at'))})
         if collector in ('all','applens'):
             data=self.model_data(owner,device,collector='applens')
             for c in data['calls']:
@@ -67,17 +80,14 @@ class CollectionView:
             query+=' ORDER BY rowid DESC LIMIT 200'
             with self.sessions.connect() as db:events=[json.loads(r[0]) for r in db.execute(query,args)]
             for e in events:
-                eid='sessionlens:'+e['id'];body=json.dumps(e.get('payload',{}),ensure_ascii=False,indent=2);stamp=e.get('timestamp') or e.get('at') or 0
-                if isinstance(stamp,str):
-                    try:stamp=datetime.fromisoformat(stamp.replace('Z','+00:00')).timestamp()
-                    except ValueError:stamp=0
-                if not isinstance(stamp,(int,float)):stamp=0
+                eid='sessionlens:'+e['id'];body=json.dumps(e.get('payload',{}),ensure_ascii=False,indent=2);stamp=event_seconds(e.get('timestamp') or e.get('at'))
                 label=KINDS.get(e['kind'],'其他会话记录')
                 c={'id':eid,'collector':'sessionlens','collectorName':'SessionLens','application':{'codex':'Codex','workbuddy':'WorkBuddy'}.get(e['source'],e['source']),'recordType':e['kind'],'source':'sessionlens_log','timestamp':stamp,'modelEvidence':label,'recordStatus':'parseable','bodyBytes':len(body.encode()),'bodySHA256':hashlib.sha256(body.encode()).hexdigest(),'sessionId':e['sessionId'],'sessionName':e['sessionId'],'complete':False,'evidence':e['evidence']}
                 if not summary:c['body']=body
                 calls.append(c)
                 if not summary:items.append({'id':eid+':content','requestId':eid,'name':label,'category':label,'source':'SessionLens · '+c['application'],'rawContent':body,'bodyBytes':len(body.encode()),'classificationBasis':'源日志事件类型：'+e['kind'],'messageIndex':0,'blockIndex':0,'charStart':0,'charEnd':len(body),'sourceVerified':False,'complete':False,'evidence':e['evidence']})
         if request and not calls:raise ValueError('采集记录不存在或不属于所选来源')
+        for c in calls:c['timestamp']=event_seconds(c.get('timestamp'))
         calls.sort(key=lambda c:c.get('timestamp') or 0,reverse=True)
         activity=self.inventory([dict(found,ownerAccount=owner)],owner)[0]
         return {'device':{'id':found['id'],'name':found['name'],'online':activity['online'],'activityStatus':activity['activityStatus']},'calls':calls,'items':items,'limitations':['SessionLens 是源日志记录，不代表完整模型请求或网络接收证据。'],'coverage':{'collectorSources':sorted({c['collector'] for c in calls})}}

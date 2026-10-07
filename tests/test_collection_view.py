@@ -58,3 +58,14 @@ class CollectionViewTests(unittest.TestCase):
         self.assertEqual(self.view.search('alice',self.identity['id'],'不存在')['items'],[])
         self.assertEqual(self.view.search('alice',self.identity['id'],'example.com','applens')['items'],[])
         with self.assertRaises(PermissionError):self.view.search('bob',self.identity['id'],'example')
+
+    def test_millisecond_timestamp_normalized_in_search_and_detail(self):
+        event={**self.event,'id':'b'*64,'timestamp':1700000000123}
+        self.sessions.ingest(self.identity,{'schemaVersion':1,'events':[event]})
+        detail=self.view.model_data('alice',self.identity['id'],request='sessionlens:'+event['id'])
+        self.assertAlmostEqual(detail['calls'][0]['timestamp'],1700000000.123)
+        hit=next(h for h in self.view.search('alice',self.identity['id'],'example.com')['items'] if h['id']=='sessionlens:'+event['id'])
+        self.assertEqual(hit['timestamp'],detail['calls'][0]['timestamp'])
+
+    def test_metadata_only_match_not_presented_as_content_match(self):
+        self.assertEqual(self.view.search('alice',self.identity['id'],'local.jsonl')['items'],[])
