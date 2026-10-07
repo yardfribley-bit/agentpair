@@ -169,7 +169,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     for asset in collections.inventory(devices.audit_inventory()):
                         tags=' / '.join(c['name']+' · '+str(c['records'])+' 条' for c in asset.get('collectors',[])) or '尚无采集器记录'
                         href='/model-data?scope=global&amp;device='+escape(asset['id'],quote=True)
-                        cards.append('<article class="device"><strong>'+escape(asset['name'])+'</strong><small>归属账号：'+escape(asset.get('ownerAccount',''))+'</small><small>'+escape(tags)+'</small><a href="'+href+'">查看采集数据 →</a></article>')
+                        cards.append('<article class="device"><strong>'+escape(asset['name'])+'</strong><small>归属账号：'+escape(asset.get('ownerAccount',''))+'</small><small>'+escape(tags)+'</small><small>'+('最近有活动' if asset['online'] else '暂无近期活动')+'</small><small>设备标识：'+escape(asset['id'])+'</small><a href="'+href+'">查看采集数据 →</a></article>')
                     body=body.replace(b'<div id="device-list"></div>',('<div id="device-list">'+(''.join(cards) or '<p>平台尚无已接入设备。</p>')+'</div>').encode())
                 self.send_response(200)
                 suffix=Path(paths[self.path]).suffix

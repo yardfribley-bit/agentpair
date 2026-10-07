@@ -35,3 +35,19 @@ class CollectionViewTests(unittest.TestCase):
         items=self.view.inventory(self.devices.list('alice'),'alice');self.assertEqual(len(items),1)
         self.assertEqual({c['id'] for c in items[0]['collectors']},{'applens','sessionlens'})
         data=self.view.model_data('alice',self.identity['id']);self.assertEqual({c['collector'] for c in data['calls']},{'applens','sessionlens'})
+
+    def test_upload_activity_does_not_enable_remote_control(self):
+        import time
+        with self.devices.connect() as db:db.execute('UPDATE devices SET seen=?',(time.time()-1000,))
+        asset=self.view.inventory(self.devices.list('alice'),'alice')[0]
+        self.assertTrue(asset['online']);self.assertFalse(asset['controlOnline'])
+        self.assertFalse(next(c for c in asset['collectors'] if c['id']=='applens')['active'])
+        self.assertTrue(next(c for c in asset['collectors'] if c['id']=='sessionlens')['active'])
+        self.assertTrue(self.view.model_data('alice',self.identity['id'])['device']['online'])
+        with self.sessions.connect() as db:db.execute('UPDATE session_uploads SET received=?',(time.time()-301,))
+        self.assertFalse(self.view.inventory(self.devices.list('alice'),'alice')[0]['online'])
+    def test_historical_event_time_is_not_upload_time(self):
+        import time
+        asset=self.view.inventory(self.devices.list('alice'),'alice')[0]
+        collector=next(c for c in asset['collectors'] if c['id']=='sessionlens')
+        self.assertGreater(collector['lastUpload'],time.time()-10)

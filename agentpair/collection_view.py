@@ -1,6 +1,7 @@
 """Read-only projections across independent collectors; keep provenance explicit."""
 import hashlib
 import json
+import time
 from datetime import datetime
 
 KINDS={'user_message':'用户提问','assistant_message':'模型回复','message':'对话消息','reasoning':'已记录思路','tool_call':'工具调用','tool_result':'工具返回','turn_completed':'轮次完成','turn_aborted':'轮次中断','parse_error':'未解析记录'}
@@ -16,17 +17,23 @@ class CollectionView:
         return found,[found['id'],*aliases]
 
     def inventory(self,items,owner=None):
-        result=[]
+        result=[];now=time.time()
         for original in items:
             item=dict(original);account=owner or item['ownerAccount'];device,ids=self.identities(account,item['id']);marks=','.join('?' for _ in ids)
             collectors=[]
             with self.devices.connect() as db:
                 n=sum(db.execute('SELECT count(*) FROM '+table+' WHERE device_id IN ('+marks+')',ids).fetchone()[0] for table in ('applens_model_context','applens_llm_evidence','applens_llm_spans'))
-            if n:collectors.append({'id':'applens','name':'AppLens','records':n})
+            heartbeat=item.get('lastSeen') or 0
+            if n or heartbeat:collectors.append({'id':'applens','name':'AppLens','records':n,'lastHeartbeat':heartbeat,'active':bool(heartbeat and 0<=now-heartbeat<90),'statusBasis':'heartbeat'})
             with self.sessions.connect() as db:
                 n=db.execute('SELECT count(*) FROM session_events WHERE owner=? AND device IN ('+marks+')',[account,*ids]).fetchone()[0]
                 upload=db.execute('SELECT max(received) FROM session_uploads WHERE owner=? AND device IN ('+marks+') AND status=200',[account,*ids]).fetchone()[0]
-            if n or upload:collectors.append({'id':'sessionlens','name':'SessionLens','records':n,'lastUpload':upload})
+            if n or upload:collectors.append({'id':'sessionlens','name':'SessionLens','records':n,'lastUpload':upload,'active':bool(upload and 0<=now-upload<300),'statusBasis':'successful_upload'})
+            item['controlOnline']=item.get('online',False)
+            item['lastHeartbeat']=heartbeat
+            item['lastActivity']=max(heartbeat,upload or 0)
+            item['online']=any(c['active'] for c in collectors)
+            item['activityStatus']='recent_activity' if item['online'] else 'no_recent_activity'
             item['collectors']=collectors;result.append(item)
         return result
 
@@ -54,4 +61,5 @@ class CollectionView:
                 if not summary:items.append({'id':eid+':content','requestId':eid,'name':label,'category':label,'source':'SessionLens · '+c['application'],'rawContent':body,'bodyBytes':len(body.encode()),'classificationBasis':'源日志事件类型：'+e['kind'],'messageIndex':0,'blockIndex':0,'charStart':0,'charEnd':len(body),'sourceVerified':False,'complete':False,'evidence':e['evidence']})
         if request and not calls:raise ValueError('采集记录不存在或不属于所选来源')
         calls.sort(key=lambda c:c.get('timestamp') or 0,reverse=True)
-        return {'device':{'id':found['id'],'name':found['name'],'online':found['online']},'calls':calls,'items':items,'limitations':['SessionLens 是源日志记录，不代表完整模型请求或网络接收证据。'],'coverage':{'collectorSources':sorted({c['collector'] for c in calls})}}
+        activity=self.inventory([dict(found,ownerAccount=owner)],owner)[0]
+        return {'device':{'id':found['id'],'name':found['name'],'online':activity['online'],'activityStatus':activity['activityStatus']},'calls':calls,'items':items,'limitations':['SessionLens 是源日志记录，不代表完整模型请求或网络接收证据。'],'coverage':{'collectorSources':sorted({c['collector'] for c in calls})}}
