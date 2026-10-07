@@ -259,10 +259,10 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     with devices.connect() as db:
                         row=db.execute('SELECT owner FROM devices WHERE id=? AND revoked=0',(device_id,)).fetchone()
                     if row is None:raise PermissionError('Device unavailable')
-                    self.respond(200,collections.model_data(row['owner'],device_id,query.get('request',[None])[0],query.get('summary',[''])[0]=='1',query.get('collector',['all'])[0]));return
+                    self.respond(200,collections.search(row['owner'],device_id,query['q'][0],query.get('collector',['all'])[0]) if query.get('q') else collections.model_data(row['owner'],device_id,query.get('request',[None])[0],query.get('summary',[''])[0]=='1',query.get('collector',['all'])[0]));return
                 if self.path.startswith('/api/devices/model-data/'):
                     if not self.authenticated():self.respond(401,{'error':'Login required'});return
-                    self.respond(200,collections.model_data(self.identity()['id'],self.path.rsplit('/',1)[1],query.get('request',[None])[0],query.get('summary',[''])[0]=='1',query.get('collector',['all'])[0]));return
+                    self.respond(200,collections.search(self.identity()['id'],self.path.rsplit('/',1)[1],query['q'][0],query.get('collector',['all'])[0]) if query.get('q') else collections.model_data(self.identity()['id'],self.path.rsplit('/',1)[1],query.get('request',[None])[0],query.get('summary',[''])[0]=='1',query.get('collector',['all'])[0]));return
                 if self.path=='/api/audit/credential-threats':
                     inventory=devices.credential_threats.inventory(query.get('device',[None])[0])
                     for finding in inventory['items']:finding['review']=devices.credential_threats.review(finding['id'],engine)

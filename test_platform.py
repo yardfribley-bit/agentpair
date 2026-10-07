@@ -73,7 +73,7 @@ class PlatformTests(unittest.TestCase):
     def test_model_data_route_is_private_and_serves_prototype(self):
         with self.client.open(self.url+'/model-data') as response:
             body=response.read().decode()
-            self.assertIn('模型数据 · 原文与分类',body)
+            self.assertIn('采集数据 · 原文与分类',body)
             self.assertIn('id="collector"',body)
             self.assertIn('SessionLens',body)
         with self.assertRaises(urllib.error.HTTPError) as error:self.call('/api/devices/model-data/unknown')

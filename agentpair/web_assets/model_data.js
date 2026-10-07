@@ -1,6 +1,6 @@
 (()=>{'use strict';
 const $=id=>document.getElementById(id),set=(id,v)=>$(id).textContent=v,params=new URLSearchParams(location.search);
-const globalView=params.get('scope')==='global';
+const globalView=params.get('scope')!=='mine';
 let data=null,selected=null,view='categories',tab='original',loading=false,findAt=-1,csrf='',detailGeneration=0,loadGeneration=0;
 const option=(v,t)=>{const o=document.createElement('option');o.value=v;o.textContent=t;return o;};
 const call=()=>data?.calls.find(c=>c.id===$('request').value);
@@ -39,6 +39,9 @@ async function load(){if(!$('device').value){set('empty','尚无可查看的采�
  $('session').replaceChildren(option('all','全部会话'),...[...sessions].map(([id,name])=>option(id,name)));
  if(sessions.has(previous))$('session').value=previous;await requests();
  }catch(e){if(n===loadGeneration)failure(e);}finally{if(n===loadGeneration)loading=false;}}
+$('review-session').onclick=async()=>{const current=call();if(!current?.sessionId){set('review-status','当前记录没有会话标识，无法可靠关联。');return;}set('review-status','正在读取会话记录…');$('review-results').replaceChildren();try{const summary=await api(endpoint()+'?summary=1&collector='+encodeURIComponent($('collector').value));const rows=summary.calls.filter(c=>c.sessionId===current.sessionId).sort((a,b)=>a.timestamp-b.timestamp);const counts={};for(const c of rows){const type=c.modelEvidence||c.recordType||'记录';counts[type]=(counts[type]||0)+1;}set('review-status','当前查询窗口中找到 '+rows.length+' 条同会话记录：'+Object.entries(counts).map(([k,v])=>k+' '+v+' 条').join('，')+'。会话可能包含多个任务；不等于完整任务或模型交互次数。');data.calls=summary.calls;for(const c of rows){const b=document.createElement('button');b.type='button';b.className='search-hit';b.textContent=new Date(c.timestamp*1000).toLocaleString()+' · '+(c.collectorName||'')+' · '+(c.modelEvidence||c.recordType||'记录')+' → 查看内容';b.onclick=async()=>{$('request').replaceChildren(option(c.id,c.modelEvidence||c.id));await hydrate();};$('review-results').append(b);}}catch(error){set('review-status',error.message);}};
+let searchGeneration=0;
+$('history-search-form').onsubmit=async e=>{e.preventDefault();const q=$('history-query').value.trim(),n=++searchGeneration,device=$('device').value,collector=$('collector').value;if(!q||!device)return;set('history-status','正在搜索已接收的记录…');$('history-results').replaceChildren();try{const result=await api(endpoint()+'?collector='+encodeURIComponent(collector)+'&q='+encodeURIComponent(q));if(n!==searchGeneration||device!==$('device').value||collector!==$('collector').value)return;set('history-status','找到 '+result.items.length+' 条相关记录。'+result.coverage);for(const hit of result.items){const b=document.createElement('button');b.type='button';b.className='search-hit';const title=document.createElement('strong');title.textContent=(hit.collector==='sessionlens'?'SessionLens':'AppLens')+' · '+hit.source+' · '+hit.kind;const excerpt=document.createElement('span');excerpt.textContent=hit.excerpt;const action=document.createElement('small');action.textContent='查看原文与证据 →';b.append(title,excerpt,action);b.onclick=async()=>{++detailGeneration;data={calls:[{id:hit.id}],items:[]};$('request').replaceChildren(option(hit.id,hit.kind));await hydrate();$('detail-title').scrollIntoView({block:'start',behavior:'smooth'});};$('history-results').append(b);}}catch(error){if(n===searchGeneration)set('history-status',error.message);}};
 $('collector').onchange=()=>{selected=null;load();};$('application').onchange=requests;
 $('device').onchange=()=>{selected=null;load();};$('session').onchange=requests;$('request').onchange=hydrate;$('search').oninput=render;
 $('view-tabs').onclick=e=>{const b=e.target.closest('button');if(b){view=b.dataset.view;render();}};
@@ -49,10 +52,10 @@ $('text-search').oninput=()=>{findAt=-1;};
 $('find').onclick=()=>{const text=readerText(),q=$('text-search').value;if(!q)return;let at=text.toLowerCase().indexOf(q.toLowerCase(),findAt+1);if(at<0)at=text.toLowerCase().indexOf(q.toLowerCase());set('match-status',at<0?'未找到':'字符 '+at);if(at<0)return;findAt=at;
  const pre=$('original');pre.replaceChildren(document.createTextNode(text.slice(0,at)));const mark=document.createElement('mark');mark.textContent=text.slice(at,at+q.length);pre.append(mark,document.createTextNode(text.slice(at+q.length)));mark.scrollIntoView({block:'nearest'});};
 (async()=>{try{if(['applens','sessionlens'].includes(params.get('collector')))$('collector').value=params.get('collector');const session=await api('/api/session');set('identity',session.username?session.username+' · 已登录':'未登录');if(!session.csrf&&!globalView)throw Error('请先登录，或从全局审计打开公开原文');
- const list=await api(globalView?'/api/audit/devices':'/api/devices');$('device').replaceChildren(...list.items.map(d=>option(d.id,d.name+(d.online?' · 在线':' · 离线'))));
+ const list=await api(globalView?'/api/audit/devices':'/api/devices');$('device').replaceChildren(...list.items.map(d=>option(d.id,d.name+(d.online?' · 最近有活动':' · 暂无近期活动'))));
  if(list.items.some(d=>d.id===params.get('device')))$('device').value=params.get('device');await load();
  }catch(e){failure(e);}})();
 const retry=document.createElement('button');retry.textContent='重试读取';retry.type='button';retry.onclick=load;$('status').after(retry);
 const audit=document.createElement('a');audit.textContent='交互审计与安全检测 ↗';audit.href='/model-security';$('identity').parentElement.append(audit);audit.onclick=()=>{audit.href='/model-security?device='+encodeURIComponent($('device').value)+(call()?.collector==='applens'?'&request='+encodeURIComponent(call().id):'');};
-setInterval(()=>{if(!document.hidden&&!loading&&!$('text-search').value)load();},60000);
+setInterval(()=>{if(!document.hidden&&!loading&&!$('text-search').value&&!$('history-query').value)load();},60000);
 })();

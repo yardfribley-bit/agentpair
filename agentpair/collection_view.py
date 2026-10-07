@@ -37,6 +37,24 @@ class CollectionView:
             item['collectors']=collectors;result.append(item)
         return result
 
+    def search(self,owner,device,query,collector='all'):
+        query=query.strip()
+        if not query or len(query)>200:raise ValueError('请输入 1–200 字的关键词')
+        if collector not in ('all','applens','sessionlens'):raise ValueError('Unknown collector')
+        found,ids=self.identities(owner,device);hits=[];marks=','.join('?' for _ in ids)
+        if collector in ('all','sessionlens'):
+            with self.sessions.connect() as db:
+                rows=db.execute('SELECT event FROM session_events WHERE owner=? AND device IN ('+marks+') AND instr(lower(event),lower(?))>0 ORDER BY rowid DESC LIMIT 50',[owner,*ids,query]).fetchall()
+            for row in rows:
+                e=json.loads(row[0]);body=json.dumps(e.get('payload',{}),ensure_ascii=False);at=body.lower().find(query.lower());start=max(0,at-70)
+                hits.append({'id':'sessionlens:'+e['id'],'collector':'sessionlens','source':e['source'],'sessionId':e['sessionId'],'kind':KINDS.get(e['kind'],'其他会话记录'),'excerpt':body[start:start+280],'timestamp':e.get('timestamp')})
+        if collector in ('all','applens'):
+            data=self.model_data(owner,device,collector='applens')
+            for c in data['calls']:
+                body=c.get('body','');at=body.lower().find(query.lower())
+                if at>=0:hits.append({'id':c['id'],'collector':'applens','source':c.get('application'),'sessionId':c.get('sessionId'),'kind':'模型输入','excerpt':body[max(0,at-70):max(0,at-70)+280],'timestamp':c.get('timestamp')})
+        return {'items':hits[:100],'coverage':'SessionLens 搜索平台已接收的历史事件，最多返回 50 条；AppLens 搜索当前调用窗口。关键词匹配，不代表语义检索。'}
+
     def model_data(self,owner,device,request=None,summary=False,collector='all'):
         if collector not in ('all','applens','sessionlens'):raise ValueError('Unknown collector')
         found,ids=self.identities(owner,device);calls=[];items=[]

@@ -51,3 +51,10 @@ class CollectionViewTests(unittest.TestCase):
         asset=self.view.inventory(self.devices.list('alice'),'alice')[0]
         collector=next(c for c in asset['collectors'] if c['id']=='sessionlens')
         self.assertGreater(collector['lastUpload'],time.time()-10)
+
+    def test_history_search_and_owner_boundary(self):
+        result=self.view.search('alice',self.identity['id'],'example.com')
+        self.assertEqual(result['items'][0]['id'],'sessionlens:'+self.event['id'])
+        self.assertEqual(self.view.search('alice',self.identity['id'],'不存在')['items'],[])
+        self.assertEqual(self.view.search('alice',self.identity['id'],'example.com','applens')['items'],[])
+        with self.assertRaises(PermissionError):self.view.search('bob',self.identity['id'],'example')
