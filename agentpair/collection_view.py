@@ -1,0 +1,57 @@
+"""Read-only projections across independent collectors; keep provenance explicit."""
+import hashlib
+import json
+from datetime import datetime
+
+KINDS={'user_message':'用户提问','assistant_message':'模型回复','message':'对话消息','reasoning':'已记录思路','tool_call':'工具调用','tool_result':'工具返回','turn_completed':'轮次完成','turn_aborted':'轮次中断','parse_error':'未解析记录'}
+
+class CollectionView:
+    def __init__(self,devices,sessions):self.devices=devices;self.sessions=sessions
+
+    def identities(self,owner,device):
+        found=self.devices.get(device,owner)
+        if not found:raise PermissionError('Device unavailable')
+        with self.devices.connect() as db:
+            aliases=[r[0] for r in db.execute('SELECT alias FROM device_aliases WHERE canonical=? AND owner=?',(found['id'],owner))]
+        return found,[found['id'],*aliases]
+
+    def inventory(self,items,owner=None):
+        result=[]
+        for original in items:
+            item=dict(original);account=owner or item['ownerAccount'];device,ids=self.identities(account,item['id']);marks=','.join('?' for _ in ids)
+            collectors=[]
+            with self.devices.connect() as db:
+                n=sum(db.execute('SELECT count(*) FROM '+table+' WHERE device_id IN ('+marks+')',ids).fetchone()[0] for table in ('applens_model_context','applens_llm_evidence','applens_llm_spans'))
+            if n:collectors.append({'id':'applens','name':'AppLens','records':n})
+            with self.sessions.connect() as db:
+                n=db.execute('SELECT count(*) FROM session_events WHERE owner=? AND device IN ('+marks+')',[account,*ids]).fetchone()[0]
+                upload=db.execute('SELECT max(received) FROM session_uploads WHERE owner=? AND device IN ('+marks+') AND status=200',[account,*ids]).fetchone()[0]
+            if n or upload:collectors.append({'id':'sessionlens','name':'SessionLens','records':n,'lastUpload':upload})
+            item['collectors']=collectors;result.append(item)
+        return result
+
+    def model_data(self,owner,device,request=None,summary=False,collector='all'):
+        if collector not in ('all','applens','sessionlens'):raise ValueError('Unknown collector')
+        found,ids=self.identities(owner,device);calls=[];items=[]
+        if collector in ('all','applens') and not (request or '').startswith('sessionlens:'):
+            source=self.devices.llm_data(owner,found['id'],request,summary)
+            calls=[dict(c,collector='applens',collectorName='AppLens',application='WorkBuddy',recordType='model_input') for c in source['calls']];items=source['items']
+        if collector in ('all','sessionlens') and (not request or request.startswith('sessionlens:')):
+            marks=','.join('?' for _ in ids);query='SELECT event FROM session_events WHERE owner=? AND device IN ('+marks+')';args=[owner,*ids]
+            if request:query+=' AND id=?';args.append(request.removeprefix('sessionlens:'))
+            query+=' ORDER BY rowid DESC LIMIT 200'
+            with self.sessions.connect() as db:events=[json.loads(r[0]) for r in db.execute(query,args)]
+            for e in events:
+                eid='sessionlens:'+e['id'];body=json.dumps(e.get('payload',{}),ensure_ascii=False,indent=2);stamp=e.get('timestamp') or e.get('at') or 0
+                if isinstance(stamp,str):
+                    try:stamp=datetime.fromisoformat(stamp.replace('Z','+00:00')).timestamp()
+                    except ValueError:stamp=0
+                if not isinstance(stamp,(int,float)):stamp=0
+                label=KINDS.get(e['kind'],'其他会话记录')
+                c={'id':eid,'collector':'sessionlens','collectorName':'SessionLens','application':{'codex':'Codex','workbuddy':'WorkBuddy'}.get(e['source'],e['source']),'recordType':e['kind'],'source':'sessionlens_log','timestamp':stamp,'modelEvidence':label,'recordStatus':'parseable','bodyBytes':len(body.encode()),'bodySHA256':hashlib.sha256(body.encode()).hexdigest(),'sessionId':e['sessionId'],'sessionName':e['sessionId'],'complete':False,'evidence':e['evidence']}
+                if not summary:c['body']=body
+                calls.append(c)
+                if not summary:items.append({'id':eid+':content','requestId':eid,'name':label,'category':label,'source':'SessionLens · '+c['application'],'rawContent':body,'bodyBytes':len(body.encode()),'classificationBasis':'源日志事件类型：'+e['kind'],'messageIndex':0,'blockIndex':0,'charStart':0,'charEnd':len(body),'sourceVerified':False,'complete':False,'evidence':e['evidence']})
+        if request and not calls:raise ValueError('采集记录不存在或不属于所选来源')
+        calls.sort(key=lambda c:c.get('timestamp') or 0,reverse=True)
+        return {'device':{'id':found['id'],'name':found['name'],'online':found['online']},'calls':calls,'items':items,'limitations':['SessionLens 是源日志记录，不代表完整模型请求或网络接收证据。'],'coverage':{'collectorSources':sorted({c['collector'] for c in calls})}}

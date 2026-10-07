@@ -9,8 +9,9 @@ from .tasks import now
 class PlatformAssistant:
     ACTIONS = ('machines', 'devices', 'model_data', 'security', 'sessions', 'session_detail', 'release_machine', 'device_detail', 'model_calls', 'security_detail', 'session_upload_status', 'access_audit')
 
-    def __init__(self, engine, devices, sessions, cloud):
+    def __init__(self, engine, devices, sessions, cloud, collections=None):
         self.engine, self.devices, self.sessions, self.cloud = engine, devices, sessions, cloud
+        self.collections=collections
 
     def capabilities(self):
         return {'actions': list(self.ACTIONS), 'cloudAvailable': self.cloud is not None,
@@ -128,7 +129,8 @@ class PlatformAssistant:
                     selected=tool.get('deviceId')
                     rows=[r for r in rows if r['id']==selected]
                     if not rows:raise ValueError('请选择查询结果中的设备，我会继续查看它的状态。')
-                result['items'] = [{k: r.get(k) for k in ('id', 'name', 'online', 'lastSeen')} for r in rows]
+                if self.collections:rows=self.collections.inventory(rows,owner)
+                result['items'] = [{k: r.get(k) for k in ('id', 'name', 'online', 'lastSeen', 'collectors')} for r in rows]
                 text = f'你的账号有 {len(rows)} 台设备，{sum(bool(r.get("online")) for r in rows)} 台最近在线。在线状态来自设备心跳，不能代替采集完整性。'
                 result['links'] = [{'label': '查看我的设备', 'url': '/devices'}]
             elif action in ('model_data','model_calls'):
@@ -137,9 +139,9 @@ class PlatformAssistant:
                 if selected and selected not in {r['id'] for r in rows}: raise PermissionError('设备不属于当前账号')
                 for row in rows:
                     if selected and row['id'] != selected: continue
-                    data = self.devices.llm_data(owner, row['id'], summary=True)
+                    data = self.collections.model_data(owner,row['id'],summary=True) if self.collections else self.devices.llm_data(owner, row['id'], summary=True)
                     if action=='model_calls':
-                        result['items'].extend({k:c.get(k) for k in ('id','model','source','sessionId','sessionName','timestamp','bodyBytes')} for c in data.get('calls',[])[:20])
+                        result['items'].extend({k:c.get(k) for k in ('id','model','source','sessionId','sessionName','timestamp','bodyBytes','collectorName','application','recordType')} for c in data.get('calls',[])[:20])
                     else:result['items'].append({'id': row['id'], 'name': row['name'], 'recentCalls': len(data.get('calls', []))})
                 text = '已检查你设备的模型数据。下列数量是最近查询窗口中的记录，不是全部历史；原文和请求详情请打开对应设备。'
                 result['links'] = [{'label': r['name']+' · 模型数据', 'url': '/model-data?'+urlencode({'device': r['id']})} for r in rows if not selected or r['id']==selected]

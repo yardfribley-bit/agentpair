@@ -26,6 +26,17 @@ class TaskTests(unittest.TestCase):
         history=self.backend.calls[3][1]['history']
         self.assertEqual(history[0]['text'],'initial goal'); self.assertEqual(history[-1]['text'],'please refine')
         self.assertNotIn('PRIVATE_OTHER',str(history)); self.assertEqual(self.engine.get(other['id'])['status'],'queued')
+    def test_more_than_twenty_tasks_can_be_created(self):
+        tasks=[]
+        for i in range(21):
+            task=self.engine.create('task '+str(i),'goal');self.engine.cancel(task['id']);self.engine.process(task['id']);tasks.append(task)
+        self.assertEqual(len(self.engine.list()),21)
+        self.assertEqual(len({t['id'] for t in tasks}),21)
+
+    def test_active_queue_is_bounded(self):
+        for i in range(20):self.engine.create('task '+str(i),'goal')
+        with self.assertRaises(Limit):self.engine.create('overflow','goal')
+
     def test_active_task_conflict(self):
         t=self.engine.create('task','goal')
         with self.assertRaises(Conflict): self.engine.followup(t['id'],'new goal')

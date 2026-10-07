@@ -185,7 +185,7 @@ class TaskEngine:
             target = validate_target(target)
         elif target: raise ValueError('Discussion tasks do not accept a target')
         with self.lock:
-            if len(self.list())>=20: raise Limit('Experiment task limit reached')
+            self._check_active_capacity()
             task = {'id': uuid.uuid4().hex, 'title': title.strip(), 'adapter': adapter, 'target': target,
                     'engineeringMethod':engineering_method, 'billingOwner':billing_owner, 'owner':owner or billing_owner,
                     'executionProfile':execution_profile,
@@ -198,6 +198,10 @@ class TaskEngine:
             self._save(task); self.jobs.put(task['id'])
             return copy.deepcopy(task)
 
+    def _check_active_capacity(self):
+        if sum(t['status'] in ('queued','running','cancelling') for t in self.list())>=20:
+            raise Limit('当前已有 20 个任务正在排队或运行，请等待任务完成后再提交。历史任务数量不受限制。')
+
     def followup(self, tid, message):
         message = self._message(message)
         with self.lock:
@@ -205,6 +209,7 @@ class TaskEngine:
             if task['status'] in ('queued','running','cancelling'): raise Conflict('Wait for the current round or cancel it')
             if task['round']>=self.max_rounds and not getattr(self, 'platform_assistant', None):
                 raise Limit('Round limit reached')
+            self._check_active_capacity()
             task['round'] += 1; task['status'] = 'queued'
             task['messages'].append({'role':'user','text':message,'round':task['round'],'at':now()})
             self._save(task); self.jobs.put(tid)

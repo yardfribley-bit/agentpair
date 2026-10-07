@@ -32,6 +32,8 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
     session_path=Path(engine.db).parent/'sessionlens.db'
     if not session_path.exists():session_path=Path(engine.db).parent/'session-lens.db'
     session_lens=SessionStore(session_path)
+    from .collection_view import CollectionView
+    collections=CollectionView(devices,session_lens)
     mobile_auth=MobileAuth(devices)
     accounts=Accounts(Path(engine.db).parent/'accounts.db', username)
     engine.accounts=accounts
@@ -39,7 +41,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
     cloud_workflow=CloudWorkflow(engine,cloud_console)
     engine.cloud_workflow=cloud_workflow
     from .platform_assistant import PlatformAssistant
-    engine.platform_assistant=PlatformAssistant(engine,devices,session_lens,cloud_console)
+    engine.platform_assistant=PlatformAssistant(engine,devices,session_lens,cloud_console,collections)
     class Handler(BaseHTTPRequestHandler):
         def respond(self, status, data, cookie=False):
             body=json.dumps(data,ensure_ascii=False).encode()
@@ -243,22 +245,22 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     self.respond(200,accounts.balance(self.identity()['id']));return
                 if self.path=='/api/devices':
                     if not self.authenticated():self.respond(401,{'error':'Login required'});return
-                    self.respond(200,{'items':devices.list(self.identity()['id'])});return
+                    self.respond(200,{'items':collections.inventory(devices.list(self.identity()['id']),self.identity()['id'])});return
                 if self.path.startswith('/api/audit/model-data/'):
                     device_id=self.path.rsplit('/',1)[1]
                     with devices.connect() as db:
                         row=db.execute('SELECT owner FROM devices WHERE id=? AND revoked=0',(device_id,)).fetchone()
                     if row is None:raise PermissionError('Device unavailable')
-                    self.respond(200,devices.llm_data(row['owner'],device_id,query.get('request',[None])[0],query.get('summary',[''])[0]=='1'));return
+                    self.respond(200,collections.model_data(row['owner'],device_id,query.get('request',[None])[0],query.get('summary',[''])[0]=='1',query.get('collector',['all'])[0]));return
                 if self.path.startswith('/api/devices/model-data/'):
                     if not self.authenticated():self.respond(401,{'error':'Login required'});return
-                    self.respond(200,devices.llm_data(self.identity()['id'],self.path.rsplit('/',1)[1],query.get('request',[None])[0],query.get('summary',[''])[0]=='1'));return
+                    self.respond(200,collections.model_data(self.identity()['id'],self.path.rsplit('/',1)[1],query.get('request',[None])[0],query.get('summary',[''])[0]=='1',query.get('collector',['all'])[0]));return
                 if self.path=='/api/audit/credential-threats':
                     inventory=devices.credential_threats.inventory(query.get('device',[None])[0])
                     for finding in inventory['items']:finding['review']=devices.credential_threats.review(finding['id'],engine)
                     self.respond(200,inventory);return
                 if self.path=='/api/audit/devices':
-                    self.respond(200,{'items':devices.audit_inventory()});return
+                    self.respond(200,{'items':collections.inventory(devices.audit_inventory())});return
                 if self.path.startswith('/api/devices/interaction-audit/'):
                     global_view=query.get('scope',[''])[0]=='global'
                     if not global_view and not self.authenticated():self.respond(401,{'error':'Login required'});return

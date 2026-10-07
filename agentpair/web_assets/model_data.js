@@ -9,14 +9,14 @@ const bytes=n=>n>=1024?(n/1024).toFixed(1)+' KB':n+' B';
 async function api(p){const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),30000);try{const r=await fetch(p,{credentials:'same-origin',cache:'no-store',signal:controller.signal}),d=await r.json();if(!r.ok)throw Error(d.error||'读取失败');return d;}catch(e){throw Error(e.name==='AbortError'?'读取超时，请点击重试':e.message);}finally{clearTimeout(timeout);}}
 function failure(e){set('status',e.message);set('empty','读取失败：'+e.message);$('empty').hidden=false;set('receipt','读取失败');}
 const endpoint=()=> (globalView?'/api/audit/model-data/':'/api/devices/model-data/')+encodeURIComponent($('device').value);
-async function hydrate(){const n=++detailGeneration,id=$('request').value;if(!id){selected=null;render();return;}set('empty','正在读取选中调用…');$('empty').hidden=false;set('receipt','正在读取选中调用');set('original','正在读取选中调用…');set('detail-title','正在读取选中调用');$('rows').replaceChildren();try{const detail=await api(endpoint()+'?request='+encodeURIComponent(id));if(n!==detailGeneration)return;data.items=detail.items;const index=data.calls.findIndex(c=>c.id===id);if(index>=0&&detail.calls[0])data.calls[index]=detail.calls[0];selected=items().find(i=>i.id===selected?.id)||items()[0]||null;render();set('status','');}catch(e){if(n===detailGeneration)failure(e);}}
+async function hydrate(){const n=++detailGeneration,id=$('request').value;if(!id){selected=null;render();return;}set('empty','正在读取选中调用…');$('empty').hidden=false;set('receipt','正在读取选中调用');set('original','正在读取选中调用…');set('detail-title','正在读取选中调用');$('rows').replaceChildren();try{const detail=await api(endpoint()+'?collector='+encodeURIComponent($('collector').value)+'&request='+encodeURIComponent(id));if(n!==detailGeneration)return;data.items=detail.items;const index=data.calls.findIndex(c=>c.id===id);if(index>=0&&detail.calls[0])data.calls[index]=detail.calls[0];selected=items().find(i=>i.id===selected?.id)||items()[0]||null;render();set('status','');}catch(e){if(n===detailGeneration)failure(e);}}
 function choose(i){selected=i;tab='original';findAt=-1;render();}
 function readerText(){return tab==='full'||view==='full'?call()?.body||'无原文':selected?.rawContent||'请选择分类内容';}
 function render(){
  const c=call(),q=$('search').value.toLowerCase(),list=items().filter(i=>[i.name,i.category,i.rawContent].join(' ').toLowerCase().includes(q));
- set('source',c?.source==='workbuddy_network_context'?'来源：AgentReins 完整 HTTP 请求体通道':'来源：WorkBuddy generation');set('capture-layer',c?.source==='workbuddy_network_context'?'同一 HTTP 请求体':'应用记录的装配上下文');set('destination',c?.destination?'目标：'+c.destination:'目标 / 网络发送未验证');set('model','模型：'+(c?.model||'未采集'));$('model').title=c?.modelEvidence||'未取得模型证据';set('size',c?bytes(c.bodyBytes)+' · '+new Date(c.timestamp*1000).toLocaleString():'暂无调用');
+ set('source',c?.collector==='sessionlens'?'来源：SessionLens · '+c.application:c?.source==='workbuddy_network_context'?'来源：AgentReins 完整 HTTP 请求体通道':'来源：WorkBuddy generation');set('capture-layer',c?.collector==='sessionlens'?'源日志会话事件':c?.source==='workbuddy_network_context'?'同一 HTTP 请求体':'应用记录的装配上下文');set('destination',c?.destination?'目标：'+c.destination:'目标 / 网络发送未验证');set('model','模型：'+(c?.model||'未采集'));$('model').title=c?.modelEvidence||'未取得模型证据';set('size',c?bytes(c.bodyBytes)+' · '+new Date(c.timestamp*1000).toLocaleString():'暂无调用');
  set('truncate',c?.wireLengthMatched?'捕获请求体长度校验一致':c?.truncated?'源记录已触发截断':c?.recordStatus==='parseable'?'源记录可解析 · 未触发截断':'源记录未验证');set('completeness',c?.wireLengthMatched?'SHA256 及声明/捕获长度一致；不代表远端处理成功':c?.truncated?'源记录已触发截断，缺失内容未知':c?.recordStatus==='parseable'?'JSON 可解析、未触发截断；网络请求完整性未验证':'源记录未验证');
- set('coverage',c?.truncated?'这份源记录可能被截断。展示全部已采集内容，不补造缺失内容。':c?.source==='workbuddy_network_context'?'沿用 AgentReins 完整请求体采集，保留原文，不采模型返回或独立工具事件。':'当前采集层是应用装配记录，非网络抓包；分类不改变原文。');
+ set('coverage',c?.collector==='sessionlens'?'这是一条源日志事件，可查看提问、回复、已记录思路或工具数据；不代表完整模型请求。':c?.truncated?'这份源记录可能被截断。展示全部已采集内容，不补造缺失内容。':c?.source==='workbuddy_network_context'?'沿用 AgentReins 完整请求体采集，保留原文，不采模型返回或独立工具事件。':'当前采集层是应用装配记录，非网络抓包；分类不改变原文。');
  set('receipt',c?.bodySHA256?'平台已入库 · SHA256 '+c.bodySHA256.slice(0,12)+'…':'暂无回执');
  $('rows').replaceChildren();$('empty').hidden=!!list.length;set('empty',c?'没有匹配的分类内容':'尚无模型输入记录');
  for(const i of list){const tr=document.createElement('tr');tr.tabIndex=0;tr.classList.toggle('selected',selected?.id===i.id);
@@ -30,20 +30,21 @@ function render(){
  for(const b of $('detail-tabs').children)b.classList.toggle('selected',b.dataset.tab===tab);
  for(const b of $('view-tabs').children)b.classList.toggle('selected',b.dataset.view===view);
 }
-async function requests(){const previous=$('request').value||params.get('request'),session=$('session').value;const calls=(data?.calls||[]).filter(c=>session==='all'||c.sessionId===session);
- $('request').replaceChildren(...calls.map(c=>option(c.id,new Date(c.timestamp*1000).toLocaleTimeString()+' · '+c.id.slice(0,8))));
+async function requests(){const previous=$('request').value||params.get('request'),session=$('session').value;const calls=(data?.calls||[]).filter(c=>(session==='all'||c.sessionId===session)&&($('application').value==='all'||c.application===$('application').value));
+ $('request').replaceChildren(...calls.map(c=>option(c.id,new Date(c.timestamp*1000).toLocaleTimeString()+' · '+(c.collectorName||'')+' · '+(c.modelEvidence||c.id.slice(0,8)))));
  if(!calls.length)$('request').append(option('','暂无调用'));if(calls.some(c=>c.id===previous))$('request').value=previous;else if(params.get('request')&&previous===params.get('request')&&calls.length)throw Error('指定请求不在当前调用列表中，请重新选择调用');
  await hydrate();}
-async function load(){if(!$('device').value){set('empty','尚无可查看的采集设备');set('receipt','暂无记录');return;}const n=++loadGeneration;++detailGeneration;loading=true;try{const metadata=await api(endpoint()+'?summary=1');if(n!==loadGeneration)return;data=metadata;
+async function load(){if(!$('device').value){set('empty','尚无可查看的采集设备');set('receipt','暂无记录');return;}const n=++loadGeneration;++detailGeneration;loading=true;try{const metadata=await api(endpoint()+'?summary=1&collector='+encodeURIComponent($('collector').value));if(n!==loadGeneration)return;data=metadata;const app=$('application').value;const apps=[...new Set(data.calls.map(c=>c.application).filter(Boolean))];$('application').replaceChildren(option('all','全部应用'),...apps.map(a=>option(a,a)));if(apps.includes(app))$('application').value=app;
  const previous=$('session').value,sessions=new Map(data.calls.map(c=>[c.sessionId,c.sessionName]));
  $('session').replaceChildren(option('all','全部会话'),...[...sessions].map(([id,name])=>option(id,name)));
  if(sessions.has(previous))$('session').value=previous;await requests();
  }catch(e){if(n===loadGeneration)failure(e);}finally{if(n===loadGeneration)loading=false;}}
+$('collector').onchange=()=>{selected=null;load();};$('application').onchange=requests;
 $('device').onchange=()=>{selected=null;load();};$('session').onchange=requests;$('request').onchange=hydrate;$('search').oninput=render;
 $('view-tabs').onclick=e=>{const b=e.target.closest('button');if(b){view=b.dataset.view;render();}};
 $('detail-tabs').onclick=e=>{const b=e.target.closest('button');if(b){tab=b.dataset.tab;render();}};
 $('copy').onclick=async()=>{try{await navigator.clipboard.writeText(readerText());set('status','已复制当前原文');}catch(e){set('status','复制失败，请选择原文后复制');}};
-$('export').onclick=()=>{const c=call();if(!c)return;const url=URL.createObjectURL(new Blob([c.body],{type:'text/plain;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='model-input-'+c.id.slice(0,12)+'.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+$('export').onclick=()=>{const c=call();if(!c)return;const url=URL.createObjectURL(new Blob([c.body],{type:'text/plain;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download='model-input-'+c.id.replace(':','-').slice(0,24)+'.txt';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 $('text-search').oninput=()=>{findAt=-1;};
 $('find').onclick=()=>{const text=readerText(),q=$('text-search').value;if(!q)return;let at=text.toLowerCase().indexOf(q.toLowerCase(),findAt+1);if(at<0)at=text.toLowerCase().indexOf(q.toLowerCase());set('match-status',at<0?'未找到':'字符 '+at);if(at<0)return;findAt=at;
  const pre=$('original');pre.replaceChildren(document.createTextNode(text.slice(0,at)));const mark=document.createElement('mark');mark.textContent=text.slice(at,at+q.length);pre.append(mark,document.createTextNode(text.slice(at+q.length)));mark.scrollIntoView({block:'nearest'});};
@@ -52,6 +53,6 @@ $('find').onclick=()=>{const text=readerText(),q=$('text-search').value;if(!q)re
  if(list.items.some(d=>d.id===params.get('device')))$('device').value=params.get('device');await load();
  }catch(e){failure(e);}})();
 const retry=document.createElement('button');retry.textContent='重试读取';retry.type='button';retry.onclick=load;$('status').after(retry);
-const audit=document.createElement('a');audit.textContent='交互审计与安全检测 ↗';audit.href='/model-security';$('identity').parentElement.append(audit);audit.onclick=()=>{audit.href='/model-security?device='+encodeURIComponent($('device').value)+(call()?'&request='+encodeURIComponent(call().id):'');};
+const audit=document.createElement('a');audit.textContent='交互审计与安全检测 ↗';audit.href='/model-security';$('identity').parentElement.append(audit);audit.onclick=()=>{audit.href='/model-security?device='+encodeURIComponent($('device').value)+(call()?.collector==='applens'?'&request='+encodeURIComponent(call().id):'');};
 setInterval(()=>{if(!document.hidden&&!loading&&!$('text-search').value)load();},60000);
 })();

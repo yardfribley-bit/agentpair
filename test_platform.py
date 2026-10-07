@@ -55,9 +55,24 @@ class PlatformTests(unittest.TestCase):
         csrf=self.call('/api/login',{'username':'admin','password':'test-password-long-enough'})['csrf']
         with self.assertRaises(urllib.error.HTTPError) as error:self.call('/api/cloud/start',{'leaseId':'a'*24},csrf)
         self.assertEqual(error.exception.code,503);error.exception.close()
+    def test_sessionlens_device_and_model_data_in_unified_routes(self):
+        csrf=self.call('/api/login',{'username':'admin','password':'test-password-long-enough'})['csrf']
+        pair=self.call('/api/devices/pairing',{},csrf)
+        device=self.call('/api/endpoint/enroll',{'code':pair['code'],'name':'Session-only Mac'})
+        event={'schemaVersion':1,'id':'b'*64,'source':'workbuddy','sessionId':'weather','kind':'user_message','timestamp':1700000000,'payload':{'text':'上海天气'},'evidence':{'line':1}}
+        self.call('/api/sessionlens/events',{'schemaVersion':1,'events':[event]},bearer=device['token'])
+        rows=self.call('/api/devices')['items'];self.assertEqual(rows[0]['collectors'][0]['name'],'SessionLens')
+        data=self.call('/api/devices/model-data/'+device.get('deviceId',device.get('id'))+'?summary=1')
+        self.assertEqual(data['calls'][0]['collector'],'sessionlens')
+        detail=self.call('/api/devices/model-data/'+device.get('deviceId',device.get('id'))+'?request=sessionlens:'+event['id'])
+        self.assertIn('上海天气',detail['items'][0]['rawContent'])
+
     def test_model_data_route_is_private_and_serves_prototype(self):
         with self.client.open(self.url+'/model-data') as response:
-            self.assertIn('模型上下文 · 原文与分类',response.read().decode())
+            body=response.read().decode()
+            self.assertIn('模型数据 · 原文与分类',body)
+            self.assertIn('id="collector"',body)
+            self.assertIn('SessionLens',body)
         with self.assertRaises(urllib.error.HTTPError) as error:self.call('/api/devices/model-data/unknown')
         self.assertEqual(error.exception.code,401);error.exception.close()
     def test_interaction_audit_requires_owner_and_renders_assets(self):
@@ -101,7 +116,7 @@ class PlatformTests(unittest.TestCase):
         newer={**older,'id':'b'*64,'timestamp':2,'body':json.dumps([{'role':'user','content':'newer'}])}
         store.ingest_model_context(device['token'],{'requests':[older,newer]})
         self.call('/api/login',{'username':'admin','password':'test-password-long-enough'})
-        audit=self.call('/api/devices/interaction-audit/'+device['deviceId']+'?request='+older['id'])
+        audit=self.call('/api/devices/interaction-audit/'+device.get('deviceId',device.get('id'))+'?request='+older['id'])
         self.assertEqual(audit['audit']['request']['id'],older['id'])
         self.assertEqual(audit['audit']['task']['text'],'older')
         for route in ('/','/devices','/model-data'):
