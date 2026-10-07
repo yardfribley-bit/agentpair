@@ -29,3 +29,6 @@ input,textarea,select{display:block;width:100%;padding:12px;border:1px solid #35
 .assistant-dialogue article{max-width:92%}
 .assistant-dialogue h3,#deliverables h3{font-size:14px;margin:16px 0 8px}
 @media(max-width:760px){.assistant-page #reply-form{left:0;padding:10px 16px}}
+
+#new-reply-button{position:fixed;bottom:calc(var(--composer-height,200px) + 12px);right:28px;z-index:12;background:#1769ed;color:#fff;border-radius:24px;padding:10px 18px;box-shadow:0 4px 12px #163d6520}
+#deliverables .final-answer[role=status]{border-left:3px solid #1769ed;padding-left:12px;line-height:1.7}
