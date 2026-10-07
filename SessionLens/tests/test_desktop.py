@@ -35,3 +35,12 @@ class DesktopTests(unittest.TestCase):
             self.assertEqual(c.db.execute('SELECT count(*) FROM display_index').fetchone()[0],4)
             statements=[];c.db.set_trace_callback(statements.append);runtime.index(c)
             self.assertFalse(any('NOT EXISTS' in sql for sql in statements));c.db.close()
+
+    def test_recent_upload_and_history_both_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p=Path(tmp)/'task.jsonl';p.write_text(''.join(json.dumps({'type':'message','sessionId':'s','role':'user','content':str(n)})+'\n' for n in range(10)))
+            c=Collector(Path(tmp)/'db');c.scan(p,source='workbuddy')
+            newest=c.pending('d',limit=2,recent=True);oldest=c.pending('d',limit=2)
+            self.assertEqual([e['payload']['content'] for e in newest],['9','8'])
+            self.assertEqual([e['payload']['content'] for e in oldest],['0','1'])
+            c.acknowledge('d',[e['id'] for e in newest+oldest]);self.assertEqual(len(c.pending('d')),6);c.db.close()

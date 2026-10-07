@@ -90,7 +90,7 @@ class Runtime:
                             if p.is_dir():files.extend((source,f) for f in p.rglob('rollout*.jsonl' if source=='codex' else '*.jsonl'))
                     files=list(dict.fromkeys(files));self.update(files=len(files),bytes=sum(p.stat().st_size for _,p in files if p.exists()));files.sort(key=lambda x:x[1].stat().st_mtime if x[1].exists() else 0,reverse=True);discover=time.monotonic()
                 for source,p in files:
-                    if self.stop.is_set():break
+                    if self.stop.is_set() or time.monotonic()-discover>15:break
                     try:
                         st=p.stat();signature=(st.st_ino,st.st_size,st.st_mtime_ns)
                         if seen.get(str(p))==signature:continue
@@ -99,7 +99,6 @@ class Runtime:
                         previous=old_cursor[0] if old_cursor else -1
                         c.scan(p,100,source)
                         self.stop.wait(.01)
-                        self.index(c)
                         self.update(read=c.db.execute('SELECT COALESCE(sum(offset),0) FROM cursors').fetchone()[0])
                         offset=c.db.execute('SELECT offset FROM cursors WHERE path=?',(str(p.resolve()),)).fetchone()[0]
                         if offset>=st.st_size or offset==previous:seen[str(p)]=signature
@@ -128,7 +127,7 @@ class Runtime:
             if state is None or cursor!=state[0]:
                 c.db.execute("INSERT OR REPLACE INTO display_state VALUES('indexed_rowid',?)",(cursor,))
     def upload(self):
-        c=Collector(self.path);delay=1
+        c=Collector(self.path);delay=1;upload_round=0
         try:
             while not self.stop.is_set():
                 endpoint=self.config.get('endpoint','')
@@ -138,8 +137,10 @@ class Runtime:
                 if parsed.scheme!='https' or not parsed.netloc or parsed.username or parsed.password:
                     self.update(upload='上报地址必须使用 HTTPS');self.stop.wait(2);continue
                 try:
-                    items=c.pending(self.destination,limit=5,sources=[s for s,cfg in self.config['sources'].items() if cfg['enabled']])
-                    if not items:self.update(upload='等待新数据');self.stop.wait(1);continue
+                    sources=[s for s,cfg in self.config['sources'].items() if cfg['enabled']]
+                    source=[sources[upload_round%len(sources)]] if sources else []
+                    items=c.pending(self.destination,limit=5,recent=(upload_round//max(1,len(sources)))%2==0,sources=source)
+                    if not items:upload_round+=1;self.update(upload='等待新数据');self.stop.wait(1);continue
                     self.update(upload=f'正在发送 {len(items)} 份记录')
                     req=urllib.request.Request(endpoint,json.dumps({'schemaVersion':1,'events':items},ensure_ascii=False).encode(),{'Content-Type':'application/json','Authorization':'Bearer '+self.token},method='POST')
                     class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -147,7 +148,7 @@ class Runtime:
                     with urllib.request.build_opener(NoRedirect()).open(req,timeout=15) as r:receipt=json.load(r)
                     ids=[e['id'] for e in items]
                     if not isinstance(receipt.get('ids'),list) or sorted(receipt['ids'])!=sorted(ids):raise ValueError('平台回执不完整，保留队列重试')
-                    c.acknowledge(self.destination,ids);delay=1;self.update(upload='平台已确认接收',receipt=time.time());self.stop.wait(10)
+                    c.acknowledge(self.destination,ids);upload_round+=1;delay=1;self.update(upload='平台已确认接收',receipt=time.time());self.stop.wait(10)
                 except Exception as exc:
                     self.update(upload=f'上报失败：{type(exc).__name__} · {str(exc)[:160]}');self.stop.wait(delay);delay=min(delay*2,30)
         finally:c.db.close()
