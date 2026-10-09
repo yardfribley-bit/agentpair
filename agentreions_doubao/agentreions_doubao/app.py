@@ -422,6 +422,8 @@ class MainWindow(QMainWindow):
         for role in [QPalette.ColorRole.WindowText, QPalette.ColorRole.Text]:
             palette.setColor(role, QColor("#DFE6EF"))
         self.setPalette(palette)
+        if QApplication.instance():
+            QApplication.instance().setPalette(palette)
         self.resize(1500, 960)
         self.setMinimumSize(1060, 680)
         self.setStyleSheet(STYLE)
@@ -954,6 +956,8 @@ class MainWindow(QMainWindow):
         self.process_preview.setPlainText(plain(step.get("summary") or step.get("content") or title))
         if step.get("callId"):
             self.step_layout.addWidget(label("调用标识  " + str(step["callId"]), "muted", True))
+        if step.get("nativeOnly"):
+            self.step_layout.addWidget(label("这一步来自本机执行日志；日志只保存了部分调用字段。", "amber"))
         summary = "" if result_projection else step.get("summary") or ""
         if kind == "user_feedback":
             pairs = feedback_pairs(step.get("content") or summary)
@@ -991,9 +995,14 @@ class MainWindow(QMainWindow):
             if "arguments" not in step or step.get("arguments") is None:
                 self.step_layout.addWidget(label("调用参数：本记录未取得", "amber"))
             else:
-                self.step_layout.addWidget(payload_panel("完整调用参数", step.get("arguments"), "toolArguments", 175))
+                argument_title = "调用参数 · 日志已记录字段" if step.get("nativeOnly") else "完整调用参数"
+                self.step_layout.addWidget(payload_panel(argument_title, step.get("arguments"), "toolArguments", 175))
         result = decode(step.get("result"))
-        if result is not None and result != "":
+        native_status_only = isinstance(result, dict) and result.get("contentCoverage") == "not_recorded_in_native_log"
+        if native_status_only:
+            self.step_layout.addWidget(label("工具执行状态：" + str(result.get("status") or "未记录"), "section"))
+            self.step_layout.addWidget(label("完整工具返回正文：本机日志未保存；当前只取得执行状态。", "amber"))
+        elif result is not None and result != "":
             result_title = label("工具实际返回", "section")
             self.step_layout.addWidget(result_title)
             readable = self.result_summary(result)
@@ -1305,6 +1314,9 @@ class MainWindow(QMainWindow):
         if not actual:
             box.addWidget(label("本次制作尚未取得可关联的 HTTP 请求记录", "amber"))
             box.addWidget(label("生成接口地址、HTTP 方法、请求头、请求体和响应体目前均未取得。已有 image_to_video 等工具参数及视频 CDN 地址，可在工具详情和素材区查看。", None, True))
+            count = collection.get("parsedHttpRecords", coverage.get("parsedHttpRecords")) if isinstance(collection, dict) else None
+            if count is not None:
+                box.addWidget(label(f"本机日志中已识别 {count} 条 HTTP 记录，当前制作未取得明确关联。", "muted", True))
         else:
             box.addWidget(label(f"{len(actual)} 条与当前制作有证据关联的接口记录", "status"))
         self.interface_layout.addWidget(overview)

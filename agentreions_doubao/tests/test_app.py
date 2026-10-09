@@ -149,6 +149,22 @@ class DesktopContractTests(unittest.TestCase):
     def test_windows_path_basename_does_not_depend_on_host_platform(self):
         self.assertEqual(path_name(r"C:\Users\User\Videos\result.mp4"), "result.mp4")
 
+    def test_native_status_only_does_not_claim_full_tool_return(self):
+        data = fixture();data["revision"] = 2
+        step = data["sessions"][0]["steps"][1]
+        step.update(toolName="Read", nativeOnly=True, arguments={"fileName": "SKILL.md", "filePathCoverage": "basename_only"},
+                    result={"status": "success", "contentCoverage": "not_recorded_in_native_log"})
+        self.window.accept_snapshot(data)
+        self.assertIn("完整工具返回正文：本机日志未保存", self.labels())
+        self.assertIn("调用参数 · 日志已记录字段", self.labels())
+
+    def test_prior_worker_epoch_cannot_replace_current_snapshot(self):
+        before = self.window.snapshot_data
+        self.window.worker_epoch = 2
+        stale = fixture();stale["revision"] = 999;stale["_collectorEpoch"] = 1
+        self.window.accept_snapshot(stale)
+        self.assertIs(self.window.snapshot_data, before)
+
     def test_directory_setting_is_local_to_explicit_db(self):
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root) / "doubao"
