@@ -4,6 +4,7 @@ Explicit continuations can be linked locally. Unclear references stay unresolved
 this projection never invents a final specification from conflicting user turns.
 """
 import re,hashlib,json
+from contextlib import nullcontext
 
 VERSION = 1
 CLASSIFIER_VERSION = 5
@@ -152,21 +153,81 @@ def classify(text, active, roots):
     return None, 'request', '独立需求；没有足够的承接证据'
 
 
+def _session_inputs(db, source, session):
+    """Exact compact inputs, scoped to this stream rather than all DB writes."""
+    scope = (source, session)
+    return {
+        'turns': [tuple(row) for row in db.execute('''SELECT t.id,t.prompt,t.updated,t.state,t.last_row,e.rowid
+            FROM tasks t JOIN events e ON e.id=t.id WHERE t.source=? AND t.session=? ORDER BY e.rowid''', scope)],
+        'steps': [tuple(row) for row in db.execute('''SELECT s.event,s.task,s.kind,s.call_id,s.seq
+            FROM task_steps s JOIN tasks t ON t.id=s.task WHERE t.source=? AND t.session=? ORDER BY s.seq,s.event''', scope)],
+        'overrides': [tuple(row) for row in db.execute('''SELECT o.turn_task,o.target_turn
+            FROM task_link_overrides o JOIN tasks t ON t.id=o.turn_task
+            WHERE t.source=? AND t.session=? ORDER BY o.turn_task''', scope)],
+        'semantic': [tuple(row) for row in db.execute('''SELECT l.turn_task,l.parent_turn,l.relation,l.reason,l.signature,l.evidence_turns
+            FROM task_semantic_links l JOIN tasks t ON t.id=l.turn_task
+            WHERE t.source=? AND t.session=? ORDER BY l.turn_task''', scope)],
+        'queue': db.execute('SELECT updated FROM task_link_queue WHERE source=? AND session=?', scope).fetchone(),
+    }
+
+
+def _session_projection(db, source, session):
+    scope = (source, session)
+    queries = {
+        'task_links': '''SELECT l.turn_task,l.root,l.seq,l.relation,l.reason FROM task_links l
+            JOIN tasks t ON t.id=l.turn_task WHERE t.source=? AND t.session=?''',
+        'task_executions': '''SELECT x.event,x.task,x.turn_event,x.requirement_event,x.approval_event,x.plan_event
+            FROM tasks t JOIN task_steps s ON s.task=t.id JOIN task_executions x ON x.event=s.event
+            WHERE t.source=? AND t.session=?''',
+        'task_step_owners': '''SELECT o.event,o.task,o.turn_event
+            FROM tasks t JOIN task_steps s ON s.task=t.id JOIN task_step_owners o ON o.event=s.event
+            WHERE t.source=? AND t.session=?''',
+        'task_groups': 'SELECT id,source,session,prompt,updated,state,last_row,search,requirements,turn_count FROM task_groups WHERE source=? AND session=?',
+    }
+    return {table: {row[0]: tuple(row) for row in db.execute(query, scope)}
+            for table, query in queries.items()}
+
+
 def rebuild_session(db,source,session):
-    # Read and replace one projection atomically so collection cannot overwrite
-    # a newly reviewed/user-corrected relationship with a stale calculation.
-    with db:
-        if not db.in_transaction:db.execute('BEGIN IMMEDIATE')
-        return _rebuild_session(db,source,session)
+    # Normal repair releases its short read snapshot before classification.
+    # A caller already in a transaction (semantic review) retains its atomic
+    # input update and projection, rather than committing the caller's work.
+    if not db.in_transaction:
+        with db:
+            db.execute('BEGIN')
+            inputs = _session_inputs(db, source, session)
+            previous = _session_projection(db, source, session)
+    else:
+        inputs = _session_inputs(db, source, session)
+        previous = _session_projection(db, source, session)
+    return _rebuild_session(db,source,session,inputs,previous)
 
 
-def _rebuild_session(db, source, session):
+def _projection_delta(previous, rows):
+    current = {row[0]: row for row in rows}
+    changed = [row for identity, row in current.items() if previous.get(identity) != row]
+    return changed, previous.keys() - current.keys()
+
+
+def _write_delta(db, table, columns, changed, removed):
+    """Only changed/new tuples reach SQLite; comparison work stays outside lock."""
+    key = columns[0]
+    db.executemany('DELETE FROM '+table+' WHERE '+key+'=?', [(identity,) for identity in removed])
+    updates = ','.join(column+'=excluded.'+column for column in columns[1:])
+    differs = ' OR '.join(table+'.'+column+' IS NOT excluded.'+column for column in columns[1:])
+    db.executemany('INSERT INTO '+table+'('+','.join(columns)+') VALUES('+','.join('?' for _ in columns)+
+                   ') ON CONFLICT('+key+') DO UPDATE SET '+updates+' WHERE '+differs, changed)
+
+
+def _rebuild_session(db, source, session, inputs=None, previous=None):
     """Only read compact derived turns/step metadata; no raw-body/history rescan."""
+    if inputs is None:
+        return rebuild_session(db, source, session)
     from .supervision import readable
-    turns = db.execute('SELECT t.id,t.prompt,t.updated,t.state,t.last_row,e.rowid FROM tasks t JOIN events e ON e.id=t.id WHERE t.source=? AND t.session=? ORDER BY e.rowid', (source, session)).fetchall()
+    turns = inputs['turns']
     groups = {}; links = []; active = None; versions = {}; approvals = {}; snapshots = {}
-    overrides=dict(db.execute('SELECT o.turn_task,o.target_turn FROM task_link_overrides o JOIN tasks t ON t.id=o.turn_task WHERE t.source=? AND t.session=?',(source,session)))
-    semantic={turn:(parent,role,reason) for turn,parent,role,reason in db.execute('SELECT l.turn_task,l.parent_turn,l.relation,l.reason FROM task_semantic_links l JOIN tasks t ON t.id=l.turn_task WHERE t.source=? AND t.session=?',(source,session))}
+    overrides=dict(inputs['overrides'])
+    semantic={turn:(parent,role,reason) for turn,parent,role,reason,_,_ in inputs['semantic']}
     for identity, prompt, updated, state, last, seq in turns:
         if not readable(prompt, user=True) or prompt.startswith('The following is the Codex agent history'): continue
         # Retain all originals, including mirrored user events inside a turn.
@@ -199,11 +260,16 @@ def _rebuild_session(db, source, session):
         elif relation in ('revision', 'resume', 'discussion'): approvals[root] = None
         snapshots[identity] = (root, versions.get(root, identity), approvals.get(root))
         links.append((identity, root, seq, relation, reason)); active = group
-    steps = db.execute('SELECT s.event,s.task,s.kind,s.call_id,s.seq FROM task_steps s JOIN tasks t ON t.id=s.task WHERE t.source=? AND t.session=? ORDER BY s.seq', (source,session)).fetchall()
+    steps = inputs['steps']
     bindings = []; calls = {}; owners=[];last_reply={};approved_plan={};seen_turns=set()
     relations={turn:role for turn,root,seq,role,reason in links}
     for identity, turn, kind, call, seq in steps:
-        if turn not in snapshots: continue
+        if turn not in snapshots:
+            # Unreadable/background turns have no classified snapshot, but the
+            # original turn-to-step mapping must remain addressable.
+            owner = previous['task_step_owners'].get(identity)
+            owners.append(owner if owner and owner[2] == turn else (identity,turn,turn))
+            continue
         root, requirement, approval = snapshots[turn]
         if turn not in seen_turns:
             role=relations[turn]
@@ -226,14 +292,30 @@ def _rebuild_session(db, source, session):
             from .supervision import timestamp
             updated=db.execute("SELECT json_extract(event,'$.timestamp') FROM events WHERE id=?",(identity,)).fetchone()
             groups[root].update(last=seq,updated=timestamp(updated[0]) if updated else groups[root]['updated'])
-    with db:
-        db.execute('DELETE FROM task_executions WHERE event IN (SELECT s.event FROM task_steps s JOIN tasks t ON s.task=t.id WHERE t.source=? AND t.session=?)', (source,session))
-        db.execute('DELETE FROM task_links WHERE turn_task IN (SELECT id FROM tasks WHERE source=? AND session=?)', (source,session))
-        db.execute('DELETE FROM task_groups WHERE source=? AND session=?', (source,session))
-        db.executemany('INSERT INTO task_links VALUES(?,?,?,?,?)', links)
-        db.executemany('INSERT INTO task_executions VALUES(?,?,?,?,?,?)', bindings)
-        db.executemany('INSERT OR REPLACE INTO task_step_owners VALUES(?,?,?)',owners)
-        db.executemany('INSERT INTO task_groups VALUES(?,?,?,?,?,?,?,?,?,?)', [(g['id'],source,session,g['prompt'],g['updated'],g['state'],g['last'],g['requirements'],g['requirements'],g['count']) for g in groups.values()])
+    projected = {
+        'task_links': (('turn_task','root','seq','relation','reason'), links),
+        'task_executions': (('event','task','turn_event','requirement_event','approval_event','plan_event'), bindings),
+        'task_step_owners': (('event','task','turn_event'), owners),
+        'task_groups': (('id','source','session','prompt','updated','state','last_row','search','requirements','turn_count'),
+                        [(g['id'],source,session,g['prompt'],g['updated'],g['state'],g['last'],g['requirements'],g['requirements'],g['count']) for g in groups.values()]),
+    }
+    deltas = {table: (columns, *_projection_delta(previous[table], rows))
+              for table, (columns, rows) in projected.items()}
+    owns_write = not db.in_transaction
+    with db if owns_write else nullcontext():
+        if owns_write:db.execute('BEGIN IMMEDIATE')
+        current = _session_inputs(db, source, session)
+        if current != inputs or _session_projection(db, source, session) != previous:
+            # The same session advanced or was manually/semantically reviewed
+            # during calculation. Leave existing projections untouched and
+            # preserve retry work even when an override did not advance seq.
+            # Checking the projection baseline also catches input A -> B -> A
+            # while another review has already replaced the old projection.
+            seq = max([row[4] for row in current['turns']] + [row[4] for row in current['steps']] + [0])
+            enqueue(db, source, session, seq)
+            return 0
+        for table, (columns, changed, removed) in deltas.items():
+            _write_delta(db, table, columns, changed, removed)
         db.execute('DELETE FROM task_link_queue WHERE source=? AND session=?', (source,session))
     return len(links)
 

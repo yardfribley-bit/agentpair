@@ -13,3 +13,16 @@ runs/
 android/build/
 
 .agentreins_v2-dev/
+
+# Local builds and captured evidence are separate from published source.
+agentpair/web_assets/*.apk
+agentpair/web_assets/*.zip
+demo/*.mp4
+design/task-cases/
+design/*.png
+design/model-context-v2/*.png
+docs/qa/data-center-portrait-v2/
+docs/qa/data-center-security-v1/
+docs/qa/unified-product-ui-images/
+marketing/videogen-demo/*.jpg
+marketing/videogen-demo/validation.json

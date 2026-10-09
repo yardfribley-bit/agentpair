@@ -4,7 +4,7 @@ body.agentpair-web{margin:0;display:grid;grid-template-columns:var(--ap-sidebar)
 .agentpair-web *{box-sizing:border-box}.agentpair-web [hidden],.agentpair-web .hidden{display:none!important}
 body.agentpair-web>aside{position:sticky;top:0;inset:auto;width:var(--ap-sidebar);height:100vh;min-height:0;padding:22px 12px;background:#fff;border-right:1px solid var(--ap-border);display:flex;flex-direction:column;overflow:auto;z-index:20}
 .agentpair-web>aside .brand{display:flex;align-items:center;gap:9px;margin:0 7px 4px;font-size:20px;line-height:1.4;font-weight:650;color:var(--ap-text);text-decoration:none}
-.agentpair-web .brand>span{font-size:20px;font-weight:650;color:var(--ap-text)}.agentpair-web .brand small{font-size:11px;letter-spacing:0;color:var(--ap-muted);font-weight:400;margin-top:4px}
+.agentpair-web .brand>span{font-size:20px;font-weight:650;color:var(--ap-text)}.agentpair-web .brand small{display:block;font-size:11px;letter-spacing:0;color:var(--ap-muted);font-weight:400;margin-top:4px}
 .agentpair-web>aside>small{color:var(--ap-muted);font-size:11px;letter-spacing:0;margin:4px 8px 15px}
 .agentpair-web>aside nav,.agentpair-web>aside .primary-nav{display:grid;gap:4px;margin:22px 0 16px;padding:0}
 .agentpair-web>aside nav a{display:flex;align-items:center;gap:10px;min-height:38px;white-space:normal;margin:0;padding:9px 11px;font-size:13px;font-weight:400;border:0;border-radius:7px;color:#455265;box-shadow:none;text-decoration:none}

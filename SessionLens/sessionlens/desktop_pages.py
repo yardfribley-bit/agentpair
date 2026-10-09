@@ -214,7 +214,8 @@ class CollectionPage(QWidget):
         self.indexed = label('')
         self.upload = label('')
         self.receipt = label('')
-        for item in (self.saved, self.indexed, self.upload, self.receipt):
+        self.queue = label('')
+        for item in (self.saved, self.indexed, self.upload, self.receipt, self.queue):
             inner.addWidget(item)
         self.directory = label(str(collector.root))
         self.directory.setProperty('i18nSkip', True)
@@ -255,7 +256,11 @@ class CollectionPage(QWidget):
             cfg = self.collector.config.get('sources', {}).get(source, {})
             roots = cfg.get('roots', [])
             state.setText(t('已启用' if cfg.get('enabled') else '未启用'))
-            location.setText('\n'.join(str(path) for path in roots) or t('尚未配置日志目录'))
+            source_queue=status.get('upload_queue',{}).get('sources',{}).get(source,{})
+            latest=source_queue.get('newest_source_time')
+            latest_text=datetime.fromtimestamp(latest).strftime('%m-%d %H:%M:%S') if isinstance(latest,(int,float)) else ''
+            progress=(t('最新待上报源时间')+' · '+latest_text+'\n') if latest_text else ''
+            location.setText(progress+('\n'.join(str(path) for path in roots) or t('尚未配置日志目录')))
             badge(state, 'running' if cfg.get('enabled') else 'neutral')
         # Statistics stay out of the frequent assistant timer path, and the
         # visible collection page refreshes aggregate SQL at most every 5 sec.
@@ -283,4 +288,12 @@ class CollectionPage(QWidget):
         when = status.get('receipt')
         receipt = datetime.fromtimestamp(when).strftime('%m-%d %H:%M:%S') if isinstance(when, (int, float)) else ''
         self.receipt.setText(t('平台已确认接收') + ' · ' + str(ack) + ((' · ' + receipt) if receipt else '') if ack else t('尚未取得平台回执'))
+        queue=status.get('upload_queue',{})
+        pending=max(0,total-ack) if isinstance(ack,int) else None
+        text=t('最新优先 75% · 历史保底 25% · 空闲份额可互用')
+        if pending is not None:text+='\n'+t('本机记录待平台确认')+' · '+str(pending)
+        if queue:
+            text+=' · '+t('退避重试')+' '+str(queue.get('retrying',0))+' · '+t('超大记录保留本机')+' '+str(queue.get('oversize',0))
+            if queue.get('unindexed'):text+='\n'+t('历史上报索引待整理')+' · '+str(queue['unindexed'])
+        self.queue.setText(text)
         localize_widgets(self)

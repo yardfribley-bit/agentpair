@@ -1,0 +1,6 @@
+build/
+*-evidence*.json
+*.mp4
+*.aiff
+*.jpg
+validation.json

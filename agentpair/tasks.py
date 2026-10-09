@@ -199,7 +199,8 @@ class TaskEngine:
             return copy.deepcopy(task)
 
     def _check_active_capacity(self):
-        if sum(t['status'] in ('queued','running','cancelling') for t in self.list())>=20:
+        insights_active=self.session_insights.active_count() if getattr(self,'session_insights',None) else 0
+        if sum(t['status'] in ('queued','running','cancelling') for t in self.list())+insights_active>=20:
             raise Limit('当前已有 20 个任务正在排队或运行，请等待任务完成后再提交。历史任务数量不受限制。')
 
     def followup(self, tid, message):
@@ -422,5 +423,6 @@ class TaskEngine:
             self.process(tid); self.jobs.task_done()
 
     def close(self):
+        if getattr(self,'session_insights',None):self.session_insights.close()
         self.stop.set()
         if self.thread: self.thread.join(timeout=1)

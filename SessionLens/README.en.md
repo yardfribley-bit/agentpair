@@ -27,6 +27,8 @@ Choose a matching task if several records fit your question. Project and count q
 
 Collection supports both Codex and WorkBuddy. Uploading requires a configured endpoint and device token. Without them, records stay on this device. A configured assistant model receives the relevant evidence used to answer a question. Local embedding search does not upload logs. The bundled embedding setup currently uses a Chinese BGE model; English query recognition is supported, but cross-language semantic retrieval has not passed a separate accuracy evaluation.
 
+Recent logs use a separate tail checkpoint while historical gaps continue to recover. Upload scheduling gives three slots to records with the newest source timestamps and one slot to history, rotating both sources independently. Idle shares can be borrowed. Batches contain at most 30 events and 2,096,000 bytes; exact server receipts are required before marking them received. Failed records back off individually, and oversized evidence stays on the device. Scheduling checkpoints and receipts survive restart. Derived task relationships update only changed entries; SQLite still has one writer, so actual source-to-platform delay must be checked during operation.
+
 ## Development
 
 ```sh

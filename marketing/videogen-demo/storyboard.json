@@ -1,0 +1,44 @@
+[
+  {
+    "id": "opening",
+    "duration": 5,
+    "title": "Agent 说完成了。你能核实吗？",
+    "voice": "Agent 说，视频已经生成。你能看清，它到底做了什么吗？"
+  },
+  {
+    "id": "search",
+    "duration": 6,
+    "title": "一条搜索，找到工具调用",
+    "voice": "打开 AgentPair 数据中心，搜索 VideoGen，查看工具调用记录。"
+  },
+  {
+    "id": "request",
+    "duration": 7,
+    "title": "找回用户需求，定位 Agent 与设备",
+    "voice": "回到用户需求，核对输出规格。哪台设备，哪个 Agent，调用了哪个工具，都有记录。"
+  },
+  {
+    "id": "parameters",
+    "duration": 8,
+    "title": "看清真正交给工具的内容",
+    "voice": "展开提示词和参数，看到交给工具的内容。画面比例、分辨率、音频设置，逐项核对。"
+  },
+  {
+    "id": "verification",
+    "duration": 8,
+    "title": "把要求与核验结果放在一起",
+    "voice": "工具返回完成，还要查看文件核验。把用户要求与实际结果，放在一起看。"
+  },
+  {
+    "id": "chain",
+    "duration": 6,
+    "title": "从用户提问，到结果核验",
+    "voice": "从提问、调用、返回，到文件核验，沿着已记录的过程，追溯到底。"
+  },
+  {
+    "id": "closing",
+    "duration": 5,
+    "title": "让 Agent 的每次行动，有据可查",
+    "voice": "AgentPair，让 Agent 的每次行动，有据可查。"
+  }
+]

@@ -48,6 +48,9 @@ class DeviceStore:
         from .credential_threats import CredentialThreats
         self.credential_threats=CredentialThreats(self.connect)
         self.credential_threats.backfill()
+        with self.connect() as db:
+            for alias in db.execute('SELECT alias,canonical FROM device_aliases').fetchall():
+                self._merge_security_reviews(db,alias['canonical'],alias['alias'])
 
     def interaction_audit(self,owner,device_id,request_id=None,global_view=False):
         from .interaction_audit import build_audit,redact
@@ -88,11 +91,20 @@ class DeviceStore:
         with self.connect() as db:
             db.execute('INSERT OR REPLACE INTO security_reviews VALUES(?,?,?,?,?)',(device_id,request_id,body_hash,task_id,time.time()))
 
+    @staticmethod
+    def _merge_security_reviews(db,canonical,alias):
+        for review in db.execute('SELECT * FROM security_reviews WHERE device_id=?',(alias,)).fetchall():
+            context=db.execute('SELECT data FROM applens_model_context WHERE device_id=? AND request_id=?',(canonical,review['request_id'])).fetchone()
+            if context and digest(json.loads(context['data'])['body'])==review['body_hash']:
+                db.execute('INSERT INTO security_reviews VALUES(?,?,?,?,?) ON CONFLICT(device_id,request_id,body_hash) DO UPDATE SET task_id=excluded.task_id,created=excluded.created WHERE excluded.created>security_reviews.created',
+                           (canonical,review['request_id'],review['body_hash'],review['task_id'],review['created']))
+
     def security_review(self,device_id,request_id,body_hash,engine):
         with self.connect() as db:
             row=db.execute('SELECT task_id FROM security_reviews WHERE device_id=? AND request_id=? AND body_hash=?',(device_id,request_id,body_hash)).fetchone()
         if row is None:return None
-        task=engine.get(row['task_id'])
+        try:task=engine.get(row['task_id'])
+        except KeyError:return {'taskId':row['task_id'],'status':'unavailable','stages':[],'taskAvailable':False}
         stages=[]
         for m in task.get('messages',[]):
             if m.get('stage') not in ('plan','driver','review'):continue
@@ -168,7 +180,8 @@ class DeviceStore:
                 'limitations':['已收到 HTTP 请求正文；长度和哈希校验不证明模型服务处理成功。' if network else '尚无 HTTP 请求正文证据；日志记录不证明完整发送内容。']}
 
     def model_analysis_context(self, owner, device_id, request_id):
-        data=self.llm_data(owner,device_id)
+        data=self.llm_data(owner,device_id,request_id=request_id)
+        device_id=data['device']['id']
         call=next((c for c in data['calls'] if c['id']==request_id),None)
         if call is None:raise ValueError('调用不存在或不属于此设备')
         from .interaction_audit import build_audit
@@ -212,12 +225,26 @@ class DeviceStore:
             for device_id in [canonical,*aliases]:
                 row=db.execute('SELECT owner,revoked FROM devices WHERE id=?',(device_id,)).fetchone()
                 if not row or row['owner']!=owner or row['revoked']:raise PermissionError('Invalid merge ownership')
+            if db.execute('SELECT 1 FROM device_aliases WHERE alias=?',(canonical,)).fetchone():raise ValueError('Canonical device is already an alias')
             for alias in aliases:
                 if alias==canonical:raise ValueError('Cannot alias canonical device')
+                prior=db.execute('SELECT canonical FROM device_aliases WHERE alias=?',(alias,)).fetchone()
+                if prior:
+                    if prior['canonical']==canonical:continue
+                    raise ValueError('Device is already merged into another asset')
+                incoming=db.execute('SELECT request_id,data FROM applens_model_context WHERE device_id=?',(alias,)).fetchall()
+                for context in incoming:
+                    current=db.execute('SELECT data FROM applens_model_context WHERE device_id=? AND request_id=?',(canonical,context['request_id'])).fetchone()
+                    if current and json.loads(current['data'])['body']!=json.loads(context['data'])['body']:
+                        raise ValueError('Conflicting request bodies; device merge would lose evidence')
                 db.execute('INSERT OR REPLACE INTO device_aliases VALUES(?,?,?)',(alias,canonical,owner))
                 for table,key in [('applens_model_context','request_id'),('applens_llm_spans','span_id'),('applens_llm_evidence','item_id')]:
                     db.execute('INSERT OR IGNORE INTO '+table+' SELECT ?, '+key+',data,received FROM '+table+' WHERE device_id=?',(canonical,alias))
                     db.execute('DELETE FROM '+table+' WHERE device_id=?',(alias,))
+                self.credential_threats.merge_device(db,canonical,alias)
+                self._merge_security_reviews(db,canonical,alias)
+                db.execute('UPDATE device_aliases SET canonical=? WHERE canonical=? AND owner=?',(canonical,alias,owner))
+                db.execute('UPDATE device_installations SET device_id=? WHERE device_id=? AND owner=?',(canonical,alias,owner))
         return {'canonical':canonical,'registrations':1+len(aliases)}
 
     def pairing(self, owner='admin'):

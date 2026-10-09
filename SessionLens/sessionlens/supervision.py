@@ -112,7 +112,9 @@ class TaskStore:
                     if not current or seq>=current[0]:self.db.execute('INSERT OR REPLACE INTO task_heads VALUES(?,?,?)',(stream,task,head[1]))
                     if kind in ('用户提问','Agent 回复','解题思路','工具调用','工具返回') or k=='file_change':
                         name=e.get('name') or item.get('name','') if isinstance(item,dict) else e.get('name','')
-                        excerpt=(str(name)+' · ' if name else '')+body
+                        # Derived summaries are bounded; the complete evidence
+                        # remains in events and is available through evidence().
+                        excerpt=((str(name)+' · ' if name else '')+body)[:16000]
                         call=e.get('callId') or (item.get('call_id') if isinstance(item,dict) else None)
                         self.db.execute('INSERT OR IGNORE INTO task_steps VALUES(?,?,?,?,?,?)',(identity,task,seq,'文件修改' if k=='file_change' else kind,excerpt,call))
                         self.db.execute('INSERT OR IGNORE INTO task_step_owners VALUES(?,?,?)',(identity,task,task))
@@ -132,11 +134,14 @@ class TaskStore:
         row=self.db.execute("SELECT value FROM task_cursor WHERE name='semantic_fields_v1'").fetchone()
         cursor=row[0] if row else 0
         rows=self.db.execute('SELECT s.seq,s.event,e.event FROM task_steps s JOIN events e ON e.id=s.event WHERE s.seq>? ORDER BY s.seq LIMIT ?',(cursor,limit)).fetchall()
+        # Decode retained tool parameters outside SQLite's writer transaction.
+        # Only the bounded summaries and their checkpoint are committed together.
+        staged=[]
+        for seq,identity,raw in rows:
+            event=json.loads(raw);body=event_text(event);name=event.get('name')
+            staged.append((((name+' · ' if name else '')+body)[:16000],identity));cursor=seq
         with self.db:
-            for seq,identity,raw in rows:
-                event=json.loads(raw);body=event_text(event);name=event.get('name')
-                self.db.execute('UPDATE task_steps SET excerpt=? WHERE event=?',((name+' · ' if name else '')+body[:16000],identity))
-                cursor=seq
+            self.db.executemany('UPDATE task_steps SET excerpt=? WHERE event=?',staged)
             if rows:self.db.execute("INSERT OR REPLACE INTO task_cursor VALUES('semantic_fields_v1',?)",(cursor,))
         return len(rows)
     def recent_source(self,source,limit=500):

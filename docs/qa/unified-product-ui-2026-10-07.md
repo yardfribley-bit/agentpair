@@ -31,10 +31,10 @@
 | 验收 | 结果 |
 | --- | --- |
 | 平台 HTTP / 采集器接入 / 权限 / 联合查询 / 静态资源 | 67 项通过 |
-| SessionLens 完整测试 | 193 项通过；之后新增忙状态导航修复，相关 17 项通过 |
+| SessionLens 完整测试 | 最终 194 项通过，包含忙状态导航修复；Mac Intel、Apple Silicon、Windows 流水线通过 |
 | SessionLens Intel macOS 安装包 | PyInstaller 构建通过，打包后中英文 self-test 通过 |
 | AppLens Intel macOS | 原生构建、库存 self-test、WKWebView 界面自测通过 |
-| AppLens 桌面 DOM | 18 项通过，覆盖请求切换、错哈希、回执、原文、连接草稿与用户触发回放 |
+| AppLens 桌面 DOM | 19 项通过，覆盖请求切换、错哈希、回执、原文、连接草稿与用户触发回放 |
 | AgentPair 浏览器实际点击 | 本机真实 HTTP handler；核对当前问题与答案、追问、两类采集器、设备筛选与空结果、原文跳转 |
 | Web DOM 回归 | 当前答案、回复反馈、跨会话状态、设备详情关联、16 项采集助手交互、安全证据抽屉通过 |
 | 会话洞察生成 | 3 项通过，包含交付先于步骤、仅一段展开、证据转义与路径保留 |
@@ -49,7 +49,33 @@ AppLens 界面自测调用真实 WKWebView 并输出截图；SessionLens 截图�
 - `applens-context-windows.yml`：C# 编译、PowerShell 采集验证、安装包、安装后的正文/回执与桌面历史选择验收。
 - `unified-product-ui.yml`：网页资源与 HTTP 入口、当前答案、设备关联、证据抽屉和洞察生成。
 
-Windows 和 Apple Silicon 尚未在本机运行，不能用 Intel 构建通过来替代。流水线执行结果另行补充。
+本机为 Intel Mac。Windows 和 Apple Silicon 由各自 GitHub Actions 运行器完成构建、自测，不能表述为在用户的 Windows / Apple Silicon 机器上实测。
+
+最终源码修订：`fb489b57bc0c877fee3ac1919e6c333cedc2482f`。以下流水线均成功：
+
+- [统一网页界面验收](https://github.com/yardfribley-bit/agentpair/actions/runs/37619226311)
+- [AppLens macOS 双架构](https://github.com/yardfribley-bit/agentpair/actions/runs/37619226170)
+- [SessionLens 三平台](https://github.com/yardfribley-bit/agentpair/actions/runs/37619226193)
+- [AppLens Windows 安装后原生界面自测](https://github.com/yardfribley-bit/agentpair/actions/runs/37619226211)
+- [Windows 设备安装程序](https://github.com/yardfribley-bit/agentpair/actions/runs/37619226210)
+- [云机器流程回归](https://github.com/yardfribley-bit/agentpair/actions/runs/37619226216)
+
+Windows 兼容性验收同时修复了测试读写默认编码的问题，明确 UTF-8；AppLens 回放 iframe 改为用户启动后加载，原生浏览器自测按页面就绪状态等待，保留正文、回执、哈希和设备身份的严格校验。
+
+## 2026-10-07 线上部署
+
+新版网页已部署到既有生产服务器。北京时间 20:40 发布修订 `fb489b5`，正式入口为 `https://www.chuhaijian.com/`。
+
+- 白名单更新 25 个 Web 运行文件，包括共享资源、7 个模块页面及控制器、平台静态路由和洞察生成器。
+- 会话洞察使用服务器现有的 4 对 `analysis.json` / `evidence.json` 生成 6 个 HTML 页面，没有上传本机 fixture 或重新调用模型。
+- 保留账号、采集数据库、模型配置、证书、Nginx 和系统服务配置；发布前后核对配置及分析源文件哈希。
+- 发布时以 SQLite 写事务暂缓新任务入队，核对没有活动任务后重启服务并立即释放；没有修改数据库记录。
+- 回滚目录：私有回滚备份（路径保留本机），包含既有代码、洞察 HTML、哈希清单和 `rollback.py`。
+- HTTPS 页面及共享 CSS / JavaScript 返回 200，资源 MIME 正常；服务为 active。公开站点目录没有原始 JSON。
+- 实际数据 API 验收：9 台设备；所选设备的 AppLens、SessionLens 摘要分别成功读取 200 条记录（这是查询窗口，不是全库总量）；安全审计有 15 条已有发现。上线后的服务日志未出现 Python traceback。
+- 本轮部署只更新网页；终端客户端安装状态不由此改变。
+
+线上浏览器点击验收尚未完成：内置浏览器对线上标签页读取及刷新持续超时；TinyFish 自动化因本次页面内容授权不明确被自动审批拒绝，已向用户申请本次授权。在授权和点击结果到达前，不能把接口检查写成线上交互验收通过。
 
 ## 可复现的本机预览
 
