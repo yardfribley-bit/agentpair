@@ -18,7 +18,8 @@ class UnifiedDeliveryTests(unittest.TestCase):
 
     def test_platform_entry_pages_reference_shared_assets_and_keep_controllers(self):
         for path, controller in (('/', 'workspace.js'), ('/devices', 'devices.js'),
-                                 ('/model-data', 'model_data.js'),
+                                 ('/model-data', 'data_center.js'),
+                                 ('/model-data/raw', 'model_data.js'),
                                  ('/model-security', 'model_security.js'),
                                  ('/cloud-machines', 'cloud_machines.js'),
                                  ('/packages', 'packages.js'), ('/software', 'software.js')):

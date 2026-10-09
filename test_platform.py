@@ -70,12 +70,22 @@ class PlatformTests(unittest.TestCase):
         self.assertIn('Session-only Mac',page)
         self.assertIn('SessionLens · 1 条',page)
 
-    def test_model_data_route_is_private_and_serves_prototype(self):
+    def test_model_data_entry_and_raw_reader_keep_private_data_api(self):
         with self.client.open(self.url+'/model-data') as response:
             body=response.read().decode()
-            self.assertIn('采集数据 · 原文与分类',body)
+            self.assertIn('<h1>数据中心</h1>',body)
+            self.assertIn('id="dc-query"',body)
+            self.assertIn('id="dc-collector"',body)
+            self.assertIn('/data_center.js',body)
+            self.assertIn('href="/model-data/raw?scope=global"',body)
+        with self.client.open(self.url+'/model-data/raw') as response:
+            body=response.read().decode()
+            self.assertIn('数据中心 · 原文与分类',body)
             self.assertIn('id="collector"',body)
             self.assertIn('SessionLens',body)
+            self.assertIn('/model_data.js',body)
+            self.assertIn('id="raw-record-panel"',body)
+            self.assertIn('<pre id="original"',body)
         with self.assertRaises(urllib.error.HTTPError) as error:self.call('/api/devices/model-data/unknown')
         self.assertEqual(error.exception.code,401);error.exception.close()
     def test_interaction_audit_requires_owner_and_renders_assets(self):
