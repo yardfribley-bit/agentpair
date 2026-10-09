@@ -42,6 +42,8 @@ Intel Mac 的本机安装版为 `/Applications/agentreions_doubao.app`，双击�
 
 Windows x64 使用相同的 Qt 桌面界面和增量采集器，默认搜索 `%APPDATA%` / `%LOCALAPPDATA%` 下的豆包数据目录；找不到时可在界面选择“数据目录”。Windows 源码需 Python 3.12，构建运行 `python build_windows.py`，输出 `release/agentreions_doubao-Windows-x64.zip`，解压后启动 `agentreions_doubao.exe`。Windows 安装豆包的真实采集仍需实机验收。
 
+Windows 会显式加载本机字体，并附带 [Noto Sans SC](https://github.com/google/fonts/tree/main/ofl/notosanssc) 作为中文后备；发行包保留其 [SIL OFL 许可](https://github.com/google/fonts/blob/main/ofl/notosanssc/OFL.txt)。本机微软字体只读取，不纳入发行包。包内截图验收同时检查字母和中文的字符覆盖。
+
 GitHub 构建只上传源代码，CI 使用合成测试数据；不上传本机数据库、采集记录、素材或模型请求。发布到 AgentPair 仓库时，将工作流放在仓库根目录 `.github/workflows/agentreions-doubao-desktop.yml`，产品代码目录为 `agentreions_doubao/`。
 
 视频独立核验需要本机 `ffprobe`，生成预览图还需要 `ffmpeg`。Windows 发行包不附带这两个工具，未安装时仍显示豆包的真实工具返回，并标记尚未独立核验。

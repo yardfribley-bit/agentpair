@@ -16,7 +16,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from PySide6.QtCore import QObject, QPointF, QRectF, Qt, QThread, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QPainter, QPainterPath, QPalette, QPen, QPixmap, QRawFont, QTextLayout
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea,
@@ -26,6 +26,9 @@ from PySide6.QtWidgets import (
 ACCENT = "#48B5F4"
 MUTED = "#8F9CAF"
 UI_FONT = "PingFang SC" if sys.platform == "darwin" else "Microsoft YaHei UI" if sys.platform == "win32" else "Noto Sans"
+MONO_FONT = "Menlo" if sys.platform == "darwin" else "Consolas" if sys.platform == "win32" else "monospace"
+FONT_PROBE_ASCII = 'image_to_video SYNTHETIC_QA_MODEL 0123456789 3:4 {}[]()<>:/._=-"\' +@%'
+FONT_PROBE_CHINESE = "豆包视频制作可视化完整提示词调用参数工具返回图片来源记录接口请求未取得本机数据目录确认方案合成验收生成结果执行过程"
 STATUS_TEXT = {
     "completed": "工具已返回", "delivered": "已交付", "running": "进行中",
     "pending": "等待中", "failed": "失败", "error": "错误", "unknown": "待核验",
@@ -43,7 +46,7 @@ KIND_TEXT = {
     "file": "文件活动", "network": "网络活动", "process": "进程活动",
     "user_request": "用户需求", "user_feedback": "用户确认或补充",
 }
-STYLE = """
+STYLE_TEMPLATE = """
 * { font-family: '__UI_FONT__'; font-size: 13px; color: #DFE6EF; }
 QMainWindow, QWidget#root { background: #0B1018; }
 QWidget#sidebar { background: #101720; border-right: 1px solid #233041; }
@@ -68,6 +71,7 @@ QListWidget::item:hover { background: #192535; }
 QComboBox { background: #172434; border: 1px solid #34455B; border-radius: 6px; padding: 6px 10px; min-width: 64px; }
 QComboBox QAbstractItemView { background: #182536; selection-background-color: #284864; }
 QPlainTextEdit { background: #0D151F; color: #D5E1F0; border: 1px solid #293849; border-radius: 8px; padding: 10px; selection-background-color: #276090; }
+QPlainTextEdit[monospace="true"] { font-family: '__MONO_FONT__', '__UI_FONT__'; }
 QScrollArea { background: transparent; border: none; }
 QScrollBar:vertical { width: 8px; background: transparent; margin: 3px; }
 QScrollBar::handle:vertical { background: #334258; border-radius: 3px; min-height: 30px; }
@@ -79,7 +83,139 @@ QSplitter::handle { background: #0B1018; width: 12px; }
 QTabWidget::pane { border: none; background: #0B1018; }
 QTabBar::tab { background: #111D2B; border: 1px solid #2A3D52; color: #9FAFC1; border-radius: 7px; padding: 8px 15px; margin-right: 6px; margin-bottom: 10px; }
 QTabBar::tab:selected { background: #173E57; color: #E0F4FF; border-color: #48B5F4; }
-""".replace("__UI_FONT__", UI_FONT)
+"""
+STYLE = STYLE_TEMPLATE.replace("__UI_FONT__", UI_FONT).replace("__MONO_FONT__", MONO_FONT)
+
+
+def font_probe(font: QFont, sample: str) -> dict:
+    """Verify resolved glyph runs, including the font actually used for fallback.
+
+    Merely enumerating a family is insufficient on Qt's offscreen Windows
+    platform: a screenshot can succeed while every character is .notdef.
+    """
+    raw = QRawFont.fromFont(font)
+    # Probe every character across multiline prompt/JSON bodies. Line breaks
+    # do not require glyphs and must not stop the single-line QA layout.
+    layout = QTextLayout(re.sub(r"[\r\n\t\u2028\u2029]", " ", sample), font)
+    layout.beginLayout()
+    line = layout.createLine()
+    if line.isValid():
+        line.setLineWidth(100000)
+    layout.endLayout()
+    runs = layout.glyphRuns()
+    glyphs = [int(glyph) for run in runs for glyph in run.glyphIndexes()]
+    resolved = sorted({run.rawFont().familyName() for run in runs})
+    valid = raw.isValid() and bool(runs) and all(run.rawFont().isValid() for run in runs)
+    return {"requestedFamilies": font.families(), "rawFontFamily": raw.familyName(),
+            "resolvedFamilies": resolved, "rawFontValid": raw.isValid(),
+            "glyphCount": len(glyphs), "missingGlyphs": glyphs.count(0),
+            "passed": bool(valid and glyphs and 0 not in glyphs), "sample": sample}
+
+
+def font_asset_directories() -> list[Path]:
+    directories = [Path(__file__).resolve().parent.parent / "assets/fonts"]
+    if getattr(sys, "_MEIPASS", None):
+        directories.insert(0, Path(sys._MEIPASS) / "assets/fonts")
+    return list(dict.fromkeys(directories))
+
+
+def initialize_fonts(app: QApplication, *, platform: str | None = None,
+                     fonts_dir: Path | None = None, asset_dirs: list[Path] | None = None,
+                     diagnostics_path: Path | None = None, force: bool = False) -> dict:
+    """Read and register Windows fonts without copying any system font files.
+
+    On Windows only, local OFL assets are a fallback when the available system
+    fonts cannot render both ASCII and Chinese. All failures are explicit and
+    recorded before raising; CI must not accept a square-glyph screenshot.
+    """
+    global UI_FONT, MONO_FONT, STYLE
+    platform = platform or sys.platform
+    cached = app.property("doubaoFontDiagnostics")
+    if cached and cached.get("platform") == platform and not force:
+        if diagnostics_path:
+            diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+            diagnostics_path.write_text(json.dumps(cached, ensure_ascii=False, indent=2), encoding="utf-8")
+        if platform == "win32" and not cached.get("passed"):
+            raise RuntimeError(cached.get("error", "Windows font glyph verification failed."))
+        return cached
+    report = {"platform": platform, "qtPlatform": app.platformName(), "familiesBefore": QFontDatabase.families(),
+              "registrations": [], "registrationCount": 0, "candidateProbes": [], "passed": False}
+
+    def save_report():
+        report["familiesAfter"] = QFontDatabase.families()
+        app.setProperty("doubaoFontDiagnostics", report)
+        if diagnostics_path:
+            diagnostics_path.parent.mkdir(parents=True, exist_ok=True)
+            diagnostics_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def register(path: Path, origin: str) -> list[str]:
+        identifier = QFontDatabase.addApplicationFont(str(path))
+        families = QFontDatabase.applicationFontFamilies(identifier) if identifier >= 0 else []
+        report["registrations"].append({"path": str(path), "origin": origin, "fontId": identifier,
+                                        "families": families, "registered": identifier >= 0 and bool(families)})
+        if identifier >= 0 and families:
+            report["registrationCount"] += 1
+        return families
+
+    def usable_ui(families: list[str]) -> str | None:
+        preferred = ["Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "Noto Sans SC"]
+        ordered = [name for name in preferred if name in families] + [name for name in families if name not in preferred]
+        for family in dict.fromkeys(ordered):
+            font = QFont(family, 12)
+            normal = font_probe(font, FONT_PROBE_ASCII + " " + FONT_PROBE_CHINESE)
+            font.setWeight(QFont.Weight.DemiBold)
+            bold = font_probe(font, FONT_PROBE_ASCII + " " + FONT_PROBE_CHINESE)
+            report["candidateProbes"].append({"family": family, "normal": normal, "demiBold": bold})
+            if normal["passed"] and bold["passed"]:
+                return family
+        return None
+
+    if platform == "win32":
+        fonts_dir = fonts_dir or Path(os.environ.get("WINDIR", os.environ.get("SystemRoot", r"C:\Windows"))) / "Fonts"
+        report["systemFontsDirectory"] = str(fonts_dir)
+        registered = []
+        for name in ("msyh.ttc", "msyhbd.ttc", "msyhl.ttc", "segoeui.ttf", "segoeuib.ttf", "seguisb.ttf", "consola.ttf", "consolab.ttf"):
+            path = fonts_dir / name
+            if path.is_file():
+                registered.extend(register(path, "windows_system_read_only"))
+        selected = usable_ui(registered)
+        if not selected:
+            directories = asset_dirs if asset_dirs is not None else font_asset_directories()
+            report["fallbackDirectories"] = [str(path) for path in directories]
+            for directory in directories:
+                if not directory.is_dir():
+                    continue
+                for path in sorted(directory.iterdir()):
+                    if path.suffix.lower() in {".ttf", ".otf", ".ttc"} and path.is_file():
+                        registered.extend(register(path, "bundled_open_font"))
+            selected = usable_ui(registered)
+        if report["registrationCount"] == 0 or not selected:
+            report["error"] = ("Windows font initialization failed: no registered font can render ASCII and Chinese. "
+                               "Inspect registrations and glyph coverage; do not accept the screenshot.")
+            save_report()
+            raise RuntimeError(report["error"])
+        UI_FONT = selected
+        MONO_FONT = "Consolas" if "Consolas" in registered else UI_FONT
+    else:
+        UI_FONT = "PingFang SC" if platform == "darwin" else "Noto Sans"
+        MONO_FONT = "Menlo" if platform == "darwin" else "monospace"
+    app.setFont(QFont(UI_FONT, 12))
+    ui = font_probe(QFont(UI_FONT, 12), FONT_PROBE_ASCII + " " + FONT_PROBE_CHINESE)
+    mono_font = QFont(MONO_FONT, 11)
+    mono_font.setFamilies([MONO_FONT, UI_FONT])
+    mono = font_probe(mono_font, FONT_PROBE_ASCII + " " + FONT_PROBE_CHINESE)
+    if platform == "win32" and not mono["passed"]:
+        MONO_FONT = UI_FONT
+        mono = font_probe(QFont(UI_FONT, 11), FONT_PROBE_ASCII + " " + FONT_PROBE_CHINESE)
+    report.update(selectedUiFamily=UI_FONT, selectedMonoFamily=MONO_FONT,
+                  selectedProbes={"ui": ui, "monospace": mono}, passed=ui["passed"] and mono["passed"])
+    STYLE = STYLE_TEMPLATE.replace("__UI_FONT__", UI_FONT).replace("__MONO_FONT__", MONO_FONT)
+    if platform == "win32" and not report["passed"]:
+        report["error"] = "Windows font initialization failed: selected UI or JSON font contains missing glyphs."
+        save_report()
+        raise RuntimeError(report["error"])
+    save_report()
+    return report
 
 
 def plain(value: Any) -> str:
@@ -206,7 +342,10 @@ def text_box(text: str, height: int = 112, mono: bool = False) -> QPlainTextEdit
     widget.setMinimumHeight(height)
     widget.setMaximumHeight(height)
     if mono:
-        widget.setFont(QFont("Menlo" if sys.platform == "darwin" else "Consolas", 11))
+        widget.setProperty("monospace", True)
+        font = QFont(MONO_FONT, 11)
+        font.setFamilies([MONO_FONT, UI_FONT])
+        widget.setFont(font)
     return widget
 
 
@@ -415,6 +554,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self, db_path=None, source_roots=None, snapshot=None, start_collector=True):
         super().__init__()
+        if QApplication.instance():
+            initialize_fonts(QApplication.instance())
         self.setWindowTitle("agentreions_doubao · 豆包视频制作可视化")
         palette = self.palette()
         for role in [QPalette.ColorRole.Window, QPalette.ColorRole.Base, QPalette.ColorRole.AlternateBase]:
@@ -1424,13 +1565,25 @@ def main(argv=None) -> int:
     parser.add_argument("--source-root", action="append", type=Path)
     parser.add_argument("--snapshot", type=Path, help="read one local snapshot for offline inspection")
     parser.add_argument("--screenshot", type=Path, help="save local UI QA screenshot and exit")
+    parser.add_argument("--font-diagnostics", type=Path, help="write font registrations and actual glyph coverage for local QA")
     parser.add_argument("--select-tool", help="focus the first observed tool containing this name, for QA")
     parser.add_argument("--window-size", help="local visual QA size, for example 1280x800")
     args = parser.parse_args(argv)
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("agentreions_doubao")
     app.setOrganizationName("agentreions")
-    app.setFont(QFont("PingFang SC" if sys.platform == "darwin" else "Segoe UI", 12))
+    diagnostics_path = args.font_diagnostics
+    if diagnostics_path is None and args.screenshot:
+        diagnostics_path = args.screenshot.with_suffix(".fonts.json")
+    if diagnostics_path is None and sys.platform == "win32":
+        from .collector import default_data_dir
+        diagnostics_path = (args.db.parent if args.db else default_data_dir()) / "font-diagnostics.json"
+    try:
+        initialize_fonts(app, diagnostics_path=diagnostics_path)
+    except RuntimeError as exc:
+        if sys.stderr is not None:
+            print(str(exc), file=sys.stderr)
+        return 3
     palette = app.palette()
     for role in [QPalette.ColorRole.Window, QPalette.ColorRole.Base, QPalette.ColorRole.AlternateBase]:
         palette.setColor(role, QColor("#0B1018"))
@@ -1454,9 +1607,24 @@ def main(argv=None) -> int:
     if args.screenshot:
         def save():
             args.screenshot.parent.mkdir(parents=True, exist_ok=True)
-            window.grab().save(str(args.screenshot))
+            # Probe the actual styled controls as well as the startup font.
+            # QTextLayout exposes .notdef (glyph 0), which PNG existence cannot.
+            report = app.property("doubaoFontDiagnostics")
+            controls = []
+            for name in ("toolPrompt", "toolArguments", "toolResult"):
+                widget = window.findChild(QPlainTextEdit, name)
+                if widget and widget.toPlainText():
+                    sample = "".join(dict.fromkeys(widget.toPlainText().replace("\n", " ").replace("\t", " ")))
+                    controls.append({"objectName": name, **font_probe(widget.font(), sample)})
+            report["renderedControlProbes"] = controls
+            report["renderedControlsPassed"] = all(item["passed"] for item in controls)
+            if diagnostics_path:
+                diagnostics_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+            failed = sys.platform == "win32" and not report["renderedControlsPassed"]
+            if not failed and not window.grab().save(str(args.screenshot)):
+                failed = True
             window.close()
-            app.quit()
+            app.exit(3 if failed else 0)
         QTimer.singleShot(1800, save)
     return app.exec()
 

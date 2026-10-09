@@ -75,6 +75,29 @@ def verify_synthetic_collector(fixture: dict, qa: Path) -> dict:
             'networkRequestsMade': False}
 
 
+def verify_font_diagnostics(path: Path, *, require_tool_controls: bool = False) -> dict:
+    """Reject successful process exits or PNGs whose text has no valid glyphs."""
+    if not path.is_file():
+        raise RuntimeError('Packaged Windows font diagnostics were not written.')
+    report = json.loads(path.read_text(encoding='utf-8'))
+    if (report.get('platform') != 'win32' or not report.get('passed')
+            or report.get('registrationCount', 0) < 1 or not report.get('familiesAfter')
+            or not report.get('selectedUiFamily') or not report.get('selectedMonoFamily')):
+        raise RuntimeError('Packaged Windows font initialization did not pass: inspect ' + str(path))
+    probes = list(report.get('selectedProbes', {}).values())
+    if len(probes) < 2 or any(not probe.get('passed') or probe.get('missingGlyphs') != 0
+                              or probe.get('glyphCount', 0) < 1 for probe in probes):
+        raise RuntimeError('Packaged Windows UI/JSON fonts contain missing glyph mappings.')
+    if require_tool_controls:
+        controls = report.get('renderedControlProbes', [])
+        if ({item.get('objectName') for item in controls} != {'toolPrompt', 'toolArguments', 'toolResult'}
+                or not report.get('renderedControlsPassed')
+                or any(not item.get('passed') or item.get('missingGlyphs') != 0
+                       or item.get('glyphCount', 0) < 1 for item in controls)):
+            raise RuntimeError('Packaged tool-detail prompt/arguments/return glyph rendering failed.')
+    return report
+
+
 def main():
     if sys.platform != 'win32':
         raise SystemExit('Windows binaries must be built on Windows; use the Windows CI job.')
@@ -86,6 +109,12 @@ def main():
     icon = ROOT / 'assets/agentreins.ico'
     if icon.is_file():
         command.extend(['--icon', str(icon)])
+    fonts = ROOT / 'assets/fonts'
+    if not (fonts / 'OFL.txt').is_file() or not any(fonts.glob('*.ttf')):
+        raise RuntimeError('Windows builds require the licensed open-font fallback in assets/fonts.')
+    # Only the redistributable OFL assets are packaged. Windows system fonts
+    # remain on the target computer and are read at runtime, never copied.
+    command.extend(['--add-data', str(fonts) + os.pathsep + 'assets/fonts'])
     command.append(str(ROOT/'desktop_main.py'))
     subprocess.run(command, cwd=ROOT, env=env, check=True)
     bundle = ROOT/'dist/agentreions_doubao'
@@ -95,25 +124,36 @@ def main():
     empty_source.mkdir(exist_ok=True)
     runtime_env = env.copy()
     runtime_env['QT_QPA_PLATFORM'] = 'offscreen'
+    empty_fonts = qa/'window.fonts.json'
     subprocess.run([str(bundle/'agentreions_doubao.exe'), '--db', str(qa/'observations.sqlite3'),
                     '--source-root', str(empty_source), '--window-size', '1280x800',
-                    '--screenshot', str(qa/'window.png')], env=runtime_env, check=True, timeout=30)
+                    '--screenshot', str(qa/'window.png'), '--font-diagnostics', str(empty_fonts)],
+                    env=runtime_env, check=True, timeout=30)
+    verify_font_diagnostics(empty_fonts)
     if not (qa/'window.png').is_file():
         raise RuntimeError('The packaged Windows UI did not produce its verification image.')
     fixture = write_synthetic_ui_fixture(qa)
     acceptance = verify_synthetic_collector(fixture, qa)
     synthetic_image = qa/'synthetic-tool-details.png'
+    synthetic_fonts = qa/'synthetic-tool-details.fonts.json'
     subprocess.run([str(bundle/'agentreions_doubao.exe'),
                     '--db', str(qa/'synthetic-packaged-state/observations.sqlite3'),
                     '--source-root', str(fixture['source']), '--window-size', '1280x1600',
-                    '--screenshot', str(synthetic_image)], env=runtime_env, check=True, timeout=30)
+                    '--screenshot', str(synthetic_image), '--font-diagnostics', str(synthetic_fonts)],
+                    env=runtime_env, check=True, timeout=30)
+    fonts_report = verify_font_diagnostics(synthetic_fonts, require_tool_controls=True)
     if not synthetic_image.is_file() or synthetic_image.stat().st_size < 4096:
         raise RuntimeError('The packaged Windows UI did not render the synthetic tool-detail task.')
     # Keep evidence beside build artifacts, outside both the distributable and
     # the default user's data directory. Inspect the screenshot in CI artifacts.
     acceptance.update(packagedExecutableLaunched=True, screenshot=str(synthetic_image),
                       screenshotSha256=hashlib.sha256(synthetic_image.read_bytes()).hexdigest(),
-                      emptyDataScreenshot=str(qa/'window.png'))
+                      emptyDataScreenshot=str(qa/'window.png'),
+                      fontDiagnostics=str(synthetic_fonts),
+                      fontDiagnosticsSha256=hashlib.sha256(synthetic_fonts.read_bytes()).hexdigest(),
+                      fontGlyphVerificationPassed=True,
+                      selectedUiFont=fonts_report['selectedUiFamily'],
+                      selectedMonoFont=fonts_report['selectedMonoFamily'])
     (qa/'synthetic-ui-acceptance.json').write_text(json.dumps(acceptance, ensure_ascii=False, indent=2), encoding='utf-8')
     release = ROOT/'release'
     release.mkdir(exist_ok=True)

@@ -1,5 +1,6 @@
 """UI contract checks with explicitly synthetic input; never shown as live data."""
 import copy
+import json
 import os
 import tempfile
 import unittest
@@ -9,7 +10,7 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit
 from PySide6.QtCore import QCoreApplication, QEvent
-from agentreions_doubao.app import CollectorWorker, MainWindow, feedback_pairs, path_name
+from agentreions_doubao.app import CollectorWorker, MainWindow, feedback_pairs, path_name, font_probe, initialize_fonts
 
 
 def fixture():
@@ -179,6 +180,112 @@ class DesktopContractTests(unittest.TestCase):
             finally:
                 window.close()
                 window.deleteLater()
+
+
+class WindowsFontTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        import agentreions_doubao.app as module
+        self.previous_globals = (module.UI_FONT, module.MONO_FONT, module.STYLE)
+        self.previous_report = self.app.property("doubaoFontDiagnostics")
+        self.previous_font = self.app.font()
+
+    def tearDown(self):
+        import agentreions_doubao.app as module
+        module.UI_FONT, module.MONO_FONT, module.STYLE = self.previous_globals
+        self.app.setProperty("doubaoFontDiagnostics", self.previous_report)
+        self.app.setFont(self.previous_font)
+
+    @staticmethod
+    def good_probe(font, sample):
+        return {"passed": True, "missingGlyphs": 0, "glyphCount": len(sample),
+                "requestedFamilies": font.families(), "resolvedFamilies": font.families()}
+
+    def test_windows_registers_system_fonts_and_records_selected_family(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root); (directory / "msyh.ttc").touch()
+            diagnostics = directory / "font-report.json"
+            with patch("agentreions_doubao.app.QFontDatabase.addApplicationFont", return_value=7) as add, \
+                 patch("agentreions_doubao.app.QFontDatabase.applicationFontFamilies", return_value=["Microsoft YaHei"]), \
+                 patch("agentreions_doubao.app.font_probe", side_effect=self.good_probe):
+                report = initialize_fonts(self.app, platform="win32", fonts_dir=directory,
+                                          asset_dirs=[], diagnostics_path=diagnostics, force=True)
+            self.assertEqual(add.call_args.args, (str(directory / "msyh.ttc"),))
+            self.assertEqual(report["selectedUiFamily"], "Microsoft YaHei")
+            self.assertEqual(report["registrationCount"], 1)
+            self.assertTrue(json.loads(diagnostics.read_text(encoding="utf-8"))["passed"])
+            self.assertIn("Microsoft YaHei", self.app.font().families())
+
+    def test_windows_uses_open_font_asset_when_system_font_has_no_chinese(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root); (directory / "segoeui.ttf").touch()
+            assets = directory / "assets"; assets.mkdir(); (assets / "NotoSansSC.ttf").touch()
+            def coverage(font, sample):
+                report = self.good_probe(font, sample)
+                report["passed"] = font.family() == "Noto Sans SC"
+                report["missingGlyphs"] = 0 if report["passed"] else 4
+                return report
+            with patch("agentreions_doubao.app.QFontDatabase.addApplicationFont", side_effect=[1, 2]), \
+                 patch("agentreions_doubao.app.QFontDatabase.applicationFontFamilies", side_effect=[["Segoe UI"], ["Noto Sans SC"]]), \
+                 patch("agentreions_doubao.app.font_probe", side_effect=coverage):
+                report = initialize_fonts(self.app, platform="win32", fonts_dir=directory,
+                                          asset_dirs=[assets], force=True)
+            self.assertEqual(report["selectedUiFamily"], "Noto Sans SC")
+            self.assertEqual(report["registrations"][-1]["origin"], "bundled_open_font")
+
+    def test_registration_failure_is_reported_and_cannot_be_cached_as_success(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root); (directory / "msyh.ttc").touch()
+            diagnostics = directory / "font-report.json"
+            with patch("agentreions_doubao.app.QFontDatabase.addApplicationFont", return_value=-1):
+                with self.assertRaisesRegex(RuntimeError, "no registered font"):
+                    initialize_fonts(self.app, platform="win32", fonts_dir=directory,
+                                     asset_dirs=[], diagnostics_path=diagnostics, force=True)
+            report = json.loads(diagnostics.read_text(encoding="utf-8"))
+            self.assertEqual(report["registrationCount"], 0)
+            self.assertFalse(report["passed"])
+            with self.assertRaises(RuntimeError):
+                initialize_fonts(self.app, platform="win32")
+
+    def test_glyph_zero_failure_is_not_accepted_even_with_registered_family(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root); (directory / "msyh.ttc").touch()
+            with patch("agentreions_doubao.app.QFontDatabase.addApplicationFont", return_value=3), \
+                 patch("agentreions_doubao.app.QFontDatabase.applicationFontFamilies", return_value=["Microsoft YaHei"]), \
+                 patch("agentreions_doubao.app.font_probe", return_value={"passed": False, "missingGlyphs": 10, "glyphCount": 10}):
+                with self.assertRaises(RuntimeError):
+                    initialize_fonts(self.app, platform="win32", fonts_dir=directory, asset_dirs=[], force=True)
+
+    def test_real_qt_glyph_probe_detects_missing_glyph(self):
+        supported = font_probe(self.app.font(), "image_to_video")
+        self.assertTrue(supported["passed"])
+        missing = font_probe(self.app.font(), "\U0010ffff")
+        self.assertFalse(missing["passed"])
+        self.assertGreater(missing["missingGlyphs"], 0)
+        multiline = font_probe(self.app.font(), "ASCII\n\U0010ffff\tthird line")
+        self.assertFalse(multiline["passed"])
+        self.assertGreater(multiline["missingGlyphs"], 0)
+
+    def test_packaged_acceptance_rejects_empty_and_square_font_reports(self):
+        from build_windows import verify_font_diagnostics
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "fonts.json"
+            report = {"platform": "win32", "passed": True, "registrationCount": 1,
+                      "familiesAfter": ["Test Font"], "selectedUiFamily": "Test Font", "selectedMonoFamily": "Test Font",
+                      "selectedProbes": {"ui": {"passed": True, "missingGlyphs": 0, "glyphCount": 12},
+                                         "monospace": {"passed": True, "missingGlyphs": 0, "glyphCount": 12}},
+                      "renderedControlsPassed": True,
+                      "renderedControlProbes": [{"objectName": name, "passed": True, "missingGlyphs": 0, "glyphCount": 9}
+                                                for name in ("toolPrompt", "toolArguments", "toolResult")]}
+            path.write_text(json.dumps(report), encoding="utf-8")
+            self.assertTrue(verify_font_diagnostics(path, require_tool_controls=True)["passed"])
+            report["renderedControlProbes"][0]["missingGlyphs"] = 9
+            path.write_text(json.dumps(report), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "glyph rendering failed"):
+                verify_font_diagnostics(path, require_tool_controls=True)
 
 
 if __name__ == "__main__":

@@ -34,5 +34,5 @@ jobs:
           name: agentreions_doubao-Windows-UI-verification
           path: |
             agentreions_doubao/build/packaged-qa/*.png
-            agentreions_doubao/build/packaged-qa/synthetic-ui-acceptance.json
+            agentreions_doubao/build/packaged-qa/*.json
           retention-days: 14
