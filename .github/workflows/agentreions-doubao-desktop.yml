@@ -1,0 +1,36 @@
+name: agentreions_doubao desktop
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'agentreions_doubao/**'
+      - '.github/workflows/agentreions-doubao-desktop.yml'
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: agentreions_doubao
+    env:
+      PYTHONIOENCODING: utf-8
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-build.txt
+      - run: python -m unittest discover -s tests -v
+      - run: python build_windows.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentreions_doubao-Windows-x64
+          path: agentreions_doubao/release/*.zip
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentreions_doubao-Windows-UI-verification
+          path: agentreions_doubao/build/packaged-qa/window.png
+          retention-days: 14
