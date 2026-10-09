@@ -312,8 +312,15 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(records[0]['responseBody']['status'], 'not_recorded')
         self.assertFalse(snapshot['sessions'][0]['httpEvidence']['coverage']['toolArgumentsAreHttpBody'])
         self.assertEqual(snapshot['coverage']['http']['parsedHttpRecords'], 3)
-        self.assertEqual(self.collector.scan_once()['recordsAdded'], 0)
-        self.assertEqual(self.collector.scan_once()['bytesRead'], 0)
+        idle = self.collector.scan_once()
+        self.assertEqual(idle['recordsAdded'], 0)
+        self.assertEqual(idle['revision'], snapshot['revision'])
+        if platform.system() == 'Windows':
+            # Windows rechecks these small files to catch same-metadata
+            # rewrites; reads are counted without reinserting any record.
+            self.assertEqual(idle['bytesRead'], sum(path.stat().st_size for path, _ in self.collector._source_paths))
+        else:
+            self.assertEqual(idle['bytesRead'], 0)
 
     def test_snapshot_cache_is_isolated_from_callers_and_updates_on_append(self):
         self.append({"role": "user", "content": "original"})
