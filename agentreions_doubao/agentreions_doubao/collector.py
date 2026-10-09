@@ -23,6 +23,10 @@ SCHEMA_VERSION = 1
 MAX_READ_BYTES = 8 * 1024 * 1024
 CHUNK_BYTES = 2 * 1024 * 1024
 MAX_SESSION_ROWS = 10000
+INTEGRITY_INTERVAL_SECONDS = 30.0
+SMALL_SOURCE_BYTES = 64 * 1024
+INTEGRITY_CHUNK_BYTES = 64 * 1024
+MAX_PENDING_BYTES = 4 * 1024 * 1024
 
 
 def default_data_dir() -> Path:
@@ -58,6 +62,11 @@ class Collector:
         self._last_scan_bytes = 0
         self._last_scan_records = 0
         self._last_seen_stat = {}
+        self._trusted_signature = {}
+        self._assignment_boundaries = {}
+        self._pending_sources = {}
+        self._integrity_states = {}
+        self._next_integrity_at = {}
         self._snapshot_cache = {}
         self.source_roots = [Path(x).expanduser().resolve() for x in
                              (discover_source_roots() if source_roots is None else source_roots)]
@@ -101,7 +110,15 @@ class Collector:
             CREATE TABLE IF NOT EXISTS verifications (
                 reference TEXT PRIMARY KEY, path TEXT NOT NULL, metadata TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS integrity_ranges (
+                path TEXT NOT NULL, generation INTEGER NOT NULL, start INTEGER NOT NULL,
+                end INTEGER NOT NULL, digest TEXT NOT NULL, PRIMARY KEY(path,generation,start)
+            );
         """)
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(cursors)")}
+        for name in ("file_size", "ctime_ns"):
+            if name not in columns:
+                self._db.execute(f"ALTER TABLE cursors ADD COLUMN {name} INTEGER NOT NULL DEFAULT -1")
         self._db.commit()
         with contextlib.suppress(OSError):
             self.db_path.chmod(0o600)
@@ -171,101 +188,236 @@ class Collector:
         stream.seek(max(0, offset - 128))
         return hashlib.sha256(stream.read(min(offset, 128))).hexdigest()
 
-    def _assignment(self, path):
+    @staticmethod
+    def _boundary_hashes(stream, offset):
+        """Read at most 256 bytes; count actual I/O including overlap once."""
+        size = min(128, max(0, offset))
+        stream.seek(0)
+        prefix_bytes = stream.read(size)
+        prefix = hashlib.sha256(prefix_bytes).hexdigest()
+        if offset <= 128:
+            return prefix, prefix, len(prefix_bytes)
+        stream.seek(offset - size)
+        checkpoint_bytes = stream.read(size)
+        return prefix, hashlib.sha256(checkpoint_bytes).hexdigest(), len(prefix_bytes) + len(checkpoint_bytes)
+
+    @staticmethod
+    def _signature(stat):
+        return (f"{stat.st_dev}:{stat.st_ino}", stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns)
+
+    def _hold_pending(self, path, signature, start, raw):
+        key = str(path)
+        self._pending_sources.pop(key, None)
+        if not raw:
+            return
+        while self._pending_sources and sum(len(x["raw"]) for x in self._pending_sources.values()) + len(raw) > MAX_PENDING_BYTES:
+            oldest = next(iter(self._pending_sources))
+            self._pending_sources.pop(oldest)
+        if len(raw) <= MAX_PENDING_BYTES:
+            self._pending_sources[key] = {"signature": signature, "start": start, "raw": raw}
+
+    def _budgeted_bytes(self, path, signature, start, budget, maximum):
+        pending = self._pending_sources.pop(str(path), None)
+        raw = pending["raw"] if pending and pending["signature"] == signature and pending["start"] == start else b""
+        physical_start = start + len(raw)
+        amount = min(max(0, budget), max(0, maximum-len(raw)), max(0, signature[2]-physical_start))
+        with path.open("rb") as stream:
+            stream.seek(physical_start)
+            fresh = stream.read(amount)
+        return raw + fresh, len(fresh), physical_start + len(fresh) >= signature[2]
+
+    def _assignment(self, path, budget=MAX_READ_BYTES):
+        path = Path(path).resolve()
         stat = path.stat()
-        old = self._db.execute("SELECT digest,mtime_ns FROM assignments WHERE path=?", (str(path),)).fetchone()
-        if old and old["mtime_ns"] == stat.st_mtime_ns:
+        signature = self._signature(stat)
+        if platform.system() != "Windows" and self._last_seen_stat.get(str(path)) == signature:
             return 0, 0
         if stat.st_size > 256 * 1024:
             self._error(path, "Assignment exceeds 256 KiB; it was not silently truncated")
             return 0, 0
-        raw = path.read_bytes()
+        raw, read_bytes, eof = self._budgeted_bytes(path, signature, 0, budget, 256 * 1024)
+        if not eof:
+            self._hold_pending(path, signature, 0, raw)
+            return 0, read_bytes
+        # On Windows the complete <=256 KiB source digest is checked, not just
+        # its endpoints; mid-file replacement with unchanged timestamps counts.
         digest = hashlib.sha256(raw).hexdigest()
+        self._last_seen_stat[str(path)] = signature
+        old = self._db.execute("SELECT digest,mtime_ns FROM assignments WHERE path=?", (str(path),)).fetchone()
+        if old and old["digest"] == digest:
+            return 0, read_bytes
         session, agent = self._session_identity(path)
         if not session or not agent:
-            return 0, len(raw)
+            return 0, read_bytes
         sections = parse_assignment(raw.decode("utf-8", "replace"))
         for section in sections:
             section["evidence"] = [evidence("assignment", str(path), section.pop("line"), raw)]
         self._db.execute("""INSERT INTO assignments VALUES (?,?,?,?,?,?)
             ON CONFLICT(path) DO UPDATE SET digest=excluded.digest,mtime_ns=excluded.mtime_ns,payload=excluded.payload""",
             (str(path), session, agent, digest, stat.st_mtime_ns, json.dumps(sections, ensure_ascii=False)))
-        return int(not old or old["digest"] != digest), len(raw)
+        return 1, read_bytes
+
+    def _reset_cursor(self, path, kind, stat, old):
+        generation = old["generation"] + 1
+        empty = hashlib.sha256(b"").hexdigest()
+        self._db.execute("""UPDATE cursors SET generation=?,inode=?,offset=0,line=0,prefix_hash=?,checkpoint_hash=?,
+            mtime_ns=?,file_size=?,ctime_ns=? WHERE path=?""",
+            (generation, f"{stat.st_dev}:{stat.st_ino}", empty, empty, stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns, str(path)))
+        self._db.execute("INSERT OR REPLACE INTO integrity_ranges VALUES (?,?,?,?,?)", (str(path), generation, 0, 0, empty))
+        self._last_seen_stat.pop(str(path), None)
+        self._trusted_signature.pop(str(path), None)
+        self._pending_sources.pop(str(path), None)
+        self._integrity_states.pop(str(path), None)
+        self._next_integrity_at.pop(str(path), None)
+        self._bump_revision()
+        return self._db.execute("SELECT * FROM cursors WHERE path=?", (str(path),)).fetchone()
+
+    def _verify_integrity(self, path, old, signature, budget):
+        key = str(path)
+        state = self._integrity_states.get(key)
+        if state is None or state["inode"] != signature[0] or state["generation"] != old["generation"]:
+            # Freeze the target at the beginning of this sweep. Appends may
+            # advance the cursor while this older prefix is checked in slices.
+            state = {"inode": signature[0], "offset": old["offset"], "generation": old["generation"],
+                     "position": 0, "interval": None, "hash": hashlib.sha256()}
+            self._integrity_states[key] = state
+        read_bytes = 0
+        with path.open("rb") as stream:
+            while state["position"] < state["offset"]:
+                if state["interval"] is None:
+                    interval = self._db.execute("""SELECT start,end,digest FROM integrity_ranges
+                        WHERE path=? AND generation=? AND start=? AND end<=?""",
+                        (key, state["generation"], state["position"], state["offset"])).fetchone()
+                    if interval is None or interval["end"] <= interval["start"]:
+                        return "missing_baseline", read_bytes
+                    # One interval, rather than every historical range, stays
+                    # resident while the sweep resumes under the poll budget.
+                    state["interval"] = dict(interval)
+                interval = state["interval"]
+                remaining = interval["end"] - state["position"]
+                if remaining:
+                    if read_bytes >= budget:
+                        return "pending", read_bytes
+                    amount = min(remaining, INTEGRITY_CHUNK_BYTES, budget-read_bytes)
+                    stream.seek(state["position"])
+                    raw = stream.read(amount)
+                    read_bytes += len(raw)
+                    if not raw:
+                        return "changed", read_bytes
+                    state["hash"].update(raw)
+                    state["position"] += len(raw)
+                if state["position"] == interval["end"]:
+                    if state["hash"].hexdigest() != interval["digest"]:
+                        return "changed", read_bytes
+                    state["interval"] = None
+                    state["hash"] = hashlib.sha256()
+        self._integrity_states.pop(key, None)
+        self._trusted_signature[key] = signature
+        self._next_integrity_at[key] = time.monotonic() + INTEGRITY_INTERVAL_SECONDS
+        return "valid", read_bytes
 
     def _read_source(self, path, kind, budget):
+        path = Path(path).resolve()
         stat = path.stat()
-        inode = f"{stat.st_dev}:{stat.st_ino}"
-        signature = (inode, stat.st_mtime_ns, stat.st_size)
-        if self._last_seen_stat.get(str(path)) == signature:
+        signature = self._signature(stat)
+        inode = signature[0]
+        key = str(path)
+        small_windows = platform.system() == "Windows" and stat.st_size <= SMALL_SOURCE_BYTES
+        due = small_windows or key in self._integrity_states or time.monotonic() >= self._next_integrity_at.get(key, 0)
+        if not due and self._last_seen_stat.get(key) == signature:
             return 0, 0
-        old = self._db.execute("SELECT * FROM cursors WHERE path=?", (str(path),)).fetchone()
+        old = self._db.execute("SELECT * FROM cursors WHERE path=?", (key,)).fetchone()
+        if old:
+            metadata_changed_same_size = old["file_size"] == stat.st_size and (
+                old["mtime_ns"] != stat.st_mtime_ns or
+                (platform.system() != "Windows" and old["ctime_ns"] != stat.st_ctime_ns))
+            if old["inode"] != inode or stat.st_size < old["offset"] or metadata_changed_same_size:
+                old = self._reset_cursor(path, kind, stat, old)
+        # Growing sources are not revalidated in full on every append. The
+        # periodic sweep checks the committed prefix, with a fixed target, while
+        # the unread tail receives most of each poll's byte budget first.
+        grew = old is not None and stat.st_size > old["file_size"]
+        integrity_requested = old is not None and (due or (
+            not grew and self._trusted_signature.get(key) != signature))
+        reserve = min(INTEGRITY_CHUNK_BYTES, budget // 4) if integrity_requested and old["offset"] else 0
+        read_budget = max(0, budget - reserve)
         offset, line, generation = (old["offset"], old["line"], old["generation"]) if old else (0, 0, 0)
-        if old and old["inode"] == inode and old["mtime_ns"] == stat.st_mtime_ns and old["offset"] == stat.st_size:
-            self._last_seen_stat[str(path)] = signature
-            return 0, 0
-        with path.open("rb") as stream:
-            # Prefix length must not grow after the first chunk: small files may
-            # legitimately append beyond their initial prefix.
-            prefix_size = min(128, offset) if old else min(128, stat.st_size)
-            prefix = self._hash_prefix(stream, prefix_size)
-            checkpoint = self._hash_checkpoint(stream, offset)
-            if old and (old["inode"] != inode or stat.st_size < offset or
-                        (offset and checkpoint != old["checkpoint_hash"])):
-                generation += 1
-                offset, line = 0, 0
-                prefix = self._hash_prefix(stream, min(128, stat.st_size))
-            stream.seek(offset)
-            raw = stream.read(min(CHUNK_BYTES, max(0, budget)))
-            last_newline = raw.rfind(b"\n")
-            if last_newline < 0:
-                # Incomplete JSON is held in the source, not inserted into DB.
-                if len(raw) == CHUNK_BYTES and stat.st_size - offset > CHUNK_BYTES:
-                    self._error(path, "One source line exceeds 2 MiB; complete-line collection is paused for this file")
-                self._last_seen_stat[str(path)] = signature
-                return 0, len(raw)
-            complete = raw[:last_newline + 1]
-            session, agent = self._session_identity(path)
-            added = 0
-            for source_line in complete.splitlines():
-                line += 1
-                if not source_line.strip():
-                    continue
-                value = None
-                if kind == "trajectory":
-                    try:
-                        parsed = json.loads(source_line)
-                        if isinstance(parsed, dict):
-                            value = {"value": parsed, "evidence": evidence("trajectory", str(path), line, source_line)}
-                        else:
-                            self._error(path, f"Line {line}: trajectory value is not an object")
-                    except (ValueError, UnicodeDecodeError) as exc:
-                        self._error(path, f"Line {line}: invalid completed JSON ({type(exc).__name__})")
-                elif kind == "native":
-                    value = parse_native_line(source_line.decode("utf-8", "replace"), str(path), line)
-                elif kind == "http":
-                    value = parse_http_line(source_line.decode("utf-8", "replace"), str(path), line)
-                if value is None:
-                    continue
-                sid = session if kind == "trajectory" else value.get("sessionId")
-                aid = agent if kind == "trajectory" else value.get("agentId")
-                call_id = value.get("callId")
-                sandbox = value.get("sandboxId")
-                payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-                cur = self._db.execute("""INSERT OR IGNORE INTO records
-                    (path,generation,line,kind,session_id,agent_id,call_id,sandbox_id,time,payload)
-                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                    (str(path), generation, line, kind, sid, aid, call_id, sandbox, value.get("time"), payload))
-                added += cur.rowcount
-            offset += len(complete)
-            checkpoint = self._hash_checkpoint(stream, offset)
-            self._db.execute("""INSERT INTO cursors VALUES (?,?,?,?,?,?,?,?,?)
-                ON CONFLICT(path) DO UPDATE SET generation=excluded.generation,inode=excluded.inode,
-                offset=excluded.offset,line=excluded.line,prefix_hash=excluded.prefix_hash,
-                checkpoint_hash=excluded.checkpoint_hash,mtime_ns=excluded.mtime_ns""",
-                (str(path), kind, generation, inode, offset, line, prefix, checkpoint, stat.st_mtime_ns))
-            if offset == stat.st_size or len(raw) < CHUNK_BYTES:
-                self._last_seen_stat[str(path)] = signature
-            return added, len(raw)
+        raw, fresh_bytes, eof = self._budgeted_bytes(path, signature, offset, read_budget, CHUNK_BYTES)
+
+        def finish(added):
+            total = fresh_bytes
+            if integrity_requested:
+                checked, checked_bytes = self._verify_integrity(path, old, signature, budget-total)
+                total += checked_bytes
+                if checked in ("changed", "missing_baseline"):
+                    current = self._db.execute("SELECT * FROM cursors WHERE path=?", (key,)).fetchone()
+                    self._reset_cursor(path, kind, stat, current)
+                    if total < budget:
+                        replacement_added, replacement_bytes = self._read_source(path, kind, budget-total)
+                        return added + replacement_added, total + replacement_bytes
+                    return added, total
+            if eof:
+                # Only actual source EOF may populate this fast cache; a short
+                # read caused by the budget still has a suffix to collect.
+                self._last_seen_stat[key] = signature
+            return added, total
+
+        last_newline = raw.rfind(b"\n")
+        if last_newline < 0:
+            if len(raw) == CHUNK_BYTES:
+                self._error(path, "One source line exceeds 2 MiB; complete-line collection is paused for this file")
+            self._hold_pending(path, signature, offset, raw)
+            return finish(0)
+        complete = raw[:last_newline + 1]
+        session, agent = self._session_identity(path)
+        added = 0
+        for source_line in complete.splitlines():
+            line += 1
+            if not source_line.strip():
+                continue
+            value = None
+            if kind == "trajectory":
+                try:
+                    parsed = json.loads(source_line)
+                    if isinstance(parsed, dict):
+                        value = {"value": parsed, "evidence": evidence("trajectory", str(path), line, source_line)}
+                    else:
+                        self._error(path, f"Line {line}: trajectory value is not an object")
+                except (ValueError, UnicodeDecodeError) as exc:
+                    self._error(path, f"Line {line}: invalid completed JSON ({type(exc).__name__})")
+            elif kind == "native":
+                value = parse_native_line(source_line.decode("utf-8", "replace"), str(path), line)
+            elif kind == "http":
+                value = parse_http_line(source_line.decode("utf-8", "replace"), str(path), line)
+            if value is None:
+                continue
+            sid = session if kind == "trajectory" else value.get("sessionId")
+            aid = agent if kind == "trajectory" else value.get("agentId")
+            call_id = value.get("callId")
+            sandbox = value.get("sandboxId")
+            payload = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            cur = self._db.execute("""INSERT OR IGNORE INTO records
+                (path,generation,line,kind,session_id,agent_id,call_id,sandbox_id,time,payload)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (key, generation, line, kind, sid, aid, call_id, sandbox, value.get("time"), payload))
+            added += cur.rowcount
+        committed_start = offset
+        offset += len(complete)
+        prefix = hashlib.sha256(complete[:128]).hexdigest()
+        checkpoint = hashlib.sha256(complete[-128:]).hexdigest()
+        self._db.execute("""INSERT INTO cursors(path,kind,generation,inode,offset,line,prefix_hash,checkpoint_hash,mtime_ns,file_size,ctime_ns)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(path) DO UPDATE SET generation=excluded.generation,inode=excluded.inode,
+            offset=excluded.offset,line=excluded.line,prefix_hash=excluded.prefix_hash,
+            checkpoint_hash=excluded.checkpoint_hash,mtime_ns=excluded.mtime_ns,file_size=excluded.file_size,ctime_ns=excluded.ctime_ns""",
+            (key, kind, generation, inode, offset, line, prefix, checkpoint, stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns))
+        self._db.execute("INSERT OR REPLACE INTO integrity_ranges VALUES (?,?,?,?,?)",
+                         (key, generation, committed_start, offset, hashlib.sha256(complete).hexdigest()))
+        self._trusted_signature[key] = signature
+        self._hold_pending(path, signature, offset, raw[len(complete):])
+        # Continuous appends must not keep postponing the periodic sweep.
+        self._next_integrity_at.setdefault(key, time.monotonic() + INTEGRITY_INTERVAL_SECONDS)
+        return finish(added)
 
     def scan_once(self):
         with self._lock:
@@ -283,7 +435,7 @@ class Collector:
                     # A small transaction per file prevents readers waiting on
                     # one all-history commit; there is one writer connection.
                     with self._db:
-                        changes, byte_count = (self._assignment(path) if kind == "assignment"
+                        changes, byte_count = (self._assignment(path, MAX_READ_BYTES-scanned) if kind == "assignment"
                                                else self._read_source(path, kind, MAX_READ_BYTES - scanned))
                         if changes:
                             self._bump_revision()
@@ -355,19 +507,24 @@ class Collector:
                     assignments.extend(json.loads(row["payload"]))
                 # Discover explicit sandbox/session mappings from native JSON.
                 # An ambiguous sandbox is never automatically associated.
-                sandboxes = [x[0] for x in self._db.execute("""SELECT DISTINCT sandbox_id FROM records
-                    WHERE kind='native' AND session_id=? AND sandbox_id IS NOT NULL""", (sid,))]
+                sandboxes = [x[0] for x in self._db.execute("""SELECT DISTINCT r.sandbox_id FROM records r
+                    JOIN cursors c ON c.path=r.path AND c.generation=r.generation
+                    WHERE r.kind='native' AND r.session_id=? AND r.sandbox_id IS NOT NULL""", (sid,))]
                 valid = []
                 for sandbox in sandboxes:
-                    owners = [x[0] for x in self._db.execute("SELECT DISTINCT session_id FROM records WHERE kind='native' AND sandbox_id=? AND session_id IS NOT NULL", (sandbox,))]
+                    owners = [x[0] for x in self._db.execute("""SELECT DISTINCT r.session_id FROM records r
+                        JOIN cursors c ON c.path=r.path AND c.generation=r.generation
+                        WHERE r.kind='native' AND r.sandbox_id=? AND r.session_id IS NOT NULL""", (sandbox,))]
                     if owners == [sid]:
                         valid.append(sandbox)
-                clauses = ["session_id=?"]
+                clauses = ["r.session_id=?"]
                 params = [sid]
                 if valid:
-                    clauses.append("sandbox_id IN (" + ",".join("?" for _ in valid) + ")")
+                    clauses.append("r.sandbox_id IN (" + ",".join("?" for _ in valid) + ")")
                     params.extend(valid)
-                native_rows = self._db.execute("SELECT payload FROM records WHERE kind='native' AND (" + " OR ".join(clauses) + ") ORDER BY id LIMIT ?", params + [2000]).fetchall()
+                native_rows = self._db.execute("""SELECT r.payload FROM records r
+                    JOIN cursors c ON c.path=r.path AND c.generation=r.generation
+                    WHERE r.kind='native' AND (""" + " OR ".join(clauses) + ") ORDER BY r.id LIMIT ?", params + [2000]).fetchall()
                 native = [json.loads(row[0]) for row in native_rows]
                 for event in native:
                     if not event.get("sessionId") and event.get("sandboxId") in valid:

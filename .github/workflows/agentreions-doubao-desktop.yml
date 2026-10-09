@@ -32,5 +32,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: agentreions_doubao-Windows-UI-verification
-          path: agentreions_doubao/build/packaged-qa/window.png
+          path: |
+            agentreions_doubao/build/packaged-qa/*.png
+            agentreions_doubao/build/packaged-qa/synthetic-ui-acceptance.json
           retention-days: 14

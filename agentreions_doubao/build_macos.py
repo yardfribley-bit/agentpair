@@ -31,7 +31,7 @@ if __name__ == '__main__':
     with plist_path.open('rb') as stream:
         info = plistlib.load(stream)
     info['CFBundleShortVersionString'] = __version__
-    info['CFBundleVersion'] = '1'
+    info['CFBundleVersion'] = __version__
     with plist_path.open('wb') as stream:
         plistlib.dump(info, stream)
     # Local developer build: keep a valid ad-hoc signature after setting version.
