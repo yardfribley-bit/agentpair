@@ -331,7 +331,12 @@ function Invoke-SoftwareInstall($recipe, $report) {
         }
         if($child.ExitCode -notin @(0,3010)) {throw ('Installer failed: '+$child.ExitCode)}
         $found=& $findInstalled
-        if($found.Count -eq 0) {throw 'Installation returned success but exact installed version was not found'}
+        if($found.Count -eq 0) {
+            return @{state='verification_required';stage='verify';summary='安装程序已成功退出，但未找到登记的精确名称与版本；请核对软件登记信息后验证，勿重复安装';evidence=@{
+                softwareId=$recipe.id;verified=$false;installCompleted=$true;installerExitCode=$child.ExitCode;
+                expectedDisplayName=$recipe.displayName;expectedVersion=$recipe.version;sha256=$hash;
+                rebootRequired=($child.ExitCode -eq 3010);launchVerified=$false;logPath=$log}}
+        }
         return @{state='completed';summary='安装及版本验证通过；应用启动/账号登录仍需单独验证';evidence=@{
             softwareId=$recipe.id;verified=$true;installedVersion=$recipe.version;sha256=$hash;
             rebootRequired=($child.ExitCode -eq 3010);launchVerified=$false;logPath=$log}}

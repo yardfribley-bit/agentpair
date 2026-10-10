@@ -265,6 +265,9 @@ class CloudConsole:
         access=self.login(lease_id)
         if access.get('loginState')!='ssh_authenticated':raise ValueError('SSH login not ready')
         operation={'id':secrets.token_hex(12),'leaseId':lease_id,'softwareId':recipe['id'],
+                   'machineName':lease['name'],'platform':lease['platform'],
+                   'softwareName':recipe['name'],'expectedVersion':recipe.get('version'),
+                   'functionVerified':False,
                    'state':'queued','stage':'waiting','summary':'等待执行安装',
                    'createdAt':self.manager.clock().isoformat()}
         self._save_operation(operation)
@@ -310,13 +313,26 @@ class CloudConsole:
                 stage('install','远程安装程序执行中')
                 command='powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\\AgentPairTrial\\install-'+operation['id']+'.ps1'
                 result=subprocess.run(self._ssh_args('Administrator',access['address'])+[command],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=900)
-                if result.returncode:raise RuntimeError('Windows installation or version check failed')
                 receipts=[]
                 for line in result.stdout.splitlines():
                     try:receipts.append(json.loads(line))
                     except ValueError:pass
-                final=next((r for r in reversed(receipts) if r.get('state')=='completed'),None)
-                if not final:raise RuntimeError('Installer returned no completed receipt')
+                final=next((r for r in reversed(receipts) if isinstance(r,dict) and r.get('state') in
+                            ('completed','failed','verification_required','interrupted')),None)
+                if not final:
+                    operation.update(state='interrupted',stage='receipt_missing',
+                                     summary='未收到安装结果回执；请核验目标机器后再试')
+                    return
+                if final['state']!='completed':
+                    operation.update(state=final['state'],stage=final.get('stage','failed'),
+                                     summary=str(final.get('summary','安装未完成'))[:500],
+                                     evidence=final.get('evidence',{}))
+                    return
+                if result.returncode:
+                    operation.update(state='interrupted',stage='receipt_missing',
+                                     summary='已收到完成回执，但远程命令异常退出；请核验目标机器',
+                                     evidence=final.get('evidence',{}))
+                    return
                 from .software_install import verify_receipt
                 if not verify_receipt(recipe,final):raise RuntimeError('Installer receipt did not match registered version/hash')
                 evidence=final.get('evidence',{})
