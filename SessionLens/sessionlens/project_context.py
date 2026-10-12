@@ -157,6 +157,7 @@ class ProjectStore:
           CREATE INDEX IF NOT EXISTS project_tasks_project ON project_tasks(project,task);''')
         if 'source_fingerprint' not in {r[1] for r in self.db.execute('PRAGMA table_info(task_contexts)')}:
             with self.db:self.db.execute("ALTER TABLE task_contexts ADD COLUMN source_fingerprint TEXT NOT NULL DEFAULT ''")
+        self.db.execute("CREATE INDEX IF NOT EXISTS task_contexts_fingerprint ON task_contexts(task,source_fingerprint)")
         self.git_cache={};self.overrides={};self.refresh_overrides()
         self.pending=deque();self.refreshed=0
     def close(self):self.db.close()

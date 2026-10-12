@@ -70,6 +70,7 @@ class TaskStore:
         CREATE TABLE IF NOT EXISTS task_steps(event TEXT PRIMARY KEY,task TEXT,seq INTEGER,kind TEXT,excerpt TEXT,call_id TEXT);
         CREATE INDEX IF NOT EXISTS task_step_order ON task_steps(task,seq);
         CREATE INDEX IF NOT EXISTS task_step_seq ON task_steps(seq);
+        CREATE INDEX IF NOT EXISTS task_step_kind_order ON task_steps(task,kind,seq);
         CREATE TABLE IF NOT EXISTS task_history_heads(stream TEXT PRIMARY KEY,task TEXT,prompt TEXT);
         CREATE TABLE IF NOT EXISTS task_marks(event TEXT PRIMARY KEY);
         ''')
@@ -147,7 +148,9 @@ class TaskStore:
     def recent_source(self,source,limit=500):
         # Priority warm-up for both agents, so Codex history cannot starve WorkBuddy.
         if source=='codex':
-            candidates=self.db.execute('SELECT e.rowid,e.id,e.event FROM display_index i JOIN events e ON e.id=i.id WHERE i.source=? ORDER BY e.rowid DESC LIMIT 2000',(source,)).fetchall()
+            # Avoid a reverse history scan when this source has no evidence yet.
+            if not self.db.execute('SELECT 1 FROM display_index WHERE source=? LIMIT 1',(source,)).fetchone():return []
+            candidates=self.db.execute('SELECT e.rowid,e.id,e.event FROM events e CROSS JOIN display_index i ON e.id=i.id WHERE i.source=? ORDER BY e.rowid DESC LIMIT 2000',(source,)).fetchall()
             chosen=sorted(candidates,key=lambda row:timestamp(json.loads(row[2]).get('timestamp')),reverse=True)[:limit]
             return sorted(chosen,key=lambda row:row[0])
         rows=self.db.execute("SELECT e.rowid,e.id,e.event FROM display_index i JOIN events e ON e.id=i.id WHERE i.source=? ORDER BY CASE WHEN typeof(json_extract(e.event,'$.timestamp'))='integer' THEN json_extract(e.event,'$.timestamp')/1000.0 ELSE strftime('%s',json_extract(e.event,'$.timestamp')) END DESC LIMIT ?",(source,limit)).fetchall()

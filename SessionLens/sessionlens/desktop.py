@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from .core import Collector
 from .database import connection
+from .background_budget import BackgroundBudget
 from .upload_queue import encode_batch
 
 LABELS=['用户提问','Agent 回复','解题思路','工具调用','工具返回','会话背景','用量与状态','暂未识别']
@@ -88,7 +89,8 @@ class Runtime:
         self.stop.set()
         for t in self.threads:t.join(timeout=17)
     def collect(self):
-        c=None;files={};discover=-15;seen={};errors={};retry={};last={};next_sources={};history_phase=0
+        history_budget=BackgroundBudget()
+        c=None;files={};discover=-15;seen={};errors={};retry={};last={};next_sources={};history_phase=0;history={};live={}
         def failure(key,exc):
             attempts=retry.get(key,(0,0,None))[1]+1
             retry[key]=(time.monotonic()+min(30,2**min(attempts-1,5)),attempts)
@@ -106,7 +108,9 @@ class Runtime:
                 self.update(reading=f'{source} · {p.name} · '+('实时' if realtime else '历史'),heartbeat=time.time())
                 if realtime:c.scan_recent(p,100,source,max_bytes=4*1024*1024,max_seconds=.1)
                 else:c.scan(p,25,source,max_bytes=4*1024*1024,max_seconds=.1)
-                offset=c.db.execute('SELECT offset FROM '+table+' WHERE path=?',(str(p),)).fetchone()[0]
+                row=c.db.execute('SELECT identity,offset FROM '+table+' WHERE path=?',(str(p),)).fetchone()
+                offset=row[1]
+                (live if realtime else history)[str(p)]=row
                 if offset>=st.st_size or previous and offset==previous[0]:seen[key]=signature
                 errors.pop(key,None);retry.pop(key,None)
             except (OSError,ValueError,sqlite3.Error) as exc:failure(key,exc)
@@ -116,7 +120,7 @@ class Runtime:
             return (seen.get(key)!=(st.st_dev,st.st_ino,st.st_size,st.st_mtime_ns) and
                     retry.get(key,(0,))[0]<=time.monotonic())
         def next_path(paths,lane,source):
-            paths=sorted(paths,key=str);previous=last.get((lane,source),'')
+            previous=last.get((lane,source),'')
             return next((p for p in paths if str(p)>previous),paths[0])
         def source_order(lane):
             source=next_sources.get(lane);turn=base_sources.index(source) if source in base_sources else 0
@@ -166,8 +170,13 @@ class Runtime:
                                     if p.is_dir():paths.extend(f.resolve() for f in p.rglob('rollout*.jsonl' if source=='codex' else '*.jsonl'))
                                     errors.pop(key,None)
                                 except OSError as exc:failure(key,exc)
-                            discovered[source]=list(dict.fromkeys(paths))
+                            discovered[source]=sorted(dict.fromkeys(paths),key=str)
                         files=discovered;discover=time.monotonic()
+                        # Refresh durable maps on discovery, then update the changed
+                        # stream immediately after each successful scan. Avoid two
+                        # full-table fetches on every half-second collection turn.
+                        history={r[0]:r[1:] for r in c.db.execute('SELECT path,identity,offset FROM cursors')}
+                        live={r[0]:r[1:] for r in c.db.execute('SELECT path,identity,offset FROM live_cursors')}
                         active={str(p) for paths in files.values() for p in paths}
                         for key in list(errors):
                             if key.startswith(('文件 · ','实时 · ','历史 · ')) and key.split(' · ',1)[1] not in active:
@@ -179,7 +188,7 @@ class Runtime:
                             except OSError as exc:failure('文件 · '+str(p),exc)
                     base_sources=list(files);sources=source_order('live')
                     cutoff=time.time()-48*60*60
-                    recent={source:sorted((p for p in files[source] if p in stats and stats[p].st_mtime>=cutoff),key=str) for source in sources}
+                    recent={source:[p for p in files[source] if p in stats and stats[p].st_mtime>=cutoff] for source in sources}
                     hot={source:max((p for p in files[source] if p in stats),key=lambda p:(stats[p].st_mtime_ns,str(p)),default=None) for source in sources}
                     # Keep the hottest tail responsive; the other three slots
                     # rotate all recent files instead of fixing the first four.
@@ -193,14 +202,14 @@ class Runtime:
                                 checkpoint('live_recent' if rank else 'live',source,p)
                                 read(source,p,stats[p],True)
                         if time.monotonic()>=deadline:break
-                    history={r[0]:r[1:] for r in c.db.execute('SELECT path,identity,offset FROM cursors')}
                     def offset(rows,p):
                         row=rows.get(str(p));st=stats[p]
                         return row[1] if row and row[0]==f'{st.st_dev}:{st.st_ino}' and 0<=row[1]<=st.st_size else 0
                     # Three recent-gap attempts followed by one all-history
                     # attempt, with independent source/file rotation per lane.
-                    deadline=time.monotonic()+.15;batches=0
-                    for _ in range(4):
+                    history_started=time.monotonic()
+                    deadline=history_started+.15;batches=0
+                    for _ in range(4 if history_budget.ready() else 0):
                         for _ in base_sources:
                             if self.stop.is_set() or self.paused.is_set() or time.monotonic()>=deadline or batches>=8:break
                             preferred='history_priority' if history_phase<3 else 'history_all';selected=None
@@ -216,7 +225,7 @@ class Runtime:
                             row=c.db.execute('SELECT identity,offset FROM cursors WHERE path=?',(str(p),)).fetchone()
                             if row:history[str(p)]=row
                         if time.monotonic()>=deadline or batches>=8:break
-                    live={r[0]:r[1:] for r in c.db.execute('SELECT path,identity,offset FROM live_cursors')}
+                    if batches:history_budget.finish(history_started)
                     progress={source:{'files':len(paths),'totalBytes':sum(stats[p].st_size for p in paths if p in stats),
                         'historicalBytes':sum(offset(history,p) for p in paths if p in stats),
                         'recentFiles':len(recent[source]),'recentLagBytes':sum(max(0,stats[p].st_size-offset(live,p)) for p in recent[source])} for source,paths in files.items()}
@@ -362,18 +371,19 @@ class Runtime:
 
     def inventory(self):
         from .project_inventory import ProjectInventory
-        source=store=None
+        source=store=None;budget=BackgroundBudget()
         try:
             source=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True,timeout=1)
             store=ProjectInventory(self.root/'project_inventory.db')
             while not self.stop.is_set():
-                count=0
+                count=0;started=time.monotonic()
                 try:
                     store.sync(source,limit=100,live=True)
                     count=store.sync(source,limit=250)
                     self.update(project_inventory='项目目录正在低速整理' if count else '项目目录已更新')
                 except sqlite3.Error as exc:self.update(project_inventory='项目目录等待重试：'+str(exc)[:120])
-                self.stop.wait(.5 if count else 2)
+                budget.finish(started)
+                self.stop.wait(budget.delay(.5 if count else 2))
         except (OSError,sqlite3.Error) as exc:self.update(project_inventory='项目目录暂不可用：'+str(exc)[:120])
         finally:
             if source:source.close()
@@ -381,7 +391,7 @@ class Runtime:
 
     def knowledge(self):
         from .knowledge_index import KnowledgeIndex
-        index=None;source=None;vectors=None;engine=None;projects=None
+        index=None;source=None;vectors=None;engine=None;projects=None;budget=BackgroundBudget()
         try:
             from .project_context import ProjectStore
             projects=ProjectStore(self.root/'project_context.db')
@@ -397,6 +407,7 @@ class Runtime:
             self.update(knowledge='本机模型初始化结束，准备整理项目背景')
             startup_checked=False
             while not self.stop.is_set():
+                started=time.monotonic()
                 try:
                     self.update(knowledge_phase='正在整理项目背景')
                     if not startup_checked:
@@ -419,7 +430,8 @@ class Runtime:
                         self.update(knowledge=text+' · '+self.status.get('embedding_error','语义检索未就绪'))
                 except sqlite3.Error as exc:self.update(knowledge='知识索引等待重试：'+str(exc))
                 except (ValueError,OSError,TypeError,AttributeError,KeyError) as exc:self.update(knowledge='本机知识整理等待重试：'+type(exc).__name__+' '+str(exc)[:160])
-                self.stop.wait(1 if engine else .5)
+                budget.finish(started)
+                self.stop.wait(budget.delay(1 if engine else .5))
         except (sqlite3.Error,OSError,ValueError,TypeError,AttributeError,KeyError,RuntimeError) as exc:self.update(knowledge='知识索引暂不可用：'+type(exc).__name__+' '+str(exc))
         finally:
             if index:index.close()

@@ -53,3 +53,18 @@ class SupervisionTests(unittest.TestCase):
             self.assertEqual(len(store.tasks()),1)
             # Raw evidence remains intact, including the two background records.
             self.assertEqual(store.db.execute('SELECT count(*) FROM events').fetchone()[0],3);store.close()
+
+    def test_codex_recent_query_matches_original_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'db';log=Path(tmp)/'rollout.jsonl'
+            records=[{'type':'session_meta','payload':{'id':'s'}}]+[{'type':'event_msg','timestamp':f'2026-10-11T12:{i//60:02d}:{i%60:02d}Z','payload':{'type':'user_message','message':f'prompt {i}'}} for i in range(2100)]
+            log.write_text(''.join(json.dumps(r)+'\n' for r in records),encoding='utf-8')
+            c=Collector(path);c.scan(log);c.db.close();store=TaskStore(path)
+            from sessionlens.supervision import timestamp
+            store.db.executescript('CREATE TABLE display_index(id TEXT PRIMARY KEY,source TEXT); CREATE INDEX display_source ON display_index(source);')
+            store.db.execute("INSERT INTO display_index SELECT id,'codex' FROM events")
+            original=store.db.execute('SELECT e.rowid,e.id,e.event FROM display_index i JOIN events e ON e.id=i.id WHERE i.source=? ORDER BY e.rowid DESC LIMIT 2000',('codex',)).fetchall()
+            expected=sorted(sorted(original,key=lambda row:timestamp(json.loads(row[2]).get('timestamp')),reverse=True)[:500],key=lambda row:row[0])
+            self.assertEqual(store.recent_source('codex'),expected)
+            store.db.execute("DELETE FROM display_index WHERE source='codex'")
+            self.assertEqual(store.recent_source('codex'),[]);store.close()

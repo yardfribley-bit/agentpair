@@ -39,6 +39,8 @@ def initialize(db):
       state TEXT,last_row INTEGER,search TEXT,requirements TEXT,turn_count INTEGER);
     CREATE INDEX IF NOT EXISTS task_groups_recent ON task_groups(updated DESC,last_row DESC);
     CREATE INDEX IF NOT EXISTS task_groups_session ON task_groups(source,session);
+    CREATE INDEX IF NOT EXISTS task_groups_row_order ON task_groups(last_row DESC);
+    CREATE INDEX IF NOT EXISTS task_groups_session_recent ON task_groups(source,session,last_row DESC);
     CREATE TABLE IF NOT EXISTS task_links(
       turn_task TEXT PRIMARY KEY,root TEXT,seq INTEGER,relation TEXT,reason TEXT);
     CREATE INDEX IF NOT EXISTS task_links_root ON task_links(root,seq);

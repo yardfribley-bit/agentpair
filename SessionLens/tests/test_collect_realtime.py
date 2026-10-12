@@ -104,7 +104,7 @@ class RealtimeCollectorTests(unittest.TestCase):
             root=Path(tmp);codex=root/'codex';wb=root/'workbuddy'
             self.write(codex/'rollout-a.jsonl','codex',500);self.write(wb/'a.jsonl',count=500)
             runtime=Runtime(root/'state',self.config(('codex',codex),('workbuddy',wb)))
-            clock=Clock();runtime.stop=StopAfter(clock,2);calls=[];scan=Collector.scan
+            clock=Clock();runtime.stop=StopAfter(clock,4);calls=[];scan=Collector.scan
             def slow(c,p,*args,**kwargs):calls.append(args[1]);clock.now+=.2;return scan(c,p,*args,**kwargs)
             with patch.object(Collector,'scan',slow),patch('sessionlens.desktop.time.monotonic',clock.monotonic):runtime.collect()
             self.assertEqual(calls,['codex','workbuddy'])
