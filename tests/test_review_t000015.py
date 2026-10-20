@@ -61,6 +61,14 @@ class ReviewIndexTests(unittest.TestCase):
         self.assertEqual(detail['contextDelta']['sharedMessageCount'],2)
         self.assertIn('fixed background',detail['content'])
 
+    def test_interrupted_fulltext_rebuild_recovers_before_reading(self):
+        f=self.f;f.upload([f.event('recover-fts',text='recover password')]);f.find()
+        with f.center._db() as db:
+            db.execute("INSERT INTO dc_text_fts(dc_text_fts) VALUES('delete-all')")
+            f.center._set_state(db,'positional_fts_rebuilding','1')
+        f.center=type(f.center)(f.center.collections)
+        self.assertEqual(f.find('password')['total'],1)
+
     def test_cached_totals_require_identical_watermarks_and_visible_devices(self):
         f=self.f;f.upload([f.event('alice-cached')]);f.upload([f.event('bob-cached')],owner='bob');f.find()
         with f.center._db() as db:
@@ -80,10 +88,11 @@ class ReviewIndexTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=5) as pool:self.assertEqual(list(pool.map(read,range(5))),[1]*5)
 
     def test_fulltext_query_uses_fts_and_checks_literal_boundaries(self):
-        f=self.f;f.upload([f.event('fts',text='PASSWORD and 中文子串检索 Straße'),f.event('false-grams',text='pas ass ssw swo wor ord')])
+        f=self.f;f.upload([f.event('fts',text='PASSWORD and 中文子串检索 Straße https://example.invalid/path'),f.event('false-grams',text='pas ass ssw swo wor ord')])
         self.assertEqual(f.find('password')['total'],1)
         self.assertEqual(f.find('中文子串')['total'],1)
         self.assertEqual(f.find('strasse')['total'],1)
+        self.assertEqual(f.find('domain="example.invalid."')['total'],1)
         with f.center._db() as db:
             self.assertGreater(db.execute("SELECT count(*) FROM dc_text_fts WHERE dc_text_fts MATCH '\"pas\"'").fetchone()[0],0)
 

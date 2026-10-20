@@ -792,10 +792,12 @@ class DataCenter:
                 END;
             ''')
             fts_sql=db.execute("SELECT sql FROM sqlite_master WHERE name='dc_text_fts'").fetchone()[0]
-            if 'detail=full' not in fts_sql:
+            if 'detail=full' not in fts_sql or self._state(db,'positional_fts_rebuilding')=='1':
+                self._set_state(db,'positional_fts_rebuilding','1');db.commit()
                 db.execute('DROP TABLE dc_text_fts')
                 db.execute("CREATE VIRTUAL TABLE dc_text_fts USING fts5(folded,content='dc_texts',content_rowid='id',tokenize='trigram',detail=full,columnsize=0)")
                 db.execute("INSERT INTO dc_text_fts(dc_text_fts) VALUES('rebuild')")
+                self._set_state(db,'positional_fts_rebuilding','0')
             legacy = db.execute("SELECT type FROM sqlite_master WHERE name='dc_fields'").fetchone()
             if legacy and legacy[0]=='table':
                 for row in db.execute('SELECT record,ordinal,location,value FROM dc_fields'):
@@ -1322,7 +1324,7 @@ class DataCenter:
         field, op, value = term
         if field in ('keyword', 'ip', 'domain'):
             if indexed and len(value.casefold())>=3:
-                folded=value.casefold()
+                folded=value.casefold().rstrip('.') if field=='domain' else value.casefold()
                 args.append('"'+folded.replace('"','""')+'"')
                 scope=' AND f.location=?' if location!='all' else ''
                 literal=field=='keyword'

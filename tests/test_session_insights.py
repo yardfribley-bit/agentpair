@@ -60,6 +60,16 @@ class SessionInsightsTests(unittest.TestCase):
         self.insights.process(self.ident)
         return self.insights.get(self.ident)
 
+    def test_phone_like_digits_in_derived_revision_do_not_hide_a_session(self):
+        phone='13912345678';revision='a'*10+phone+'b'*43
+        with patch('agentpair.session_lens.revision_from_digest',return_value=revision),patch('agentpair.session_packets.revision_from_digest',return_value=revision):
+            self.store.ingest(self.owner,{'schemaVersion':1,'events':[event(3,'联系 '+phone,session='phone-hash')]})
+            self.insights.sync(force=True)
+            ident=self.insights.ident('alice','d','workbuddy','phone-hash')
+            with self.insights.connect() as db:packet=json.loads(db.execute('SELECT packet FROM insights WHERE id=?',(ident,)).fetchone()[0])
+        self.assertEqual(packet['revision'],revision)
+        self.assertNotIn(phone,json.dumps(packet['fragments'],ensure_ascii=False))
+
     def test_receipt_is_waiting_no_automatic_model_or_publish(self):
         value = self.insights.get(self.ident)
         self.assertEqual(value['state'], 'waiting'); self.assertIsNone(value['report'])

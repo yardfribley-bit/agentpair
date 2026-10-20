@@ -165,7 +165,11 @@ class SessionInsights:
                     error=None
                     try:
                         events = self.sessions.events_for(owner, device, session, source)
-                        packet = safe_packet(make_packet(events, device, owner, session, source))
+                        original_packet=make_packet(events,device,owner,session,source)
+                        packet=safe_packet(original_packet)
+                        # Consent binds a locally derived digest, not source
+                        # prose. Phone masking must not change that digest.
+                        packet['revision']=original_packet['revision']
                         latest=self.sessions.metadata(owner,device,session,source)
                         # A batch can arrive between the head query and the
                         # event query. Never bind a new packet to an old consent.
