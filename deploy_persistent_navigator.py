@@ -9,11 +9,12 @@ import subprocess
 import tarfile
 
 ROOT=Path(__file__).resolve().parent
-HOST='50.118.187.180'
-KEY='/private/tmp/agentpair-nav.CLCAWP/id_ed25519'
-KNOWN='/private/tmp/agentpair-nav-known-hosts'
+HOST=os.environ.get('AGENTPAIR_NAVIGATOR_HOST','')
+KEY=os.environ.get('AGENTPAIR_SSH_KEY','')
+KNOWN=os.environ.get('AGENTPAIR_KNOWN_HOSTS',str(Path.home()/'.ssh'/'known_hosts'))
 
 def ssh(command,data=b''):
+    if not HOST or not KEY:raise ValueError('Set AGENTPAIR_NAVIGATOR_HOST and AGENTPAIR_SSH_KEY')
     result=subprocess.run(['ssh','-i',KEY,'-o','IdentitiesOnly=yes',
         '-o','BatchMode=yes','-o','StrictHostKeyChecking=yes',
         '-o','UserKnownHostsFile='+KNOWN,'-o','ConnectTimeout=8',

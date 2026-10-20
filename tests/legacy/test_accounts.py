@@ -33,7 +33,7 @@ class AccountTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'accounts.db'
             store=Accounts(path,'admin')
-            uid=store.register('alice','long-password-123')['id']
+            uid=store.register('alice','long-password-123',grant=2)['id']
             self.assertEqual(store.balance(uid)['remainingCNY'],2)
             for _ in range(6):store.reserve(uid,.3)
             self.assertAlmostEqual(store.balance(uid)['remainingCNY'],.2)

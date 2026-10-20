@@ -166,3 +166,5 @@ body.agentpair-web.data-center-page{--ap-sidebar:220px}.dc-heading,.dc-section-h
 .dc-execution.compact .dc-execution-action{font-size:13px}
 .dc-execution.compact .dc-execution-operation{padding-left:11px;margin-bottom:12px}
 @media(max-width:700px){.dc-execution-heading{align-items:flex-start;flex-wrap:wrap;gap:3px}.dc-execution-action{font-size:13px}.dc-execution-fields{grid-template-columns:90px minmax(0,1fr);gap:6px 10px}.dc-execution-fields .dc-execution-fields{grid-template-columns:70px minmax(0,1fr)}.dc-execution-targets>span{flex-wrap:wrap;gap:2px 6px}.dc-execution-return-heading{gap:5px 8px}.dc-execution-operation{padding-left:10px}}
+
+.dc-source-tabs{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}.dc-source-tabs a{padding:10px 14px;border:1px solid #cbd5e1;border-radius:8px;text-decoration:none}.dc-source-tabs a[aria-current="page"]{background:#e8efff;border-color:#3157a5}.dc-investigate-entry{margin-left:auto;max-width:330px}.dc-investigate-entry summary{cursor:pointer}.dc-source-tabs+p{overflow-wrap:anywhere}

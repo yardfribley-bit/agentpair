@@ -1,6 +1,6 @@
 import urllib.error
 import unittest
-import test_platform as harness
+from tests.legacy import test_platform as harness
 
 
 class SyntheticInsightModel:

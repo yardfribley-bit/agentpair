@@ -25,8 +25,12 @@ from .accounts import Accounts, SESSION_TTL
 from .mobile_auth import MobileAuth
 
 
-def handler_for(engine, password, origin, public_demo=False, expires_at=None, username='admin', cloud_console=None, collection_model=None):
-    attempts=[]
+def handler_for(engine, password, origin, public_demo=False, expires_at=None, username='admin', cloud_console=None, collection_model=None, model_budget=None):
+    from .request_limits import RequestLimits
+    limits=RequestLimits()
+    registration_invite=os.environ.get('AGENTPAIR_REGISTRATION_INVITE','')
+    model_budget=float(model_budget if model_budget is not None else os.environ.get('AGENTPAIR_MODEL_BUDGET_CNY','20'))
+    if not math.isfinite(model_budget) or model_budget<=0:raise ValueError('Model budget must be finite and positive')
     credentials=CredentialStore(Path(engine.db).parent/'credentials')
     devices=DeviceStore(Path(engine.db).parent/'devices.db')
     from .session_lens import SessionStore
@@ -37,6 +41,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
     collections=CollectionView(devices,session_lens)
     from .data_center import DataCenter
     data_center=DataCenter(collections, background=True)
+    engine.data_center=data_center
     from .collection_assistant import CollectionAssistant, RelayJSON
     relay_token=getattr(engine.backend,'token',None)
     def reserve_collection_model(requester):
@@ -50,7 +55,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             db.execute('ATTACH DATABASE ? AS question_accounts',(accounts.path,))
             db.execute('BEGIN IMMEDIATE')
             used=db.execute('SELECT reserved FROM ledger WHERE id=1').fetchone()[0]
-            if engine.budget is not None and used+estimate>engine.budget:
+            if used+estimate>min(model_budget,engine.budget if engine.budget is not None else model_budget):
                 raise Limit('Experiment model estimate budget exhausted')
             if requester!='admin':
                 units=math.ceil(estimate*1000000)
@@ -83,14 +88,25 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             body=json.dumps(data,ensure_ascii=False).encode()
             self.send_response(status)
             self.send_header('Content-Type','application/json; charset=utf-8')
+            if status in (429,503):self.send_header('Retry-After','2' if status==503 else '60')
             self.headers_common(len(body))
             if cookie: self.send_header('Set-Cookie','agentpair='+cookie+'; Max-Age='+str(SESSION_TTL)+'; HttpOnly; SameSite=Strict; Path=/'+('; Secure' if origin.startswith('https://') else ''))
             self.end_headers(); self.wfile.write(body)
 
         def headers_common(self, size):
+            if origin.startswith('https://'):self.send_header('Strict-Transport-Security','max-age=31536000')
             self.send_header('Content-Length',str(size)); self.send_header('Cache-Control','no-store')
             self.send_header('X-Content-Type-Options','nosniff'); self.send_header('Referrer-Policy','no-referrer')
             self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+
+        def request_client(self):
+            # Only the local reverse proxy may supply the actual peer address.
+            peer=getattr(self,'client_address',('unknown',))[0]
+            value=self.headers.get('X-Real-IP','') if peer in ('127.0.0.1','::1') else ''
+            try:
+                import ipaddress
+                return str(ipaddress.ip_address(value or peer))
+            except ValueError:return peer
 
         def authenticated(self):
             return self.identity() is not None
@@ -130,6 +146,13 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             task['applens']=devices.task_participants(tid)
             return task
 
+        def legacy_model_data(self, owner, device_id, query):
+            if query.get('q'):
+                result=data_center.search({'device':device_id,'collector':query.get('collector',['all'])[0],'q':query['q'][0],'pageSize':20},owner=owner)
+                return {'items':[dict(r,id=r['recordId']) for r in result['items']],'total':result['total'],'hasMore':result['hasMore'],'coverage':'按已提交全文索引分页查询'}
+            if query.get('request'):return collections.model_data(owner,device_id,query['request'][0],query.get('summary',[''])[0]=='1',query.get('collector',['all'])[0])
+            return data_center.legacy_page(owner,device_id,query.get('collector',['all'])[0],query.get('page',['1'])[0],query.get('pageSize',['20'])[0])
+
         def do_GET(self):
             # A task deep link keeps its ID in the browser query string, while
             # static/API dispatch uses only the URL path.
@@ -139,7 +162,8 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             self.path=request_url.path
             paths={'/':'workspace.html','/workspace.js':'workspace.js','/style.css':'style.css','/workspace.css':'workspace.css',
                    '/pair_flow.js':'pair_flow.js','/pair_flow.css':'pair_flow.css','/collaboration.css':'collaboration.css',
-                   '/workbench.js':'workbench.js','/workbench.css':'workbench.css'}
+                   '/login_return.js':'login_return.js','/workbench.js':'workbench.js','/workbench.css':'workbench.css'}
+            paths.update({'/favicon.ico':'favicon.svg','/favicon.svg':'favicon.svg'})
             paths.update({'/product_ui.css':'product_ui.css','/product_ui.js':'product_ui.js'})
             paths.update({'/session-insights/':'insight_live.html','/session-insights/sessions.html':'insight_live.html',
                           '/insight_live.js':'insight_live.js','/insight_live.css':'insight_live.css',
@@ -220,7 +244,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     body=body.replace(b'<div id="device-list"></div>',('<div id="device-list">'+(''.join(cards) or '<p>平台尚无已接入设备。</p>')+'</div>').encode())
                 self.send_response(200)
                 suffix=Path(paths[self.path]).suffix
-                self.send_header('Content-Type',{'.html':'text/html','.js':'application/javascript','.css':'text/css','.ps1':'application/octet-stream'}[suffix]+'; charset=utf-8')
+                self.send_header('Content-Type',{'.html':'text/html','.js':'application/javascript','.css':'text/css','.svg':'image/svg+xml','.ico':'image/svg+xml','.ps1':'application/octet-stream'}[suffix]+'; charset=utf-8')
                 self.headers_common(len(body)); self.end_headers(); self.wfile.write(body); return
             try:
                 if self.path.startswith('/package-files/'):
@@ -300,12 +324,21 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                         self.respond(200,result)
                     except PermissionError:self.respond(401,{'error':'Analysis not owned by device'})
                     return
+                if self.path=='/api/version':
+                    from .version import build_version
+                    self.respond(200,build_version());return
+                if (self.path.startswith('/api/data-center/') and self.path.rsplit('/',1)[-1] in ('search','capabilities')) or self.path.startswith(('/api/audit/model-data/','/api/devices/model-data/')):
+                    identity=self.identity()
+                    if not limits.allow('search',self.request_client(),identity['id'] if identity else '',limit=30):
+                        self.respond(429,{'error':'查询次数过多，请稍后重试'});return
                 if self.path=='/api/balance':
                     if not self.authenticated():self.respond(401,{'error':'Login required'});return
                     self.respond(200,accounts.balance(self.identity()['id']));return
                 if self.path=='/api/devices':
                     if not self.authenticated():self.respond(401,{'error':'Login required'});return
                     self.respond(200,{'items':collections.inventory(devices.list(self.identity()['id']),self.identity()['id'])});return
+                if self.path=='/api/data-center/summary':
+                    self.respond(200,data_center.summary());return
                 if self.path=='/api/data-center/search':
                     if any(len(value)!=1 for value in query.values()):raise ValueError('搜索参数不能重复')
                     self.respond(200,data_center.search({key:value[0] for key,value in query.items()}));return
@@ -323,10 +356,10 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     with devices.connect() as db:
                         row=db.execute('SELECT owner FROM devices WHERE id=? AND revoked=0',(device_id,)).fetchone()
                     if row is None:raise PermissionError('Device unavailable')
-                    self.respond(200,collections.search(row['owner'],device_id,query['q'][0],query.get('collector',['all'])[0]) if query.get('q') else collections.model_data(row['owner'],device_id,query.get('request',[None])[0],query.get('summary',[''])[0]=='1',query.get('collector',['all'])[0]));return
+                    self.respond(200,self.legacy_model_data(row['owner'],device_id,query));return
                 if self.path.startswith('/api/devices/model-data/'):
                     if not self.authenticated():self.respond(401,{'error':'Login required'});return
-                    self.respond(200,collections.search(self.identity()['id'],self.path.rsplit('/',1)[1],query['q'][0],query.get('collector',['all'])[0]) if query.get('q') else collections.model_data(self.identity()['id'],self.path.rsplit('/',1)[1],query.get('request',[None])[0],query.get('summary',[''])[0]=='1',query.get('collector',['all'])[0]));return
+                    self.respond(200,self.legacy_model_data(self.identity()['id'],self.path.rsplit('/',1)[1],query));return
                 if self.path in ('/api/insights','/api/insights/status'):
                     offset=int(query.get('offset',['0'])[0]);limit=int(query.get('limit',['50'])[0])
                     if not 0<=offset<=100000 or not 1<=limit<=100:raise ValueError('Invalid page')
@@ -399,7 +432,9 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                 else: self.respond(404,{'error':'Not found'})
             except KeyError: self.respond(404,{'error':'Resource not found'})
             except PermissionError as error:self.respond(403,{'error':str(error)})
-            except RuntimeError as error:self.respond(409,{'error':str(error)[:200]})
+            except RuntimeError as error:
+                from .data_center import QueryBusy, QueryTimeout
+                self.respond(429 if isinstance(error,QueryBusy) else 503 if isinstance(error,QueryTimeout) else 409,{'error':str(error)[:200]})
             except ValueError as error:self.respond(400,{'error':str(error)[:200]})
 
         def do_POST(self):
@@ -520,17 +555,24 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                 data=json.loads(self.rfile.read(size))
                 if not isinstance(data,dict): raise ValueError('Object required')
                 if self.path in ('/api/login','/api/register'):
-                    stamp=time.monotonic()
-                    attempts[:]=[t for t in attempts if stamp-t<60]
-                    if len(attempts)>=10: self.respond(429,{'error':'Too many login attempts'}); return
-                    attempts.append(stamp)
+                    supplied=data.get('password','')
+                    admin_login=(self.path=='/api/login' and data.get('username')==username and isinstance(supplied,str)
+                        and hmac.compare_digest(hashlib.sha256(supplied.encode()).digest(),hashlib.sha256(password.encode()).digest()))
+                    # Valid admin credentials use an independent session window;
+                    # a failed-login flood cannot lock out the recovery account.
+                    if not limits.allow('admin-session' if admin_login else 'auth',self.request_client(),
+                            'admin' if admin_login else data.get('username',''),limit=30 if admin_login else 10):
+                        self.respond(429,{'error':'当前 IP 或账号尝试过多，请稍后重试'});return
                     if self.path=='/api/register':
+                        supplied_invite=data.get('inviteCode','')
+                        if not registration_invite or not isinstance(supplied_invite,str) or not hmac.compare_digest(supplied_invite,registration_invite):
+                            self.respond(403,{'error':'注册需要有效邀请码，请联系管理员；模型额度需另行审批'});return
                         try: user=accounts.register(data.get('username'),data.get('password'))
                         except ValueError as error:self.respond(400,{'error':str(error)});return
                         token,record=accounts.issue(user)
                         self.respond(201,{'csrf':record['csrf'],'role':'user'},cookie=token);return
                     supplied=data.get('password','')
-                    if data.get('username')==username and isinstance(supplied,str) and hmac.compare_digest(hashlib.sha256(supplied.encode()).digest(),hashlib.sha256(password.encode()).digest()):
+                    if admin_login:
                         user={'id':'admin','name':username,'role':'admin'}
                     else:user=accounts.login(data.get('username'),supplied)
                     if not user:self.respond(401,{'error':'账号或密码错误'});return
@@ -550,6 +592,8 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                             row=db.execute('SELECT owner FROM devices WHERE id=? AND revoked=0',(device_id,)).fetchone()
                         if row is None:raise PermissionError('Device unavailable')
                         owner=row['owner']
+                        if not self.admin() and owner!=self.identity()['id']:
+                            raise PermissionError('无权对其他账号的设备发起模型分析')
                     elif data.get('scope','mine')=='mine':owner=self.identity()['id']
                     else:raise ValueError('Invalid collection scope')
                     self.respond(202,collection_assistant.submit(self.identity()['id'],owner,device_id,data.get('question'),data.get('previousQuestionId'),perspective=perspective));return
@@ -728,7 +772,9 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             except KeyError: self.respond(404,{'error':'Task not found'})
             except PermissionError as error:self.respond(403,{'error':str(error)})
             except (Conflict,Limit) as error: self.respond(409,{'error':str(error)})
-            except RuntimeError as error:self.respond(409,{'error':str(error)[:200]})
+            except RuntimeError as error:
+                from .data_center import QueryBusy, QueryTimeout
+                self.respond(429 if isinstance(error,QueryBusy) else 503 if isinstance(error,QueryTimeout) else 409,{'error':str(error)[:200]})
             except (ValueError,TypeError,UnicodeError) as error: self.respond(400,{'error':str(error)[:200] if self.path.startswith(('/api/cloud/','/api/test-runs')) else 'Invalid task or message; check public IPv4 target and length limits'})
 
         def log_message(self,*_): pass
@@ -769,8 +815,11 @@ def main():
         backend.jev=AdapterClient(private['relayToken'],model=jev.get('model','deepseek-v4-flash'),threshold=jev.get('threshold',.8))
     elif jev.get('apiKey'):
         backend.jev=JevClient(jev['apiKey'],model=jev.get('model','jev-latest'),threshold=jev.get('threshold',.8))
-    engine=TaskEngine(args.database,backend,budget=None)
-    server=ThreadingHTTPServer(('0.0.0.0' if args.public_demo else '127.0.0.1',args.port),handler_for(engine,private['password'],args.origin,args.public_demo,private.get('expiresAt'),private.get('username','admin'),cloud_console))
+    configured_budget=float(private.get('modelBudgetCNY',os.environ.get('AGENTPAIR_MODEL_BUDGET_CNY','20')))
+    if not math.isfinite(configured_budget) or configured_budget<=0:raise ValueError('Model budget must be finite and positive')
+    engine=TaskEngine(args.database,backend,budget=configured_budget)
+    if private.get('registrationInvite'):os.environ['AGENTPAIR_REGISTRATION_INVITE']=private['registrationInvite']
+    server=ThreadingHTTPServer(('0.0.0.0' if args.public_demo else '127.0.0.1',args.port),handler_for(engine,private['password'],args.origin,args.public_demo,private.get('expiresAt'),private.get('username','admin'),cloud_console,model_budget=configured_budget))
     print('Authenticated Navigator workspace ready',flush=True)
     try: server.serve_forever()
     finally: server.server_close(); engine.close()

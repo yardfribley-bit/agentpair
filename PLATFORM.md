@@ -4,17 +4,17 @@
 
 ## 持久 Navigator 与按需 Driver
 
-工作台：<https://50.118.187.180/>，HTTPS 证书和密码登录。服务由 `agentpair-navigator.service` 运行，Nginx 反向代理到 `127.0.0.1:9090`。证书续期由 `agentpair-certbot.timer` 处理。UCloud 凭据仅在服务器 `/etc/agentpair/private.json`，文件仅服务账户可读，不能放进 Git 或模型提示词。
+工作台：<https://www.chuhaijian.com/>，HTTPS 证书和密码登录。服务由 `agentpair-navigator.service` 运行，Nginx 反向代理到 `127.0.0.1:9090`。证书续期由 `agentpair-certbot.timer` 处理。UCloud 凭据仅在服务器 `/etc/agentpair/private.json`，文件仅服务账户可读，不能放进 Git 或模型提示词。
 
-Driver 默认在 Navigator 节点本地执行。只有用户指定云端工程方法才由 `CloudDriverBackend` 在 `cn-bj2` 分配 Ubuntu Driver：云端结对一台、并行探索两台，优先复用现有租约，通过限源 IP 防火墙和专用 SSH 密钥连接。每台最多租一小时；独立的 `agentpair-reaper.timer` 每分钟检查到期租约。详见 [资源控制](RESOURCE_CONTROL.md)。
+Driver 默认在 Navigator 节点本地执行。只有用户指定云端工程方法才由 `CloudDriverBackend` 在 `cn-bj2` 分配 Ubuntu Driver：云端结对一台、并行探索两台，优先复用现有租约，通过限源 IP 防火墙和专用 SSH 密钥连接。每台最多租一小时；独立的 `agentpair-reaper.timer` 每分钟检查到期租约。详见 [资源控制](docs/architecture/RESOURCE_CONTROL.md)。
 
-此部署的代码同步入口为 `sync_persistent_navigator.py`，它包含特定服务器地址和密钥路径，仅供该实例维护。若服务器重建，须重新核验 SSH 主机身份和密钥；不要跳过校验。
+此部署的代码同步入口为 `sync_persistent_navigator.py`，目标与身份由 `AGENTPAIR_NAVIGATOR_HOST`、`AGENTPAIR_SSH_KEY`、`AGENTPAIR_KNOWN_HOSTS` 指定。若服务器重建，须重新核验 SSH 主机身份和密钥；不要跳过校验。
 
 ## 启动条件与配置
 
 两个节点需要 Python 3.10+ 和项目代码。Navigator 通过密钥认证 SSH 连接 Driver，使用固定目录 `/home/pair/AgentPair`。模型端点和模型名当前在 `agentpair/pair_worker.py` 中，部署前需检查并调整。
 
-`deploy_platform.py`、`sync_platform.py` 和 `agentpair/bootstrap.py` 包含实验 IP、SSH 密钥路径；同步脚本还包含实验到期时间。部署前必须修改这些值。凭据经隐藏交互输入和 SSH 标准输入传递，不应写入源码或命令参数。
+`deploy_platform.py` 与 `sync_platform.py` 的节点通过 `AGENTPAIR_NAVIGATOR_HOST`、`AGENTPAIR_DRIVER_HOST` 和 SSH 环境变量指定。`agentpair/bootstrap.py` 属于历史实验入口，仍需单独核验目标与到期时间。凭据经隐藏交互输入和 SSH 标准输入传递，不应写入源码或命令参数。
 
 ## 两种访问方式
 
@@ -42,11 +42,11 @@ API 的内部 `adapter=public_site` 与 `target` 用于有限网站查询，目�
 
 ## 状态、费用与数据
 
-单轮先规划、执行、验收；若验收未通过且给出补正意见，最多再整改两轮并复核。超过整改上限仍未通过会保留 blocked 状态与验收意见，不会假报完成。结构化验收缺项不可通过，详情见 [决策机制](DECISIONS.md)。
+单轮先规划、执行、验收；若验收未通过且给出补正意见，最多再整改两轮并复核。超过整改上限仍未通过会保留 blocked 状态与验收意见，不会假报完成。结构化验收缺项不可通过，详情见 [决策机制](docs/architecture/DECISIONS.md)。
 
 默认 20 个任务、每任务 3 轮、消息 6000 字符；普通任务单轮 600 秒，并行协作任务单轮最多 1800 秒。取消不能保证立即中止在途请求。重启将活动任务标为中断，不自动重放付费调用。
 
-当前工作台使用 `budget=None`，无模型总金额上限。费用仍按历史价格估算并记录预留；失败调用可能保留预留，所以不等于实际账单。单请求上下文和估算检查仍存在。
+当前工作台设置全站累计模型估算预留上限：私有配置 `modelBudgetCNY` 或环境变量 `AGENTPAIR_MODEL_BUDGET_CNY`，默认 20 元，必须为有限正数。达到上限后拒绝新模型调用；普通账号还受个人余额限制。费用仍按历史价格估算并记录预留；失败调用可能保留预留，所以不等于实际账单。单请求上下文和估算检查仍存在。
 
 SQLite 数据库位于 Navigator 的 `runtime/tasks.db`。机器销毁前应导出记录，目前无自动异地备份。
 
@@ -55,3 +55,9 @@ SQLite 数据库位于 Navigator 的 `runtime/tasks.db`。机器销毁前应导�
 工作台顶部的实时资源面板通过 `/api/resources` 每 5 秒刷新：统计已返回的生成/决策调用 token、每任务 token、活动任务、平台 Driver 租约和剩余时间，以及 Navigator 的内存、系统负载、磁盘占用。token 来自供应商返回用量；失败或未返回调用可能未计入。云机按租约报价、整小时向上取整估算，不等于供应商账单；仅覆盖本平台记录。余额、模型实际费用及 Navigator 固定费用尚未接入，显示未知。接口不返回密钥或私有配置。
 
 页面每两秒获取事件，展示当前阶段、角色交接、结果与验收依据。回放不调用模型。程序核验与模型判断分别标注，尚无逐 token 或逐命令执行直播。
+
+## 注册与展示范围
+
+当前部署保留公开只读的证据展示设计。注册需要配置邀请码 `registrationInvite` 或 `AGENTPAIR_REGISTRATION_INVITE`，未配置时关闭注册。新账号不自动获赠模型额度。写操作需要登录与 CSRF；普通账号只可分析本人设备，管理员可跨账号操作。原始证据不因前端折叠或共享文本索引而被删除。
+
+线上版本：`GET /api/version`。完整测试：`python3 ops/test_all.py`。DNS 与独立子域名拆分在 T000015 中由用户明确暂缓；保留现有 www 路径及 HTTP 跳转，HTTPS 添加 HSTS。

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from agentpair.executor import validate_edits, execute
 from agentpair.tasks import TaskEngine
 from agentpair.decisions import decide
-from test_tasks import FakeBackend
+from tests.legacy.test_tasks import FakeBackend
 
 
 class ExecutorTests(unittest.TestCase):

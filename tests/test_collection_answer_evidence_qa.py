@@ -1,6 +1,9 @@
 """Regression: compact association input must not hide an execution test."""
 import unittest
-from . import test_collection_assistant as fixture
+if __package__:
+    from . import test_collection_assistant as fixture
+else:
+    from tests import test_collection_assistant as fixture
 from agentpair.collection_semantics import expand_turn_evidence, turn_packet, group_tasks
 
 class EvidenceRestorationQA(unittest.TestCase):

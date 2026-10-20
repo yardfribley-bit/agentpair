@@ -1,0 +1,130 @@
+[
+  {
+    "width": 1440,
+    "path": "/",
+    "overflow": false,
+    "title": "任务中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 1440,
+    "path": "/model-data",
+    "overflow": false,
+    "title": "数据中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 1440,
+    "path": "/model-data?collector=applens",
+    "overflow": false,
+    "title": "数据中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 1440,
+    "path": "/model-data/rankings",
+    "overflow": false,
+    "title": "使用排行 · 数据中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 1440,
+    "path": "/model-security",
+    "overflow": false,
+    "title": "交互安全审计 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 1440,
+    "path": "/devices",
+    "overflow": false,
+    "title": "我的设备 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 1440,
+    "path": "/session-insights/",
+    "overflow": false,
+    "title": "会话洞察 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 1440,
+    "path": "/?insights=login",
+    "overflow": false,
+    "title": "任务中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 390,
+    "path": "/",
+    "overflow": false,
+    "title": "任务中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 390,
+    "path": "/model-data",
+    "overflow": false,
+    "title": "数据中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 390,
+    "path": "/model-data?collector=applens",
+    "overflow": false,
+    "title": "数据中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 390,
+    "path": "/model-data/rankings",
+    "overflow": false,
+    "title": "使用排行 · 数据中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 390,
+    "path": "/model-security",
+    "overflow": false,
+    "title": "交互安全审计 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 390,
+    "path": "/devices",
+    "overflow": false,
+    "title": "我的设备 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 390,
+    "path": "/session-insights/",
+    "overflow": false,
+    "title": "会话洞察 · AgentPair",
+    "errors": [],
+    "bad": []
+  },
+  {
+    "width": 390,
+    "path": "/?insights=login",
+    "overflow": false,
+    "title": "任务中心 · AgentPair",
+    "errors": [],
+    "bad": []
+  }
+]

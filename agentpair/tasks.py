@@ -423,6 +423,7 @@ class TaskEngine:
             self.process(tid); self.jobs.task_done()
 
     def close(self):
+        if getattr(self,'data_center',None):self.data_center.close()
         if getattr(self,'session_insights',None):self.session_insights.close()
         self.stop.set()
         if self.thread: self.thread.join(timeout=1)

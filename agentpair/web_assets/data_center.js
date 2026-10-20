@@ -295,7 +295,7 @@
     const c = coverage || {}, fields = [];
     if (c.indexSync?.mode === 'background') {
       fields.push(c.indexSync.updatedAt ? '索引更新至 ' + date(c.indexSync.updatedAt) : '索引首次同步中，当前结果可能不完整');
-      if (c.indexSync.pendingSessionRecords > 0) fields.push('最近同步时有 ' + c.indexSync.pendingSessionRecords + ' 条源记录待索引');
+      if (c.indexSync.pendingSessionRecords > 0) fields.push('最近同步时' + (c.indexSync.pendingCountBasis==='rowid_upper_bound'?'最多有 ':'有 ') + c.indexSync.pendingSessionRecords + ' 条源记录待索引');
       if (c.indexSync.error) fields.push('后台同步失败：' + c.indexSync.error + '；当前仅查询已提交索引');
     }
     if (Number.isFinite(c.retainedRecords)) fields.push('平台保留 ' + c.retainedRecords.toLocaleString('zh-CN') + ' 条记录');
@@ -537,6 +537,7 @@
     if (!toolCounts.length && allMembers) {const tools = new Map(); for (const item of summaryItems) if (item.kind === 'tool_call' && text(item.tool || item.function)) {const name = item.tool || item.function; tools.set(name,(tools.get(name) || 0)+1);} for (const [name,count] of tools) toolCounts.push({name,count});}
     if (toolCounts.length) for (const entry of toolCounts.slice(0,3)) counts.append(chip('工具 · ' + entry.name,'blue'),el('span',entry.count + ' 次调用','dc-group-action-count'));
     else if (!activityCounts.size) {const names = [...new Set(summaryItems.map(item => text(item.tool || item.function)).filter(Boolean))]; counts.append(el('span',names.length ? '匹配工具：' + names.slice(0,3).join('、') : [...new Set(summaryItems.map(actionName))].slice(0,3).join(' · '),'dc-group-action-count'));}
+    if(group.appLensRequestCount)counts.append(chip('AppLens 请求 ×'+group.appLensRequestCount,'blue'));
     counts.append(el('strong',Number(group.recordCount || 0) + ' 条匹配记录','dc-group-record-count')); card.append(counts);
     if (association === 'candidate') card.append(el('p','前序记录找到这条用户输入；这些调用是否属于同一任务仍待核对。','dc-group-association'));
     else if (association === 'unknown') card.append(el('p','保留为独立记录，未与其他需求合并。','dc-group-association'));
@@ -549,6 +550,7 @@
     const expand = el('button','展开 ' + group.recordCount + ' 条匹配记录'); expand.type = 'button'; expand.setAttribute('aria-expanded','false'); expand.setAttribute('aria-controls',members.id); expand.addEventListener('click',() => {members.hidden = !members.hidden; expand.setAttribute('aria-expanded',String(!members.hidden)); expand.textContent = members.hidden ? '展开 ' + group.recordCount + ' 条匹配记录' : '收起匹配记录';}); bottom.append(expand); card.append(bottom,members); renderGroupMembers(state); return card;
   }
   function renderSearch(data, query) {
+    document.querySelector('.dc-pagination').hidden=Number(data.total||0)===0;
     const grouped = resultView() === 'request' && Array.isArray(data.groups), rows = grouped ? data.groups : arr(data.items); page = Number(data.page || page); lastSearch = data;
     put('dc-count',grouped ? groupedCount(data) : Number(data.total || 0).toLocaleString('zh-CN') + ' 条匹配记录'); put('dc-coverage',coverageText(data.coverage,Number(grouped ? data.recordTotal : data.total || 0))); renderCoverageDetails(data.coverage);
     $('dc-results').replaceChildren(...(grouped ? rows.map(group => requestGroupCard(group,query)) : rows.map(item => {
@@ -594,7 +596,7 @@
       lastSearchParams = {...params,...(querySnapshot ? {snapshot:querySnapshot} : {})};
       renderSearch(data,params.q);
     }
-    catch (e) {if (generation !== searchGeneration || controller.signal.aborted) return; if (e.message.includes('快照')) {querySnapshot = ''; page = 1;} error(e.message); recover(e.message.includes('快照') ? '上次查询范围已失效，重试会从第一页重新检索。查询条件已保留。' : '未能完成搜索。查询条件已保留。'); put('dc-count','搜索未完成'); put('dc-coverage','');}
+    catch (e) {if (generation !== searchGeneration || controller.signal.aborted) return; if (e.message.includes('快照')) {querySnapshot = ''; page = 1;} $('dc-error').hidden=true; recover(e.message + ' 查询条件已保留，可以重试。'); document.querySelector('.dc-pagination').hidden=true;put('dc-count','搜索未完成'); put('dc-coverage','');}
     finally {if (generation === searchGeneration) {$('dc-results').setAttribute('aria-busy','false'); $('dc-progress').hidden = true;}}
     saveDraft();
   }
@@ -703,7 +705,15 @@
     $('dc-arguments').replaceChildren(activity ? activityArguments(activity,item) : readable(parameters.length ? parameterObject : item.arguments)); if (execution && ['skill_read','skill_load'].includes(activity?.kind)) $('dc-arguments').append(executionView(item,{showReturns:false}));
     const returned = presentation.result; put('dc-tool-status',readableExecution ? execution.outer?.statusLabel || '外层调用记录' : activity ? activity.returnKind === 'instructions' ? '已取得说明' : activity.returnKind === 'wrapper_result' ? '外层返回' : activity.returnKind === 'missing' ? '返回待核对' : outcomeHeading(returned) : returned ? outcomeHeading(returned) : '返回待核对'); $('dc-tool-status').className = 'dc-chip ' + (readableExecution ? outcomeClass(execution.outer?.status) : activity ? 'blue' : outcomeClass(returned?.status)); $('dc-return').replaceChildren(activity ? activityReturnContent(activity,item,returned) : outcomeContent(returned,item.result));
     const contextItems = arr(item.contextItems); $('dc-context-section').hidden = !contextItems.length;
-    $('dc-context-items').replaceChildren(...contextItems.map(c => {const row = el('section',null,'dc-content-item'), heading = el('div'); heading.append(el('strong',c.name || c.category || c.label || '输入内容'),chip(c.source || c.role || '来源依据待核对')); const body = text(c.rawContent ?? c.content ?? c.text); row.append(heading,el('p',short(body,350))); if (c.classificationBasis || c.basis) row.append(el('p',c.classificationBasis || c.basis,'dc-coverage')); const raw = el('details'); raw.append(el('summary','查看完整输入块'),el('pre',body || formatted(c))); row.append(raw); return row;}));
+    const contextRows=contextItems.map(c => {const row = el('section',null,'dc-content-item'), heading = el('div'); heading.append(el('strong',c.name || c.category || c.label || '输入内容'),chip(c.source || c.role || '来源依据待核对')); const body = text(c.rawContent ?? c.content ?? c.text); row.append(heading,el('p',short(body,350))); if (c.classificationBasis || c.basis) row.append(el('p',c.classificationBasis || c.basis,'dc-coverage')); const raw = el('details'); raw.append(el('summary','查看完整输入块'),el('pre',body || formatted(c))); row.append(raw); return row;});
+    const delta=item.contextDelta;
+    if(delta?.comparisonAvailable){
+      const added=new Set(delta.newMessageIndices),fresh=[],shared=[];
+      contextItems.forEach((item,index)=>(added.has(item.messageIndex)?fresh:shared).push(contextRows[index]));
+      const history=el('details');history.append(el('summary','已携带背景与历史 · '+Number(delta.sharedMessageCount||0)+' 条消息'),...shared);
+      $('dc-context-items').replaceChildren(el('p','新增或变化的输入块 · '+fresh.length+' 个','dc-coverage'),...fresh,history,el('p',delta.basis,'dc-coverage'));
+    }else $('dc-context-items').replaceChildren(...contextRows);
+
     const coverage = portrait.coverage || {}, gaps = [...arr(item.gaps)]; if (coverage.relatedCapped) gaps.push('本次画像最多展开 ' + (coverage.relatedLimit || 24) + ' 条关联记录，仍有相关记录未在此详情中展开。'); if (coverage.truncatedRecords) gaps.push('画像中的 ' + coverage.truncatedRecords + ' 条关联记录按展示长度截取；可进入各条记录核对完整原文。'); $('dc-record-gaps').replaceChildren(...gaps.map(g => el('li',typeof g === 'string' ? g : formatted(g))));
     if (!gaps.length) $('dc-record-gaps').append(el('li','当前详情按已采集的记录组织；尚不能确认整项任务或全部模型交互已完整采集。'));
     $('dc-source-evidence').replaceChildren(readable(item.sourceEvidence,'未提供独立采集完整性证据。'));
@@ -774,7 +784,7 @@
   $('dc-add-filter').addEventListener('click',()=>{closeCompletions(); const open=$('dc-filter-panel').hidden; $('dc-filter-panel').hidden=!open; $('dc-add-filter').setAttribute('aria-expanded',String(open));});
   for (const view of ['request','record']) $('dc-view-' + view).addEventListener('click',() => {if (resultView() === view) return; resultViewOverride = view; saveDraft(); search(true);});
   $('dc-mode-search').addEventListener('click',() => selectMode('search')); $('dc-mode-investigate').addEventListener('click',() => selectMode('investigate'));
-  $('dc-latest').addEventListener('click',() => {selectMode('search'); $('dc-query').value = ''; resultViewOverride = ''; saveDraft(); search(true);});
+  $('dc-latest')?.addEventListener('click',() => {selectMode('search'); $('dc-query').value = ''; resultViewOverride = ''; saveDraft(); search(true);});
   $('dc-query').addEventListener('input',()=>{updateQueryDraft();showCompletions();});
   $('dc-query').addEventListener('blur',()=>closeCompletions());
   $('dc-query').addEventListener('compositionstart',()=>{composingQuery=true;closeCompletions();});
@@ -809,9 +819,13 @@
   addEventListener('pagehide',() => {searchController?.abort(); clearGroupStates(); detailController?.abort(); stopQuestion();});
   (async () => {
     const params = new URLSearchParams(location.search); let saved;
+    const source=['all','applens','sessionlens'].includes(params.get('collector'))?params.get('collector'):'sessionlens';
+    $('dc-collector').value=source;
+    if(source!=='all')$(source==='applens'?'dc-applens-tab':'dc-session-tab')?.setAttribute('aria-current','page');
+    else put('dc-source-note','当前为跨来源查询；同设备、同会话且唯一的相同提问可按需求关联。AppLens 当前只采集 WorkBuddy。');
     try {saved = JSON.parse(sessionStorage.getItem(draftKey) || 'null'); pendingQuestion = JSON.parse(sessionStorage.getItem(pendingKey) || 'null');} catch (_) {}
     if (saved?.query) $('dc-query').value = saved.query;
-    if (saved?.filters) {for (const key of ['application','collector','kind','location']) if (saved.filters[key] && [...$('dc-'+key).children].some(n=>n.value === saved.filters[key])) $('dc-'+key).value=saved.filters[key]; for (const key of ['after','before']) if (typeof saved.filters[key] === 'string') $('dc-'+key).value=saved.filters[key];}
+    if (saved?.filters) {for (const key of ['application','kind','location']) if (saved.filters[key] && [...$('dc-'+key).children].some(n=>n.value === saved.filters[key])) $('dc-'+key).value=saved.filters[key]; for (const key of ['after','before']) if (typeof saved.filters[key] === 'string') $('dc-'+key).value=saved.filters[key];}
     if (saved?.object && [...$('dc-object').children].some(n => n.value === saved.object)) $('dc-object').value = saved.object;
     for (const key of ['object','collector','application','kind','location']) if (params.get(key) && [...$('dc-' + key).children].some(n => n.value === params.get(key))) $('dc-' + key).value = params.get(key);
     for (const key of ['after','before']) if (params.get(key)) {const d = new Date(params.get(key)); if (!Number.isNaN(d.getTime())) {$('dc-' + key).value = new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);}}
@@ -820,8 +834,18 @@
     if (['request','record'].includes(params.get('group'))) resultViewOverride = params.get('group');
     else if ((!params.has('q') || params.get('q') === saved?.query) && ['request','record'].includes(saved?.resultView)) resultViewOverride = saved.resultView;
     if (params.get('request')) {const old = $('dc-old-reader') || document.querySelector('.dc-old-reader'); if (old) old.href = '/model-data/raw?' + params.toString();}
+    if(source==='applens') {
+      for(const option of $('dc-application').children)if(option.value==='codex'){option.disabled=true;if($('dc-application').value==='codex')$('dc-application').value='all';}
+      for(const option of $('dc-kind').children)if(!['all','context','http'].includes(option.value))option.disabled=true;
+      if(!['all','context','http'].includes($('dc-kind').value))$('dc-kind').value='all';
+      $('dc-object').closest('label').hidden=true;$('dc-object').value='all';
+      document.querySelector('.dc-results-toolbar').hidden=true;
+      resultViewOverride='record';
+    }
     const identity = (async () => {try {session = await api('/api/session');} catch (_) {} finally {identityReady = true; renderIdentity();}})();
-    if (saved?.mode === 'investigate' && !params.has('q') && !params.has('object')) {selectMode('investigate'); if (pendingQuestion?.id) recover('上次调查的问题和编号已保留，可以重新查看结果。','question'); const scope = await api('/api/data-center/search?' + new URLSearchParams({q:'',device:'all',page:'1',pageSize:'1'})).catch(() => null); if (scope) renderFacets(scope.facets);}
-    else await search(); renderScope(); await identity;
+    if (saved?.mode === 'investigate' && !params.has('q') && !params.has('object')) {selectMode('investigate'); if (pendingQuestion?.id) recover('上次调查的问题和编号已保留，可以重新查看结果。','question'); const scope = await api('/api/data-center/summary').catch(() => null); if (scope) renderFacets(scope.facets);}
+    else if(params.has('q') || params.has('device') || params.has('object')) await search();
+    else {const scope=await api('/api/data-center/summary').catch(()=>null);if(scope)renderFacets(scope.facets);put('dc-count','设置条件后点击搜索');}
+    renderScope(); await identity;
   })();
 })();

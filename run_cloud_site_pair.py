@@ -18,8 +18,8 @@ import urllib.request
 import uuid
 
 ROOT=Path(__file__).resolve().parent
-KEY=Path('/private/tmp/agentpair-run.vQ4wLt/id_ed25519')
-KNOWN=KEY.parent/'known_hosts'
+KEY=Path(os.environ['AGENTPAIR_SSH_KEY'])
+KNOWN=Path(os.environ.get('AGENTPAIR_KNOWN_HOSTS',str(Path.home()/'.ssh'/'known_hosts')))
 resume_id=sys.argv[1] if len(sys.argv)>1 else None
 runid=resume_id or datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:6]
 out=ROOT/'runs'/runid

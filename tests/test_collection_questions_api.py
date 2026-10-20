@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -23,7 +24,7 @@ from agentpair.tasks import TaskEngine
 try:
     from .test_collection_assistant import EvidenceModel
 except ImportError:
-    from test_collection_assistant import EvidenceModel
+    from tests.test_collection_assistant import EvidenceModel
 
 
 class UnusedTaskBackend:
@@ -44,6 +45,8 @@ class CollectionQuestionsAPITests(unittest.TestCase):
     PASSWORD = 'fixture-password-12345'
 
     def setUp(self):
+        self.invite=patch.dict('os.environ',{'AGENTPAIR_REGISTRATION_INVITE':'synthetic-test-invite'})
+        self.invite.start();self.addCleanup(self.invite.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.model = EvidenceModel()
@@ -64,6 +67,8 @@ class CollectionQuestionsAPITests(unittest.TestCase):
             self.assertEqual(status, 200 if name == 'admin' else 201)
             self.csrf[name] = value['csrf']
             self.owners[name] = 'admin' if name == 'admin' else self.engine.accounts.login(name, self.PASSWORD)['id']
+            if name!='admin':
+                with sqlite3.connect(self.engine.accounts.path) as db:db.execute('UPDATE wallets SET remaining=2000000 WHERE owner=?',(self.owners[name],))
         self.devices = DeviceStore(self.root / 'devices.db')
         self.assets = {}
         for name in ('alice', 'bob'):
@@ -92,6 +97,7 @@ class CollectionQuestionsAPITests(unittest.TestCase):
             urllib.request.ProxyHandler({}))
 
     def call(self, path, data=None, actor=None, csrf=None, origin=None, headers=None):
+        if path=='/api/register' and data is not None:data={'inviteCode':'synthetic-test-invite',**data}
         request_headers = {'Content-Type': 'application/json',
                            'Origin': self.ORIGIN if origin is None else origin}
         if actor:
@@ -198,19 +204,12 @@ class CollectionQuestionsAPITests(unittest.TestCase):
         self.assertTrue(answer['result']['answer']['evidenceRefs'])
         self.assertNotIn('bob-members.py', json.dumps(answer, ensure_ascii=False))
 
-    def test_global_owner_is_resolved_from_device_not_client_supplied_identity(self):
-        identity = self.submit('bob', self.payload(scope='global', ownerAccount=self.owners['bob'],
-            owner=self.owners['bob'], requester='admin'))
-        answer = self.completed(identity, 'bob')
-        with sqlite3.connect(self.root / 'collection-assistant.db') as db:
-            row = db.execute('SELECT requester,owner,device FROM questions WHERE id=?', (identity,)).fetchone()
-        self.assertEqual(row, (self.owners['bob'], self.owners['alice'], self.assets['alice']['deviceId']))
-        self.assertEqual(answer['result']['candidates'][0]['sessionId'], 'alice-session')
-        self.assertNotIn('bob-members.py', json.dumps(answer, ensure_ascii=False))
-        self.assertEqual(self.engine.accounts.balance(self.owners['alice'])['remainingCNY'], 2)
-        self.assertAlmostEqual(self.engine.accounts.balance(self.owners['bob'])['remainingCNY'],
-                               2 - .10 * len(self.model.calls))
-        self.rejected(404, '/api/collection/questions/' + identity, actor='alice')
+    def test_global_scope_cannot_charge_another_users_device(self):
+        self.rejected(403, '/api/collection/questions', self.payload(scope='global',
+            ownerAccount=self.owners['bob'],owner=self.owners['bob'],requester='admin'),actor='bob')
+        self.assertEqual(self.question_count(),0)
+        self.assertEqual(self.model.calls,[])
+        self.assertEqual(self.engine.accounts.balance(self.owners['bob'])['remainingCNY'],2)
 
     def test_mine_scope_does_not_accept_client_claim_of_another_owner(self):
         self.rejected(403, '/api/collection/questions', self.payload(ownerAccount=self.owners['alice'],
@@ -251,7 +250,7 @@ class CollectionQuestionsAPITests(unittest.TestCase):
     def test_previous_question_cannot_be_borrowed_across_requester_or_device(self):
         identity = self.submit()
         self.completed(identity)
-        self.rejected(400, '/api/collection/questions', self.payload(scope='global', previousQuestionId=identity), actor='bob')
+        self.rejected(403, '/api/collection/questions', self.payload(scope='global', previousQuestionId=identity), actor='bob')
         self.rejected(400, '/api/collection/questions', self.payload(scope='global', previousQuestionId=identity), actor='admin')
         other = self.devices.enroll(self.devices.pairing(self.owners['alice'])['code'], 'Same MacBook Name')
         self.rejected(400, '/api/collection/questions', self.payload(deviceId=other['deviceId'], previousQuestionId=identity), actor='alice')

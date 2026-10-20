@@ -5,7 +5,7 @@ from agentpair.tasks import TaskEngine
 from agentpair.transport import NodeBackend
 from agentpair.collaboration import message
 from agentpair.driver_runtime import execute
-from test_tasks import FakeBackend
+from tests.legacy.test_tasks import FakeBackend
 
 
 class ObservationTests(unittest.TestCase):

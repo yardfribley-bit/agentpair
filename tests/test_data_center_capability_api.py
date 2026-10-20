@@ -17,7 +17,7 @@ from agentpair.devices import DeviceStore
 from agentpair.platform import handler_for
 from agentpair.session_lens import SessionStore
 from agentpair.tasks import TaskEngine
-from test_data_center import wait_for_background_index, stop_background_index
+from tests.test_data_center import wait_for_background_index, stop_background_index
 
 
 class NoExternalBackend:

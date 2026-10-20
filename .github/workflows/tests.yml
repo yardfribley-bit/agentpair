@@ -1,0 +1,21 @@
+name: All Python tests
+on:
+  pull_request:
+  push:
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-repository.txt -r SessionLens/requirements-desktop.txt
+      - run: python ops/test_all.py
+      - run: find agentpair/web_assets -name '*.js' -exec node --check '{}' \;

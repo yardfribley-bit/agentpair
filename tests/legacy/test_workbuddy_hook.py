@@ -3,13 +3,13 @@ from pathlib import Path
 import tempfile
 import unittest
 
-spec=importlib.util.spec_from_file_location('hook',Path(__file__).parent/'macos/workbuddy_hook.py')
+spec=importlib.util.spec_from_file_location('hook',Path(__file__).resolve().parents[2]/'macos/workbuddy_hook.py')
 hook=importlib.util.module_from_spec(spec);spec.loader.exec_module(hook)
 
 class HookTests(unittest.TestCase):
     def test_install_preserves_existing_and_idempotent(self):
         import json
-        s=importlib.util.spec_from_file_location('installer',Path(__file__).parent/'macos/install_workbuddy_hooks.py')
+        s=importlib.util.spec_from_file_location('installer',Path(__file__).resolve().parents[2]/'macos/install_workbuddy_hooks.py')
         installer=importlib.util.module_from_spec(s);s.loader.exec_module(installer)
         with tempfile.TemporaryDirectory() as d:
             settings=Path(d)/'settings.json';settings.write_text(json.dumps({'other':True,'hooks':{'Stop':[{'hooks':[{'command':'existing'}]}]}}))

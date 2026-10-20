@@ -129,9 +129,9 @@ def main():
         class PreviewHandler(base):
             def do_GET(self):
                 path = unquote(urlsplit(self.path).path)
-                if path.startswith('/session-insights/'):
+                if path.startswith('/session-insights/archive/'):
                     base_folder = (root / 'insights').resolve()
-                    relative = path.removeprefix('/session-insights/') or 'index.html'
+                    relative = path.removeprefix('/session-insights/archive/') or 'index.html'
                     page = (base_folder / relative).resolve()
                     if not page.is_relative_to(base_folder) or page.suffix != '.html' or not page.is_file():
                         self.respond(404, {'error': 'No fixture page at this path'})

@@ -4,7 +4,7 @@ from agentpair.interaction_audit import build_audit
 from agentpair.security_investigation import semantic_packet,validate_answer
 from agentpair.devices import DeviceStore
 from agentpair.tasks import TaskEngine
-from test_tasks import FakeBackend
+from tests.legacy.test_tasks import FakeBackend
 
 class SecurityTests(unittest.TestCase):
     def audit(self,source='workbuddy_network_context',messages=None):

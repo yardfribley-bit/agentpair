@@ -92,44 +92,52 @@ Mac 客户端覆盖 Intel 和 Apple Silicon 构建，Windows 使用各自的原�
 
 ## 本地验证
 
-Python 3.10 或以上版本。当前开发代码位于 `codex/agentpair-mvp` 分支：
+Python 3.10 或以上版本。当前默认分支为 `codex/agentpair-mvp`；AP-11 的 `main` 迁移待单独授权：
 
 ```sh
 git clone --branch codex/agentpair-mvp https://github.com/yardfribley-bit/agentpair.git
 cd agentpair
-python3 -m unittest test_credential_threats test_background_threats test_threat_workflow test_model_context -v
-python3 -m unittest test_platform -v
-python3 -m agentpair.demo
+python3 ops/test_all.py
 ```
 
-这些 Python 测试使用本地数据库、模拟后端和本机 HTTP 端口，不需要付费模型调用。`agentpair.demo` 是离线演示。浏览器测试使用 Playwright，仓库当前部分脚本包含开发机器的运行时路径，需要按本机环境调整。
+统一入口依次运行`tests/legacy/`、`tests/`、`SessionLens/tests/` 的 Python 测试；CI 安装桌面依赖后运行同一命令。本机缺少可选 PySide6 时明确 skip 对应桌面测试，其他导入错误仍然失败。这些测试使用本地数据库、模拟后端和本机 HTTP 端口，不需要付费模型调用。`agentpair.demo` 是离线演示。浏览器测试使用 Playwright，仓库当前部分脚本包含开发机器的运行时路径，需要按本机环境调整。
 
 生产启动、模型服务和云资源配置见 [PLATFORM.md](PLATFORM.md)。`ops/` 部署脚本包含本项目环境约定，并非通用一键安装器。运行配置、数据库、私钥及日志不随源码上传；录屏和安装包也未纳入此次源码提交。
 
 ## 运行页面
 
-- [安全发现与分析视图](https://50.118.187.180/model-security)
-- [模型数据](https://50.118.187.180/model-data?scope=global)
-- [任务工作台](https://50.118.187.180/)
+- [安全发现与分析视图](https://www.chuhaijian.com/model-security)
+- [模型数据](https://www.chuhaijian.com/model-data?scope=global)
+- [任务工作台](https://www.chuhaijian.com/)
 
-项目域名计划使用 `www.chuhaijian.com`；域名 HTTPS 配置尚未在本次工作中完成验证，以上使用已验证的 IP 地址。
+线上主站使用 `https://www.chuhaijian.com/`。部署版本通过 `/api/version` 核对 commit、构建时间和源码摘要。
 
 ## 文档与源码
 
 | 内容 | 文档 / 目录 |
 | --- | --- |
-| 安全发现和处置流程 | [THREAT_MANAGEMENT_V1.md](THREAT_MANAGEMENT_V1.md) |
-| 凭据检测与验证 | [CREDENTIAL_THREAT_V1.md](CREDENTIAL_THREAT_V1.md) |
-| 无关背景检测范围 | [BACKGROUND_THREAT_V1.md](BACKGROUND_THREAT_V1.md) |
-| 交互审计 | [INTERACTION_AUDIT_V1.md](INTERACTION_AUDIT_V1.md) |
-| 单项安全复核 | [SECURITY_INVESTIGATION_V1.md](SECURITY_INVESTIGATION_V1.md) |
-| 客户端 | [APPLENS_CLIENTS.md](APPLENS_CLIENTS.md)，`macos/`、`windows/`、`android/` |
+| 安全发现和处置流程 | [THREAT_MANAGEMENT_V1.md](docs/architecture/THREAT_MANAGEMENT_V1.md) |
+| 凭据检测与验证 | [CREDENTIAL_THREAT_V1.md](docs/architecture/CREDENTIAL_THREAT_V1.md) |
+| 无关背景检测范围 | [BACKGROUND_THREAT_V1.md](docs/architecture/BACKGROUND_THREAT_V1.md) |
+| 交互审计 | [INTERACTION_AUDIT_V1.md](docs/architecture/INTERACTION_AUDIT_V1.md) |
+| 单项安全复核 | [SECURITY_INVESTIGATION_V1.md](docs/architecture/SECURITY_INVESTIGATION_V1.md) |
+| 客户端 | [APPLENS_CLIENTS.md](docs/architecture/APPLENS_CLIENTS.md)，`macos/`、`windows/`、`android/` |
 | 服务端和页面 | `agentpair/`、`agentpair/web_assets/` |
-| 协作机制与决策 | [DESIGN.md](DESIGN.md)、[DECISIONS.md](DECISIONS.md) |
-| 部署及资源管理 | [PLATFORM.md](PLATFORM.md)、[RESOURCE_CONTROL.md](RESOURCE_CONTROL.md) |
+| 协作机制与决策 | [DESIGN.md](docs/architecture/DESIGN.md)、[DECISIONS.md](docs/architecture/DECISIONS.md) |
+| 部署及资源管理 | [PLATFORM.md](PLATFORM.md)、[RESOURCE_CONTROL.md](docs/architecture/RESOURCE_CONTROL.md) |
 
 后续重点：建立新采集任务的分析队列，使用 AgentPair 提出和核查新威胁候选，加入人工确认及回归样本；再将真实分析事件接入动态视图。自动分析的数据范围、外发许可和预算需要明确配置，不能把单项复核许可扩大为全部原文自动发送。
 
 ## AgentReins v2（macOS）
 
 新增独立命令 `bin/agentreins_v2`，增量接入 AppLens 网络日志和 WorkBuddy 执行记录，提供可恢复的本机证据存储与查看页面。使用方式与当前采集边界见 [采集器说明](agentreins_v2/README.md)。Windows 暂不开发。
+
+## T000015 审核整改
+
+保留公开展示设计，按审核补充报告优先修复数据中心。查询使用后台索引、预计算覆盖统计、FTS5 trigram 和按哈希共享的文本；原始采集数据独立保留。少于三个字符的查询保留精确子串匹配。超时返回 503，容量满返回 429，均带 Retry-After。
+
+会话（SessionLens）、模型请求（AppLens）和使用排行分别展示；首屏只读取轻量概览，搜索由用户发起。AppLens 目前只接入 WorkBuddy，历史工具声明不计为独立执行次数。跨采集器仅在设备、源会话和规范化提问一致且唯一时关联，不能据此认定执行因果或业务任务相同。
+
+注册需要配置 `AGENTPAIR_REGISTRATION_INVITE`（或私有配置 `registrationInvite`），不自动赠送模型额度。模型调用按个人余额和全站累计预留上限共同限制；`modelBudgetCNY` / `AGENTPAIR_MODEL_BUDGET_CNY` 默认 20 元，达到上限后拒绝新调用。此值是估算预留上限，不是供应商实际账单。普通账号只能分析自己的设备。
+
+部署通过 `AGENTPAIR_NAVIGATOR_HOST`、`AGENTPAIR_DRIVER_HOST`、`AGENTPAIR_SSH_KEY`、`AGENTPAIR_KNOWN_HOSTS` 指定目标与身份，并严格核对 SSH 主机指纹。旁路索引构建：`python ops/rebuild_data_center.py --runtime /var/lib/agentpair --target /var/lib/agentpair/replacement-index`。验收与尚未完成项以 [整改记录](docs/qa/T000015/implementation.md) 为准。

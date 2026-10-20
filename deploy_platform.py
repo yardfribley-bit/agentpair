@@ -9,14 +9,15 @@ import subprocess
 import tarfile
 
 ROOT=Path(__file__).resolve().parent
-KEYDIR=Path('/private/tmp/agentpair-run.vQ4wLt')
-KEY=KEYDIR/'id_ed25519'
+KEYDIR=Path(os.environ.get('AGENTPAIR_KEY_DIRECTORY',str(Path.home()/'.ssh')))
+KEY=Path(os.environ.get('AGENTPAIR_SSH_KEY',str(KEYDIR/'id_ed25519')))
 DRIVERKEY=KEYDIR/'platform_driver'
-KNOWN=KEYDIR/'known_hosts'
-NAV='106.75.9.169'; DRIVER='106.75.18.16'
+KNOWN=Path(os.environ.get('AGENTPAIR_KNOWN_HOSTS',str(KEYDIR/'known_hosts')))
+NAV=os.environ.get('AGENTPAIR_NAVIGATOR_HOST',''); DRIVER=os.environ.get('AGENTPAIR_DRIVER_HOST','')
 
 
 def ssh(host,command,data=b''):
+    if not host:raise ValueError('Set AGENTPAIR_NAVIGATOR_HOST and AGENTPAIR_DRIVER_HOST')
     result=subprocess.run(['ssh','-i',str(KEY),'-o','IdentitiesOnly=yes','-o','BatchMode=yes',
         '-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+str(KNOWN),'-o','ConnectTimeout=8',
         'pair@'+host,command],input=data,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=40)

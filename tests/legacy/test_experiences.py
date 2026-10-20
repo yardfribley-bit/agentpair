@@ -1,5 +1,5 @@
 import unittest
-import test_devices
+from tests.legacy import test_devices
 
 
 class ExperienceTests(test_devices.DeviceTests):

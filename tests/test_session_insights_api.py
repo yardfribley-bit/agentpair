@@ -1,6 +1,7 @@
 """Real loopback API tests with synthetic model and source data only."""
-from test_collection_questions_api import CollectionQuestionsAPITests
-from test_session_insights import FakeModel
+from tests.test_collection_questions_api import CollectionQuestionsAPITests
+from tests.test_session_insights import FakeModel
+import time
 
 
 class SessionInsightsAPITests(CollectionQuestionsAPITests):
@@ -8,8 +9,15 @@ class SessionInsightsAPITests(CollectionQuestionsAPITests):
         super().setUp()
         self.insights = self.engine.session_insights
         self.insights.model = FakeModel()
-        self.insights.sync(force=True)
-        self.ident = next(i['id'] for i in self.insights.inventory()['items'] if i['deviceId'] == self.assets['alice']['deviceId'])
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline:
+            self.insights.sync(force=True)
+            items=self.insights.inventory()['items']
+            matches=[i['id'] for i in items if i['deviceId']==self.assets['alice']['deviceId']]
+            if matches and len(items)==2:
+                self.ident=matches[0];break
+            time.sleep(.01)
+        else:self.fail('Bounded insight indexing did not commit both fixture devices')
 
     def test_public_new_receipts_and_read_only_details(self):
         status, inventory = self.call('/api/insights')

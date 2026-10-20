@@ -7,7 +7,10 @@ from sessionlens.project_context import ProjectStore,index_text,remote,tool_argu
 from sessionlens.knowledge import candidates
 from sessionlens.embedding_store import EmbeddingStore
 from sessionlens.knowledge_index import KnowledgeIndex
-from tests.test_embedding import FakeEmbedding
+if __package__:
+    from .test_embedding import FakeEmbedding
+else:
+    from SessionLens.tests.test_embedding import FakeEmbedding
 
 class ProjectContextTests(unittest.TestCase):
     def setUp(self):

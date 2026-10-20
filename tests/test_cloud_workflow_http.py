@@ -14,13 +14,16 @@ from agentpair.tasks import TaskEngine
 try:
     from .test_cloud_workflow import CloudPlanBackend, FakeConsole, PRIVATE_MARKERS, WINDOWS_RECIPE
 except ImportError:
-    from test_cloud_workflow import CloudPlanBackend, FakeConsole, PRIVATE_MARKERS, WINDOWS_RECIPE
+    from tests.test_cloud_workflow import CloudPlanBackend, FakeConsole, PRIVATE_MARKERS, WINDOWS_RECIPE
 
 
 class CloudWorkflowHTTPTests(unittest.TestCase):
     ORIGIN = 'http://127.0.0.1:18080'
 
     def setUp(self):
+        from unittest.mock import patch
+        invite=patch.dict('os.environ',{'AGENTPAIR_REGISTRATION_INVITE':'synthetic-test-invite'})
+        invite.start();self.addCleanup(invite.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.backend = CloudPlanBackend()
         self.engine = TaskEngine(Path(self.tmp.name) / 'tasks.db', self.backend, start=False)
@@ -73,7 +76,7 @@ class CloudWorkflowHTTPTests(unittest.TestCase):
 
     def test_guest_user_csrf_and_origin_cannot_confirm(self):
         self.rejected(401)
-        csrf = self.call('/api/register', {'username': 'cloudviewer', 'password': 'viewer-password-123'})[1]['csrf']
+        csrf = self.call('/api/register', {'username': 'cloudviewer', 'password': 'viewer-password-123','inviteCode':'synthetic-test-invite'})[1]['csrf']
         self.rejected(403, csrf=csrf)
         self.call('/api/logout', {}, csrf)
         csrf = self.admin_login()

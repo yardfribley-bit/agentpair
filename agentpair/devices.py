@@ -44,6 +44,8 @@ class DeviceStore:
             db.execute('CREATE TABLE IF NOT EXISTS applens_llm_evidence(device_id TEXT,item_id TEXT,data TEXT NOT NULL,received REAL NOT NULL,PRIMARY KEY(device_id,item_id))')
             db.execute('CREATE TABLE IF NOT EXISTS security_reviews(device_id TEXT,request_id TEXT,body_hash TEXT,task_id TEXT,created REAL,PRIMARY KEY(device_id,request_id,body_hash))')
             db.execute('CREATE TABLE IF NOT EXISTS applens_model_context(device_id TEXT,request_id TEXT,data TEXT NOT NULL,received REAL NOT NULL,PRIMARY KEY(device_id,request_id))')
+            db.execute('CREATE INDEX IF NOT EXISTS applens_model_context_received ON applens_model_context(received)')
+            db.execute("CREATE INDEX IF NOT EXISTS applens_model_context_recent ON applens_model_context(device_id,json_extract(data,'$.timestamp') DESC)")
 
         from .credential_threats import CredentialThreats
         self.credential_threats=CredentialThreats(self.connect)
@@ -155,8 +157,8 @@ class DeviceStore:
         if device is None:raise PermissionError('Device not owned by this account')
         device_id=device['id']
         with self.connect() as db:
-            rows=db.execute('SELECT data FROM applens_llm_spans WHERE device_id=? ORDER BY received DESC LIMIT 200',(device_id,)).fetchall()
-            evidence=db.execute('SELECT data FROM applens_llm_evidence WHERE device_id=? ORDER BY received DESC LIMIT 200',(device_id,)).fetchall()
+            rows=[] if request_id else db.execute('SELECT data FROM applens_llm_spans WHERE device_id=? ORDER BY received DESC LIMIT 200',(device_id,)).fetchall()
+            evidence=[] if request_id else db.execute('SELECT data FROM applens_llm_evidence WHERE device_id=? ORDER BY received DESC LIMIT 200',(device_id,)).fetchall()
             contexts=[json.loads(r['data']) for r in db.execute('SELECT data FROM applens_model_context WHERE device_id=? AND (? IS NULL OR request_id=?) ORDER BY json_extract(data,\'$.timestamp\') DESC LIMIT ?',(device_id,request_id,request_id,200 if summary else 50))]
         if request_id and not contexts:raise ValueError('请求记录不存在')
         calls=[]

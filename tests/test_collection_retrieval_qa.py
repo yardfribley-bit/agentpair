@@ -1,6 +1,9 @@
 """Candidate recall under realistic expansion noise; synthetic data only."""
 import unittest
-from . import test_collection_knowledge as knowledge
+if __package__:
+    from . import test_collection_knowledge as knowledge
+else:
+    from tests import test_collection_knowledge as knowledge
 
 class RetrievalQATests(unittest.TestCase):
     def setUp(self):

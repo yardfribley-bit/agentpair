@@ -1,5 +1,5 @@
 import unittest
-import test_experiences
+from tests.legacy import test_experiences
 
 
 class AnalysisTests(test_experiences.ExperienceTests):

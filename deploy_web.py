@@ -3,6 +3,7 @@ import getpass
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tarfile
@@ -11,12 +12,13 @@ from agentpair.web import project_run
 
 ROOT=Path(__file__).resolve().parent
 RUN=ROOT/'runs'/'20260929T063028Z-f384fc'
-HOST='106.75.9.169'
-KEY='/private/tmp/agentpair-run.vQ4wLt/id_ed25519'
+HOST=os.environ['AGENTPAIR_NAVIGATOR_HOST']
+KEY=os.environ['AGENTPAIR_SSH_KEY']
+KNOWN=os.environ.get('AGENTPAIR_KNOWN_HOSTS',str(Path.home()/'.ssh'/'known_hosts'))
 
 def ssh(command,data=b''):
     return subprocess.run(['ssh','-i',KEY,'-o','IdentitiesOnly=yes','-o','BatchMode=yes',
-        '-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile=/private/tmp/agentpair-run.vQ4wLt/known_hosts',
+        '-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+KNOWN,
         '-o','ConnectTimeout=8','pair@'+HOST,command],input=data,check=True,
         stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=40).stdout
 

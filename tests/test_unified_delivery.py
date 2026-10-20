@@ -1,5 +1,5 @@
 """HTTP delivery checks for the shared Web shell, using isolated stores."""
-import test_platform as harness
+from tests.legacy import test_platform as harness
 import unittest
 
 

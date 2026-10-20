@@ -17,7 +17,7 @@ import urllib.request
 try:
     from . import test_collection_questions_api as api
 except ImportError:
-    import test_collection_questions_api as api
+    from tests import test_collection_questions_api as api
 
 
 class ProfessionalModel(api.EvidenceModel):

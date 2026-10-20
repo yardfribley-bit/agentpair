@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from agentpair.tasks import TaskEngine
 from agentpair.resource_usage import snapshot
-from test_tasks import FakeBackend
+from tests.legacy.test_tasks import FakeBackend
 
 class UsageTests(unittest.TestCase):
     def test_counts_messages_once_and_includes_decisions(self):

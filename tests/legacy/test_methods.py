@@ -6,7 +6,7 @@ from unittest.mock import patch
 from agentpair.tasks import TaskEngine
 from agentpair.transport import CloudDriverBackend,NodeBackend
 from agentpair.collaboration import PROTOCOL, message, validate
-from test_tasks import FakeBackend
+from tests.legacy.test_tasks import FakeBackend
 
 class MethodTests(unittest.TestCase):
     def test_collaboration_envelope_has_identity_and_recipient_validation(self):

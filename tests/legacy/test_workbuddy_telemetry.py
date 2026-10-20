@@ -1,6 +1,6 @@
 import importlib.util,json,tempfile,unittest
 from pathlib import Path
-spec=importlib.util.spec_from_file_location('telemetry',Path(__file__).parent/'macos/workbuddy_telemetry.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+spec=importlib.util.spec_from_file_location('telemetry',Path(__file__).resolve().parents[2]/'macos/workbuddy_telemetry.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class TelemetryTests(unittest.TestCase):
  def test_allowlist_dedup_otlp(self):
   record={'timestamp':1790840000000,'content':'secret prompt','providerData':{'conversationRequestId':'abc','model':'test-model','usage':{'inputTokens':12,'outputTokens':3},'reasoning':'secret'}}

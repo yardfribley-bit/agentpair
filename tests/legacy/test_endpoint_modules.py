@@ -2,7 +2,7 @@ import base64
 import hashlib
 import unittest
 from agentpair.endpoint_modules import bundle, prepare
-import test_devices
+from tests.legacy import test_devices
 
 
 class ModuleTests(unittest.TestCase):

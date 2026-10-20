@@ -59,7 +59,7 @@ class CredentialTests(unittest.TestCase):
   self.record(text=a+'\n'+b);self.assertEqual(len(self.findings()),2);self.assertNotIn('AAAsecret111',mask(a))
  def test_targeted_review_packet_is_masked_and_owner_bound(self):
   from agentpair.tasks import TaskEngine
-  from test_tasks import FakeBackend
+  from tests.legacy.test_tasks import FakeBackend
   self.record(text='云主机登录：root/Kj9sF3p8Qv1!');fid=self.findings()[0]['id']
   with self.assertRaises(PermissionError):self.store.credential_threats.review_packet('bob',fid)
   packet=self.store.credential_threats.review_packet('alice',fid)

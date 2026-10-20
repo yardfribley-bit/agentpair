@@ -30,7 +30,7 @@ jobs:
         with:
           node-version: '22'
       - name: Verify static routes, endpoint data and question ownership
-        run: python -m unittest tests.test_unified_delivery test_platform test_sessionlens_api tests.test_collection_view tests.test_collection_questions_api
+        run: python -m unittest tests.test_unified_delivery tests.legacy.test_platform tests.legacy.test_sessionlens_api tests.test_collection_view tests.test_collection_questions_api
       - name: Verify conversations, scope and current-answer rendering
         run: |
           node tests/test_reply_feedback.cjs

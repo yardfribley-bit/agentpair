@@ -13,7 +13,7 @@ from http.server import ThreadingHTTPServer
 from unittest.mock import patch
 from agentpair.platform import handler_for
 from agentpair.tasks import TaskEngine
-from test_tasks import FakeBackend
+from tests.legacy.test_tasks import FakeBackend
 
 
 class PlatformTests(unittest.TestCase):
@@ -62,6 +62,7 @@ class PlatformTests(unittest.TestCase):
         event={'schemaVersion':1,'id':'b'*64,'source':'workbuddy','sessionId':'weather','kind':'user_message','timestamp':1700000000,'payload':{'text':'上海天气'},'evidence':{'line':1}}
         self.call('/api/sessionlens/events',{'schemaVersion':1,'events':[event]},bearer=device['token'])
         rows=self.call('/api/devices')['items'];self.assertEqual(rows[0]['collectors'][0]['name'],'SessionLens')
+        self.wait_for_index()
         data=self.call('/api/devices/model-data/'+device.get('deviceId',device.get('id'))+'?summary=1')
         self.assertEqual(data['calls'][0]['collector'],'sessionlens')
         detail=self.call('/api/devices/model-data/'+device.get('deviceId',device.get('id'))+'?request=sessionlens:'+event['id'])
@@ -77,7 +78,7 @@ class PlatformTests(unittest.TestCase):
             self.assertIn('id="dc-query"',body)
             self.assertIn('id="dc-collector"',body)
             self.assertIn('/data_center.js',body)
-            self.assertIn('href="/model-data/raw?scope=global"',body)
+            self.assertIn('href="/model-data?collector=applens"',body)
         with self.client.open(self.url+'/model-data/raw') as response:
             body=response.read().decode()
             self.assertIn('数据中心 · 原文与分类',body)
@@ -105,7 +106,7 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(self.call('/api/audit/devices')['items'][0]['id'],d['deviceId'])
         data=self.call('/api/devices/interaction-audit/'+d['deviceId']+'?scope=global')
         self.assertNotIn('sk-abcdefghijklmnopqrstuvwx',json.dumps(data))
-        raw=self.call('/api/audit/model-data/'+d['deviceId'])
+        raw=self.call('/api/audit/model-data/'+d['deviceId']+'?request='+'a'*64)
         self.assertIn('sk-abcdefghijklmnopqrstuvwx',raw['calls'][0]['body'])
         for path in ('/api/devices','/api/devices/model-data/'+d['deviceId']):
             with self.assertRaises(urllib.error.HTTPError) as error:self.call(path)
@@ -393,6 +394,8 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(error.exception.code,403);error.exception.close()
 
     def setUp(self):
+        self.invite=patch.dict('os.environ',{'AGENTPAIR_REGISTRATION_INVITE':'synthetic-test-invite'})
+        self.invite.start();self.addCleanup(self.invite.stop)
         self.tmp=tempfile.TemporaryDirectory(); self.engine=TaskEngine(Path(self.tmp.name)/'tasks.db',FakeBackend(),start=False)
         self.server=ThreadingHTTPServer(('127.0.0.1',0),handler_for(self.engine,'test-password-long-enough','http://127.0.0.1:18080'))
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True); self.thread.start()
@@ -400,11 +403,19 @@ class PlatformTests(unittest.TestCase):
         self.client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),urllib.request.ProxyHandler({}))
     def tearDown(self):
         self.server.shutdown(); self.server.server_close(); self.thread.join(); self.engine.close(); self.tmp.cleanup()
+    def wait_for_index(self):
+        from tests.test_data_center import wait_for_background_index
+        wait_for_background_index(Path(self.tmp.name))
     def call(self,path,data=None,csrf='',origin='http://127.0.0.1:18080',bearer=None):
+        if path=='/api/register' and data is not None:data={**data,'inviteCode':'synthetic-test-invite'}
         headers={'Origin':origin,'Content-Type':'application/json','X-CSRF-Token':csrf}
         if bearer:headers['Authorization']='Bearer '+bearer
         req=urllib.request.Request(self.url+path,data=json.dumps(data).encode() if data is not None else None,headers=headers)
-        with self.client.open(req) as r:return json.load(r)
+        with self.client.open(req) as r:result=json.load(r)
+        if path=='/api/register':
+            # Test scenario explicitly approves credit, separate from signup.
+            with __import__('sqlite3').connect(self.engine.accounts.path) as db:db.execute('UPDATE wallets SET remaining=2000000 WHERE owner=?',(self.engine.accounts.login(data['username'],data['password'])['id'],))
+        return result
     def test_login_publish_followup_and_csrf(self):
         self.assertEqual(self.call('/api/tasks')['items'],[])
         self.assertEqual(self.call('/api/session')['role'],'viewer')

@@ -1,4 +1,4 @@
-from test_credential_threats import CredentialTests
+from tests.legacy.test_credential_threats import CredentialTests
 from unittest.mock import patch
 class WorkflowTests(CredentialTests):
  def test_scope_transitions_close_reopen(self):

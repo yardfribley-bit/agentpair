@@ -26,3 +26,6 @@ docs/qa/data-center-security-v1/
 docs/qa/unified-product-ui-images/
 marketing/videogen-demo/*.jpg
 marketing/videogen-demo/validation.json
+
+# Generated deployment provenance
+/agentpair/build-info.json

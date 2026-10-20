@@ -35,10 +35,11 @@ class DeviceTests(unittest.TestCase):
         with self.assertRaises(PermissionError): self.store.report(self.identity['token'], self.data)
 
     def test_heartbeat_is_independent_of_collection(self):
+        initial=self.store.list()[0]['snapshot']
         result=self.store.heartbeat(self.identity['token'],{'os':'Windows'})
         self.assertTrue(result['accepted'])
         self.assertTrue(self.store.list()[0]['online'])
-        self.assertEqual(self.store.list()[0]['snapshot'],{'os':'Windows'})
+        self.assertEqual(self.store.list()[0]['snapshot'],initial or {'os':'Windows'})
         self.store.report(self.identity['token'],self.data)
         before=self.store.list()[0]['snapshot']
         self.store.heartbeat(self.identity['token'],{'os':'Windows'})

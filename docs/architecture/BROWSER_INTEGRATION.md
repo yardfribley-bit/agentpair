@@ -11,7 +11,7 @@ Driver 运行在独立云机，有网络，不使用 Docker。网页内容按不
 小型文本产物自动回传；Navigator 复核后返回用户可读答案。
 截图、登录、上传下载和并发页面未验收，不向用户宣称可用。
 
-构建、来源、边界见 [BrowserKit](browserkit/README.md)。
+构建、来源、边界见 [BrowserKit](../../browserkit/README.md)。
 
 ## 以下为历史设计（已被替代，不作为部署步骤）
 

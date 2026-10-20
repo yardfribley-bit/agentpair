@@ -1,6 +1,6 @@
 import json,time
 from unittest.mock import patch
-from test_credential_threats import CredentialTests
+from tests.legacy.test_credential_threats import CredentialTests
 class BackgroundTests(CredentialTests):
  def capture(self,n,task,background,stamp=100,session='before',source='workbuddy_network_context'):
   r={'id':f'{n:064x}','source':source,'timestamp':stamp,'sessionId':session,'body':json.dumps({'messages':[{'role':'system','content':background},{'role':'user','content':'<user_query>'+task+'</user_query>'}]})}

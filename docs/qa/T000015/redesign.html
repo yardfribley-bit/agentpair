@@ -1,0 +1,126 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>数据中心 · 改版示意（示例数据）</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--line:#e3e6eb;--ink:#1d2330;--mute:#6b7280;--blue:#2563eb;--sl:#0f766e;--sl-bg:#e6f4f2;--al:#7c3aed;--al-bg:#f1ebfd;--warn:#b45309;--warn-bg:#fff6e6;--bad:#b91c1c}
+*{box-sizing:border-box}body{margin:0;font:14px/1.55 -apple-system,"PingFang SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif;color:var(--ink);background:var(--bg)}
+.app{display:grid;grid-template-columns:200px 1fr;min-height:100vh}
+aside{background:#fff;border-right:1px solid var(--line);padding:18px 12px}aside b{display:block;font-size:18px;margin:0 6px 18px}
+aside a{display:block;padding:7px 10px;border-radius:8px;color:var(--ink);text-decoration:none;margin-bottom:2px}aside a.on{background:#eaf1ff;color:var(--blue);font-weight:600}
+main{padding:18px 26px 40px;max-width:1240px}
+.demo{background:var(--warn-bg);color:var(--warn);border:1px dashed #f0c27a;border-radius:8px;padding:6px 12px;font-size:12px;margin-bottom:12px}
+h1{font-size:22px;margin:0}.sub{color:var(--mute);margin:2px 0 14px}
+.scope{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.scope label{font-size:12px;color:var(--mute);display:flex;flex-direction:column;gap:2px}
+.scope select,.scope input{font:inherit;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:#fff;min-width:130px}
+.scope .q{flex:1;min-width:260px}.scope .q input{width:100%}
+.btn{border:0;border-radius:8px;padding:8px 14px;background:var(--blue);color:#fff;font-weight:600;align-self:flex-end}
+.btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line);font-weight:500}
+.sources{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+.src{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;border-left:5px solid}
+.src.sl{border-left-color:var(--sl)}.src.al{border-left-color:var(--al)}
+.src h3{margin:0 0 2px;font-size:15px;display:flex;justify-content:space-between;align-items:center}
+.tag{font-size:11px;padding:2px 8px;border-radius:999px;font-weight:600;white-space:nowrap}
+.tag.sl{background:var(--sl-bg);color:var(--sl)}.tag.al{background:var(--al-bg);color:var(--al)}.tag.ok{background:#e8f6ec;color:#15803d}.tag.wait{background:var(--warn-bg);color:var(--warn)}
+.src p{margin:0 0 8px;color:var(--mute);font-size:12.5px}
+.kpis{display:flex;gap:18px;flex-wrap:wrap}.kpi b{display:block;font-size:18px}.kpi span{font-size:12px;color:var(--mute)}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:6px 0 12px}
+.tabs a{padding:9px 14px;text-decoration:none;color:var(--mute);border-bottom:2px solid transparent;font-weight:600}
+.tabs a.on{color:var(--ink);border-bottom-color:var(--ink)}.tabs small{font-weight:400;color:var(--mute)}
+.bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap}
+.seg{display:inline-flex;background:#eceff3;border-radius:8px;padding:2px}.seg span{padding:4px 10px;border-radius:6px;font-size:12.5px;color:var(--mute)}.seg span.on{background:#fff;color:var(--ink);font-weight:600}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:2px 9px;background:#fff;color:var(--mute)}.chip.on{border-color:var(--ink);color:var(--ink)}
+.cols{display:grid;grid-template-columns:1fr 340px;gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+.req h4{margin:0 0 4px;font-size:14.5px}.meta{color:var(--mute);font-size:12px;display:flex;gap:10px;flex-wrap:wrap}
+.steps{margin:8px 0 0;padding:0;list-style:none;border-left:2px solid var(--line)}
+.steps li{position:relative;padding:3px 0 3px 14px;font-size:13px}.steps li:before{content:"";position:absolute;left:-5px;top:10px;width:8px;height:8px;border-radius:50%;background:#cbd5e1}
+.steps li.u:before{background:var(--blue)}.steps li.t:before{background:var(--sl)}.steps li.r:before{background:#64748b}
+.k{display:inline-block;min-width:64px;font-size:11.5px;color:var(--mute)}
+code{font:12px ui-monospace,Menlo,monospace;background:#f1f3f6;padding:1px 5px;border-radius:4px}
+.side h5{margin:0 0 6px;font-size:13px}.side .row{display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;border-bottom:1px dashed var(--line)}
+.side .row:last-child{border:0}.note{font-size:12px;color:var(--mute)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}th{text-align:left;color:var(--mute);font-weight:500;border-bottom:1px solid var(--line);padding:6px 4px}td{padding:7px 4px;border-bottom:1px solid #f0f2f5;vertical-align:top}
+.size{height:6px;border-radius:3px;background:var(--al);opacity:.75}
+.comp{display:flex;height:12px;border-radius:6px;overflow:hidden;margin:6px 0}.comp i{display:block}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:11.5px;color:var(--mute)}.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:3px;vertical-align:-1px}
+.state{display:flex;gap:10px;align-items:center;background:var(--warn-bg);border:1px solid #f3d29a;color:#7c4a03;border-radius:10px;padding:8px 12px;font-size:12.5px;margin-bottom:10px}
+.skel{height:10px;border-radius:5px;background:linear-gradient(90deg,#eceff3,#f6f7f9,#eceff3);margin:6px 0}
+details{font-size:12.5px;color:var(--mute)}summary{cursor:pointer}
+.view{display:none}.view.on{display:block}
+@media(max-width:760px){.app{grid-template-columns:1fr}aside{display:flex;overflow-x:auto;gap:4px;padding:10px;border-right:0;border-bottom:1px solid var(--line)}aside b{display:none}aside a{white-space:nowrap}
+main{padding:12px}.sources{grid-template-columns:1fr}.cols{grid-template-columns:1fr}.scope select,.scope input{min-width:0;width:100%}.scope label{flex:1 1 45%}.scope .q{flex-basis:100%}.btn{width:100%}
+.hide-m{display:none}.tabs{overflow-x:auto}.tabs a{white-space:nowrap}}
+</style></head><body>
+<div class="app">
+<aside><b>◢ AgentPair</b><a>任务中心</a><a>我的设备</a><a class="on">数据中心</a><a>交互安全审计</a><a>会话洞察</a><a>云机器</a><a>软件包</a></aside>
+<main>
+<div class="demo">改版示意稿：所有数字、设备名、文本均为<b>示例</b>，字段名与结构取自现有 /api/data-center 与 /api/audit/model-data 返回。</div>
+<h1>数据中心</h1><p class="sub">按设备查看 Agent 做了什么（SessionLens 会话日志），以及实际发给模型的内容（AppLens 模型请求）。</p>
+
+<form class="scope" onsubmit="return false">
+ <label>设备<select><option>示例设备 A</option><option>所有设备（需缩小时间）</option></select></label>
+ <label>时间<select><option>最近 24 小时</option><option>最近 7 天</option><option>自定义…</option></select></label>
+ <label>Agent<select><option>所有 Agent</option><option>WorkBuddy</option><option>Codex</option></select></label>
+ <label class="q">关键词 / 条件<input placeholder='如 tool="Bash" && app="workbuddy"，输入 kind= 查看可用条件'></label>
+ <button class="btn">搜索</button>
+</form>
+
+<div class="sources">
+ <div class="src sl"><h3>SessionLens · 会话日志 <span class="tag ok">索引已同步 · 示例 2 分钟前</span></h3>
+  <p>来自 Codex / WorkBuddy 本地会话日志：用户提问、工具调用与返回、已记录思路、Agent 回复。不代表完整模型输入。</p>
+  <div class="kpis"><div class="kpi"><b>示例 1,284</b><span>条记录</span></div><div class="kpi"><b>示例 37</b><span>个需求</span></div><div class="kpi"><b>示例 412</b><span>次工具调用</span></div><div class="kpi"><b>Codex · WorkBuddy</b><span>Agent</span></div></div></div>
+ <div class="src al"><h3>AppLens · 模型请求 <span class="tag wait">示例 3 条待索引</span></h3>
+  <p>端侧捕获的发给模型的请求正文（WorkBuddy）。每次请求都携带完整历史上下文，体积大、内容高度重复。</p>
+  <div class="kpis"><div class="kpi"><b>示例 50</b><span>次请求</span></div><div class="kpi"><b>示例 290 KB</b><span>平均正文</span></div><div class="kpi"><b>示例 28 / 22</b><span>网络捕获 / 生成上下文</span></div><div class="kpi"><b>示例 18:42</b><span>最近接收</span></div></div></div>
+</div>
+
+<nav class="tabs"><a href="#sl" id="t-sl" class="on">会话 <small>SessionLens</small></a><a href="#al" id="t-al">模型请求 <small>AppLens</small></a><a href="#rk" id="t-rk">工具与能力排行</a></nav>
+
+<section id="v-sl" class="view on">
+ <div class="bar"><div class="seg"><span class="on">按需求</span><span>按原始记录</span></div>
+  <div class="chips"><span class="chip on">全部行为</span><span class="chip">用户提问</span><span class="chip">工具调用</span><span class="chip">工具返回</span><span class="chip">已记录思路</span><span class="chip">Agent 回复</span></div></div>
+ <div class="cols"><div>
+  <div class="card req"><h4>「示例：帮我把部署脚本改成读取环境变量」</h4>
+   <div class="meta"><span class="tag sl">SessionLens</span><span>WorkBuddy</span><span>示例设备 A</span><span>示例 18:20–18:31</span><span>14 条记录</span><span>工具调用 6：Bash ×4 · Edit ×2</span><span>关联：已确认 12 · 候选 2</span></div>
+   <ul class="steps"><li class="u"><span class="k">用户提问</span>示例：帮我把部署脚本改成读取环境变量…</li>
+   <li class="t"><span class="k">工具调用</span><code>Bash</code> 示例：rg -n "HOST" deploy_*.py</li>
+   <li class="t"><span class="k">工具返回</span>示例：3 处命中（已截断，点开查看原文）</li>
+   <li class="t"><span class="k">工具调用</span><code>Edit</code> 示例：deploy_web.py</li>
+   <li class="r"><span class="k">Agent 回复</span>示例：已改为读取 DEPLOY_HOST…</li></ul>
+   <details><summary>其余 9 条 · 查看全部</summary></details></div>
+  <div class="card req"><h4>「示例：检查 Nginx 配置为何 502」</h4>
+   <div class="meta"><span class="tag sl">SessionLens</span><span>Codex</span><span>示例设备 A</span><span>示例 17:02–17:15</span><span>22 条记录</span><span>工具调用 9：Bash ×9</span></div></div>
+  <div class="card"><div class="meta"><span>未关联到需求的记录：示例 31 条</span><a href="#">查看</a></div></div>
+  <div class="card"><div class="skel" style="width:60%"></div><div class="skel" style="width:90%"></div><div class="skel" style="width:40%"></div><div class="note">加载更多需求时显示骨架；单页 20 个需求。</div></div>
+ </div>
+ <div class="side hide-m"><div class="card"><h5>本范围概况（预聚合，示例）</h5>
+  <div class="row"><span>用户提问</span><b>96</b></div><div class="row"><span>工具调用</span><b>412</b></div><div class="row"><span>工具返回</span><b>398</b></div><div class="row"><span>已记录思路</span><b>211</b></div><div class="row"><span>Agent 回复</span><b>167</b></div></div>
+  <div class="card"><h5>常用工具（示例）</h5><div class="row"><span>Bash</span><b>288</b></div><div class="row"><span>Edit</span><b>64</b></div><div class="row"><span>Read</span><b>41</b></div><a class="note" href="#rk">完整排行 →</a></div>
+  <div class="card"><h5>覆盖与已知缺口</h5><p class="note">SessionLens 未记录每条事件的服务器接收时间；账号是上传归属，实际员工未确认。</p></div>
+ </div></div>
+</section>
+
+<section id="v-al" class="view">
+ <div class="state">⚠ 示例：最近同步时有 3 条源记录待索引，当前结果可能不完整。<button class="btn ghost" style="padding:3px 10px">刷新</button></div>
+ <div class="cols"><div>
+ <div class="card"><table><thead><tr><th>接收时间</th><th>来源</th><th class="hide-m">目标</th><th>正文大小</th><th class="hide-m">新增内容（建议）</th><th></th></tr></thead><tbody>
+  <tr><td>示例 18:42</td><td><span class="tag al">网络捕获</span><br><small>workbuddy_network_context</small></td><td class="hide-m">示例 api.model.example</td><td>312 KB<div class="size" style="width:92%"></div></td><td class="hide-m">+1 user · +2 tool</td><td><a href="#">查看</a></td></tr>
+  <tr><td>示例 18:41</td><td><span class="tag al">生成上下文</span><br><small>workbuddy_generation_context</small></td><td class="hide-m">—</td><td>305 KB<div class="size" style="width:89%"></div></td><td class="hide-m">+1 assistant</td><td><a href="#">查看</a></td></tr>
+  <tr><td>示例 18:39</td><td><span class="tag al">网络捕获</span><br><small>workbuddy_network_context</small></td><td class="hide-m">示例 api.model.example</td><td>298 KB<div class="size" style="width:86%"></div></td><td class="hide-m">+1 user</td><td><a href="#">查看</a></td></tr>
+ </tbody></table><p class="note">默认只列请求摘要（时间、来源、bodyBytes、bodySHA256），正文按需加载；「新增内容」= 与上一请求相比新增的消息，重复的历史上下文折叠。</p></div>
+ <div class="card"><h5 style="margin:0">示例请求的上下文构成</h5>
+  <div class="comp"><i style="width:8%;background:#94a3b8"></i><i style="width:12%;background:#f59e0b"></i><i style="width:10%;background:var(--blue)"></i><i style="width:34%;background:#64748b"></i><i style="width:36%;background:var(--sl)"></i></div>
+  <div class="legend"><span><i style="background:#94a3b8"></i>消息角色 system</span><span><i style="background:#f59e0b"></i>SOUL.md / IDENTITY.md / USER.md / MEMORY.md</span><span><i style="background:var(--blue)"></i>消息角色 user</span><span><i style="background:#64748b"></i>消息角色 assistant</span><span><i style="background:var(--sl)"></i>消息角色 tool</span></div></div>
+ </div>
+ <div class="side hide-m"><div class="card"><h5>AppLens 说明</h5><p class="note">已收到 HTTP 请求正文；长度和哈希校验不证明模型服务处理成功。当前只采集 WorkBuddy。</p>
+  <div class="row"><span>请求（示例）</span><b>50</b></div><div class="row"><span>网络捕获 / 生成上下文</span><b>28 / 22</b></div><div class="row"><span>上下文条目</span><b>1,026</b></div></div></div>
+ </div>
+</section>
+
+<section id="v-rk" class="view"><div class="card"><table><thead><tr><th>工具 / Skill / MCP</th><th>调用次数</th><th>设备</th><th>最近</th></tr></thead><tbody><tr><td>Bash</td><td>示例 288</td><td>2</td><td>示例 18:31</td></tr><tr><td>Edit</td><td>示例 64</td><td>1</td><td>示例 18:30</td></tr></tbody></table><p class="note">排行来自预聚合表，与上方范围一致。</p></div></section>
+<p class="note">命中记录展示观察事实；人员身份、任务归属、资料实际发送和风险成立分别需要对应证据。</p>
+</main></div>
+<script>
+function show(v){for(const k of['sl','al','rk']){document.getElementById('v-'+k).classList.toggle('on',k===v);document.getElementById('t-'+k).classList.toggle('on',k===v)}}
+addEventListener('hashchange',()=>show((location.hash||'#sl').slice(1)));show((location.hash||'#sl').slice(1));
+</script></body></html>
