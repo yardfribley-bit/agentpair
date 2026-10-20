@@ -14,6 +14,8 @@ def main():
                             max_seconds=private.get('maxSeconds',3600),
                             max_hourly_cny=private.get('maxHourlyCNY',1.0))
     released=manager.release_expired()
-    print('Expired leases released:',len(released))
+    failures=[row for row in released if row['state']!='released']
+    print('Expired leases released:',len(released)-len(failures),'failed:',len(failures))
+    if failures:raise SystemExit(1)
 
 if __name__=='__main__': main()

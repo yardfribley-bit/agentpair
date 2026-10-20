@@ -293,6 +293,11 @@
   function coverageText(coverage, total = null) {
     if (typeof coverage === 'string') return coverage;
     const c = coverage || {}, fields = [];
+    if (c.indexSync?.mode === 'background') {
+      fields.push(c.indexSync.updatedAt ? '索引更新至 ' + date(c.indexSync.updatedAt) : '索引首次同步中，当前结果可能不完整');
+      if (c.indexSync.pendingSessionRecords > 0) fields.push('最近同步时有 ' + c.indexSync.pendingSessionRecords + ' 条源记录待索引');
+      if (c.indexSync.error) fields.push('后台同步失败：' + c.indexSync.error + '；当前仅查询已提交索引');
+    }
     if (Number.isFinite(c.retainedRecords)) fields.push('平台保留 ' + c.retainedRecords.toLocaleString('zh-CN') + ' 条记录');
     if (Number.isFinite(c.searchedRecords)) fields.push('本次检索 ' + c.searchedRecords.toLocaleString('zh-CN') + ' 条');
     if (Number.isFinite(c.indexedRecords) && Number.isFinite(c.totalRecords)) fields.push('索引覆盖 ' + c.indexedRecords + ' / ' + c.totalRecords + ' 条');
@@ -716,7 +721,8 @@
     for (const key of ['dc-detail-match-details','dc-relation-details','dc-neighbor-details','dc-source-details','dc-content-details','dc-raw-details']) $(key).open = false;
     for (const key of ['dc-tool-section','dc-context-section','dc-prompt-section','dc-neighbor-details','dc-detail-outcome','dc-execution-detail']) $(key).hidden = true; $('dc-tool-grid').hidden = false; $('dc-tool-facts').hidden = false; $('dc-raw-link').hidden = true;
     const searchMatches = [...arr(lastSearch?.items),...Array.from(groupStates.values()).flatMap(state => state.items)].find(item => item.id === id)?.matchBasis || [];
-    try {const data = await api('/api/data-center/record?' + new URLSearchParams({id}),undefined,controller.signal); if (generation !== detailGeneration || controller.signal.aborted) return; renderDetail(data.item || data,searchMatches); $('dc-raw-link').hidden = false;}
+    const detailParams = {id}; if (mode === 'search' && lastSearchParams?.q) detailParams.q = lastSearchParams.q;
+    try {const data = await api('/api/data-center/record?' + new URLSearchParams(detailParams),undefined,controller.signal); if (generation !== detailGeneration || controller.signal.aborted) return; renderDetail(data.item || data,searchMatches); $('dc-raw-link').hidden = false;}
     catch (e) {if (generation !== detailGeneration || controller.signal.aborted) return; put('dc-detail-error-text',e.message); $('dc-detail-error').hidden = false; put('dc-detail-summary','未能读取此记录，不沿用上一条内容。'); $('dc-detail-body').setAttribute('aria-busy','false');}
   }
   function closeDetail() {++detailGeneration; detailController?.abort(); detailController = null; detailId = ''; detailItem = null; detailHistory = []; $('dc-detail').hidden = true; $('dc-detail-backdrop').hidden = true; document.body.style.overflow = ''; detailTrigger?.focus(); detailTrigger = null;}

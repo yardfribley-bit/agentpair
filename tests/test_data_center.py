@@ -14,6 +14,33 @@ from agentpair.devices import DeviceStore
 from agentpair.session_lens import SessionStore
 
 
+def wait_for_background_index(root):
+    """Wait for committed fixtures, rather than making GET perform indexing."""
+    import sqlite3, time
+    source = root / 'session-lens.db'
+    if not source.exists(): source = root / 'sessionlens.db'
+    with sqlite3.connect(source) as db: target = db.execute('SELECT coalesce(max(rowid),0) FROM session_events').fetchone()[0]
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            with sqlite3.connect(root / 'data-center.db') as db:
+                row = db.execute("SELECT value FROM dc_state WHERE name='session_seq'").fetchone()
+                if int(row[0] if row else 0) >= target: return
+        except sqlite3.OperationalError: pass
+        time.sleep(.02)
+    raise AssertionError('Background indexing did not commit fixture records')
+
+
+def stop_background_index(root):
+    import time
+    from agentpair.data_center import _BACKGROUND_WORKERS
+    worker = _BACKGROUND_WORKERS.pop(str((root / 'data-center.db').resolve()),None)
+    if worker:
+        worker['stop'].set()
+        deadline = time.monotonic() + 5
+        while worker['running'] and time.monotonic() < deadline: time.sleep(.01)
+
+
 class DataCenterTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -269,7 +296,9 @@ class DataCenterTests(unittest.TestCase):
         second = DataCenter(CollectionView(self.devices,self.sessions))
         self.assertIs(second.lock,self.center.lock)
         with self.center._db() as db:
-            plan = ' '.join(r[3] for r in db.execute('EXPLAIN QUERY PLAN SELECT key FROM dc_records WHERE collector=? AND seq=?',('sessionlens',1)))
+            # Match the incremental writer's lookup, including digest access.
+            # A key-only projection may prefer the broad covering inventory.
+            plan = ' '.join(r[3] for r in db.execute("EXPLAIN QUERY PLAN SELECT key,received,json_extract(metadata,'$.recordDigest') FROM dc_records WHERE collector=? AND seq=?",('sessionlens',1)))
             self.assertIn('dc_records_physical',plan)
             self.assertIn('collector=? AND seq=?',plan)
 
@@ -336,8 +365,10 @@ class DataCenterAPITests(unittest.TestCase):
         SessionStore(self.root / 'session-lens.db').ingest(self.identity, {'schemaVersion': 1, 'events': [{
             'schemaVersion': 1, 'id': 'a' * 64, 'source': 'codex', 'sessionId': 'api-session',
             'kind': 'user_message', 'timestamp': 1700000000, 'payload': {'content': '公开原始提问'}, 'evidence': {}}]})
+        wait_for_background_index(self.root)
 
     def tearDown(self):
+        stop_background_index(self.root)
         self.engine.close();self.tmp.cleanup()
 
     def get(self, path):

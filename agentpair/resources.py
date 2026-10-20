@@ -134,5 +134,15 @@ class ResourceManager:
         return lease
 
     def release_expired(self):
-        return [self.release(r['id']) for r in self.records()
-                if r['state']!='released' and datetime.datetime.fromisoformat(r['expiresAt'])<=self.clock()]
+        results=[]
+        for record in self.records():
+            if record['state']=='released' or datetime.datetime.fromisoformat(record['expiresAt'])>self.clock():
+                continue
+            try:
+                results.append(self.release(record['id']))
+            except Exception as error:
+                # A failed provider call for one lease must not skip the others.
+                # Keep its original lease pending so the next timer retries it.
+                results.append({'id':record['id'],'state':'cleanup_failed',
+                                'errorType':type(error).__name__})
+        return results

@@ -35,6 +35,18 @@ class CloudInstallStatusTests(unittest.TestCase):
     def test_missing_receipt_requires_reconciliation(self):
         self.assertEqual(self.run_receipt(None)['state'],'interrupted')
 
+    def test_captured_powershell_progress_array_preserves_final_receipt(self):
+        receipt={'state':'verification_required','stage':'verify','summary':'Installed; version needs reconciliation',
+                 'evidence':{'installCompleted':True,'verified':False}}
+        op=self.run_receipt([json.dumps({'state':'running','stage':'download'}),receipt])
+        self.assertEqual(op['state'],'verification_required')
+        self.assertTrue(op['evidence']['installCompleted'])
+        self.assertEqual(op['transport']['parsedRecordCount'],2)
+
+    def test_array_does_not_bypass_installer_verification(self):
+        op=self.run_receipt(['progress',{'state':'completed','evidence':{'verified':True}}],code=0)
+        self.assertEqual(op['state'],'failed')
+
     def test_invalid_success_receipt_is_not_accepted(self):
         op=self.run_receipt({'state':'completed','evidence':{'verified':True}},code=0)
         self.assertEqual(op['state'],'failed')

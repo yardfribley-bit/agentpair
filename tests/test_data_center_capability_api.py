@@ -17,6 +17,7 @@ from agentpair.devices import DeviceStore
 from agentpair.platform import handler_for
 from agentpair.session_lens import SessionStore
 from agentpair.tasks import TaskEngine
+from test_data_center import wait_for_background_index, stop_background_index
 
 
 class NoExternalBackend:
@@ -45,6 +46,8 @@ class DataCenterCapabilityAPITests(unittest.TestCase):
         self.device = enrolled['deviceId']
         session_path = self.root / 'session-lens.db'
         sessions = SessionStore(session_path)
+        self.sessions = sessions
+        self.identity = devices.identity(enrolled['token'])
         events = []
         def event(label, source='workbuddy', kind='tool_call', **item):
             return {'schemaVersion': 1, 'id': hashlib.sha256(label.encode()).hexdigest(),
@@ -60,9 +63,11 @@ class DataCenterCapabilityAPITests(unittest.TestCase):
 
     def tearDown(self):
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=3)
+        stop_background_index(self.root)
         self.engine.close(); self.tmp.cleanup()
 
     def get(self, path):
+        wait_for_background_index(self.root)
         with self.client.open(self.url + path, timeout=10) as response:
             return json.load(response), response.headers.get('Content-Type', '')
 
@@ -107,6 +112,30 @@ class DataCenterCapabilityAPITests(unittest.TestCase):
         self.assertEqual(hits['total'], 1)
         hits, _ = self.get('/api/data-center/search?object=tool')
         self.assertEqual(hits['total'], 3)
+
+    def test_search_to_detail_keeps_the_matched_nested_mcp_and_original_evidence(self):
+        code = ('await tools.mcp__first__read({path:"/fixture/first"});\n'
+                'await tools.mcp__second__render({prompt:"A fixture animation"});')
+        event = {'schemaVersion':1,'id':hashlib.sha256(b'mixed-mcp-fixture').hexdigest(),
+                 'sessionId':'mixed-fixture','source':'codex','kind':'tool_call','timestamp':1700000010,
+                 'payload':{'name':'exec','namespace':'functions','call_id':'fixture-outer','arguments':code},
+                 'evidence':{'path':'/fixture/session.jsonl','byteStart':100,'byteEnd':300}}
+        self.sessions.ingest(self.identity,{'schemaVersion':1,'events':[event]})
+        hits,_ = self.get('/api/data-center/search?' + urlencode({'q':'mcp=second'}))
+        self.assertEqual(hits['total'],1)
+        hit = hits['items'][0]
+        detail,_ = self.get('/api/data-center/record?' + urlencode({'id':hit['id'],'q':'mcp=second'}))
+        self.assertEqual(detail['item']['activity']['name'],hit['activity']['name'])
+        self.assertEqual(detail['item']['activity']['method'],'render')
+        parameters = {p['key']:p['value'] for p in detail['item']['activity']['parameters']}
+        self.assertEqual(parameters['prompt'],'A fixture animation')
+        self.assertNotIn('path',parameters)
+        self.assertEqual(len(detail['item']['capabilities']),2)
+        self.assertEqual(detail['item']['raw'],event)
+        direct,_ = self.get('/api/data-center/record?' + urlencode({'id':hit['id']}))
+        self.assertEqual(direct['item']['raw'],event)
+        for suffix in ('&q=mcp=first&q=mcp=second','&q=mcp=', '&unexpected=x'):
+            self.rejected('/api/data-center/record?' + urlencode({'id':hit['id']}) + suffix)
 
     def test_validation_and_static_rankings_route(self):
         for path in ('/api/data-center/capabilities?device=a&device=b',

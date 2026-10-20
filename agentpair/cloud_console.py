@@ -235,6 +235,35 @@ class CloudConsole:
             '-o','StrictHostKeyChecking=accept-new','-o','UserKnownHostsFile='+self.known_hosts,
             '-o','ConnectTimeout=8',user+'@'+address]
 
+    def release(self, lease_id):
+        """Release the exact lease through the manager, then independently check the host."""
+        lease = self._lease(lease_id)
+        result = self.manager.release(lease_id)
+        hosts = self.manager.api.call('DescribeUHostInstance',
+            **{'UHostIds.0': lease['hostId']}).get('UHostSet', []) if lease.get('hostId') else []
+        if hosts:
+            raise RuntimeError('Released host still exists')
+        return {'leaseId': lease_id, 'state': result['state'],
+                'releasedAt': result.get('releasedAt'), 'remainingHostCount': len(hosts),
+                'releaseEIPRequested': True, 'releaseUDiskRequested': True}
+
+    def test_process_cpu(self, lease_id):
+        access = self.login(lease_id)
+        if access.get('platform') != 'windows' or access.get('loginState') != 'ssh_authenticated':
+            raise ValueError('Active Windows SSH connection required')
+        script = (Path(__file__).resolve().parents[1]/'windows/test-process-cpu.ps1').read_text()
+        encoded = base64.b64encode(script.encode('utf-16le')).decode()
+        result = subprocess.run(self._ssh_args('Administrator', access['address']) +
+            ['powershell.exe -NoProfile -NonInteractive -EncodedCommand ' + encoded],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=30)
+        if result.returncode:
+            # Raw PowerShell diagnostics can contain machine-private details.
+            raise RuntimeError('CPU probe returned nonzero')
+        metrics = json.loads(result.stdout)
+        if not isinstance(metrics, dict) or not isinstance(metrics.get('samples'), list):
+            raise ValueError('Invalid CPU probe receipt')
+        return {'commandSource': script, 'exitCode': result.returncode, 'metrics': metrics}
+
     def _operation_path(self,operation_id):
         if not isinstance(operation_id,str) or len(operation_id)!=24 or any(c not in '0123456789abcdef' for c in operation_id):
             raise ValueError('Invalid operation ID')
@@ -300,7 +329,9 @@ class CloudConsole:
                 source=(Path(__file__).resolve().parents[1]/'windows/software-install.ps1').read_text()
                 payload=base64.b64encode(json.dumps(recipe,ensure_ascii=False).encode()).decode()
                 script='[Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)\n$OutputEncoding=[Console]::OutputEncoding\n'+source+'\n$recipe=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\''+payload+'\')) | ConvertFrom-Json\n'
-                script+='$report={param($item) $item | ConvertTo-Json -Compress -Depth 5 | Write-Output}\n'
+                # Console output bypasses the PowerShell success pipeline: otherwise
+                # progress strings are captured into $result alongside its hashtable.
+                script+='$report={param($item) [Console]::WriteLine(($item | ConvertTo-Json -Compress -Depth 5))}\n'
                 script+='$result=Invoke-SoftwareInstall $recipe $report\n$result | ConvertTo-Json -Compress -Depth 5\nif($result.state -ne "completed"){exit 1}\n'
                 local=self.operation_dir/(operation['id']+'.ps1')
                 local.write_bytes(b'\xef\xbb\xbf'+script.encode())
@@ -315,8 +346,15 @@ class CloudConsole:
                 result=subprocess.run(self._ssh_args('Administrator',access['address'])+[command],capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=900)
                 receipts=[]
                 for line in result.stdout.splitlines():
-                    try:receipts.append(json.loads(line))
+                    try:
+                        decoded=json.loads(line)
+                        # Reconcile receipts from the older wrapper, which captured
+                        # progress strings and serialized the result as an array.
+                        receipts.extend(decoded if isinstance(decoded,list) else [decoded])
                     except ValueError:pass
+                operation['transport']={'exitCode':result.returncode,'stdoutBytes':len(result.stdout.encode('utf-8')),
+                    'stdoutSHA256':hashlib.sha256(result.stdout.encode('utf-8')).hexdigest(),
+                    'parsedRecordCount':len(receipts)}
                 final=next((r for r in reversed(receipts) if isinstance(r,dict) and r.get('state') in
                             ('completed','failed','verification_required','interrupted')),None)
                 if not final:

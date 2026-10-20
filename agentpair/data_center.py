@@ -33,6 +33,7 @@ VERSION = '5'
 REQUEST_EVIDENCE_VERSION = 1
 _LOCKS = weakref.WeakValueDictionary()
 _LOCKS_GUARD = threading.Lock()
+_BACKGROUND_WORKERS = {}
 CALLS = {'tool_call', 'command_execution', 'mcp_execution', 'extension_execution'}
 KINDS = {'user': '用户提问', 'context': '上下文记录', 'tool_call': '工具调用',
          'tool_result': '工具返回', 'reasoning': '已记录思路', 'reply': 'Agent 回复', 'http': '捕获的模型请求'}
@@ -42,10 +43,12 @@ FIELDS = {'tool', 'function', 'command', 'ip', 'domain', 'session', 'device',
           'app', 'collector', 'kind', 'location', 'executor', 'target_domain', 'target_ip',
           'skill', 'mcp', 'mcp_method'}
 PARAMS = {'q', 'collector', 'application', 'device', 'kind', 'location', 'after', 'before', 'page', 'pageSize', 'snapshot', 'object', 'group', 'groupId'}
-DUPLICATES = '''NOT EXISTS(SELECT 1 FROM dc_records d JOIN dc_scope ds ON ds.device=d.device AND ds.owner=d.owner
+# Canonical rows are always retained. Avoid reparsing their potentially large
+# metadata just to discover that the only duplicate candidate was the row itself.
+DUPLICATES = '''(r.device=s.canonical OR NOT EXISTS(SELECT 1 FROM dc_records d JOIN dc_scope ds ON ds.device=d.device AND ds.owner=d.owner
     WHERE d.collector=r.collector AND d.owner=r.owner AND d.ident=r.ident AND d.source=r.source
-    AND ds.canonical=s.canonical AND json_extract(d.metadata,'$.recordDigest')=json_extract(r.metadata,'$.recordDigest')
-    AND ((d.device=s.canonical AND r.device!=s.canonical) OR (d.device!=s.canonical AND r.device!=s.canonical AND d.device<r.device)))'''
+    AND (d.device=s.canonical OR (d.device!=s.canonical AND d.device<r.device))
+    AND ds.canonical=s.canonical AND json_extract(d.metadata,'$.recordDigest')=json_extract(r.metadata,'$.recordDigest')))'''
 TOKEN = re.compile(r'''\s+|&&|\|\||!=|=|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s=&|!()"']+''')
 
 
@@ -527,20 +530,57 @@ def _request_text(event):
     return re.sub(r'^\s*##\s*My request:\s*','',value).strip(),control
 
 
-def _activity(meta,summary,request=None):
+def _capability_matches(capability,field,value):
+    """Match a recorded capability using the same identities as query fields."""
+    kind='skill' if field=='skill' else 'mcp'
+    if capability.get('type')!=kind:return False
+    if field=='mcp_method':return str(capability.get('method') or '').casefold()==value.casefold()
+    if field=='mcp' and value.startswith('mcp__'):value=value[5:]
+    names=[capability.get('name')]
+    if field=='mcp':names.extend(capability.get('serviceAliases') or [])
+    return any(isinstance(name,str) and name.casefold()==value.casefold() for name in names)
+
+
+def _focused_capabilities(capabilities,groups):
+    """Select positive hits only from fully satisfied query branches.
+
+    Conditions apply to one source record, which can hold several inner calls.
+    Prefer a call satisfying its type's full conjunction when one exists; if
+    predicates match separate calls, retain those calls separately rather than
+    combining a service name from one with a method or arguments from another.
+    """
+    selected=[]
+    for group in groups:
+        terms=[term for term in group if term[0] in ('skill','mcp','mcp_method') and term[1]=='=']
+        for kind in ('skill','mcp'):
+            constraints=[term for term in terms if ('skill' if term[0]=='skill' else 'mcp')==kind]
+            if not constraints:continue
+            candidates=[cap for cap in capabilities if cap.get('type')==kind]
+            matches=[cap for cap in candidates if all(_capability_matches(cap,field,value) for field,_,value in constraints)]
+            if not matches:
+                matches=[cap for cap in candidates if any(_capability_matches(cap,field,value) for field,_,value in constraints)]
+            for cap in matches:
+                if cap not in selected:selected.append(cap)
+    return selected
+
+
+def _activity(meta,summary,request=None,focus=()):
     """Readable capability facts. An outer return never authenticates child returns."""
-    calls=[dict(c) for c in meta.get('capabilities',[]) if c.get('type') in ('skill','mcp')][:16]
+    all_calls=[c for c in meta.get('capabilities',[]) if c.get('type') in ('skill','mcp')]
+    focus=[c for c in focus if c in all_calls]
+    calls=[dict(c) for c in [*focus,*[c for c in all_calls if c not in focus]]][:16]
     if not calls:return None
     first=calls[0];kind=first['type'];name=first.get('serviceName') or first['name']
     action=('加载 ' if first.get('evidence')=='loaded' else '读取 ') if kind=='skill' else '调用 '
     title=action+name+(' 说明' if kind=='skill' and first.get('evidence')!='loaded' else '')
     if kind=='mcp' and first.get('method'):title+=' · '+first['method']
-    if len(calls)>1:title+=' 等 '+str(len(calls))+' 项能力'
+    title_calls=focus or calls
+    if len(title_calls)>1:title+=' 等 '+str(len(title_calls))+' 项能力'
     arguments=first.get('arguments');parameters=[]
     if isinstance(arguments,dict):
         parameters=[{'key':k,'label':PARAMETER_LABELS.get(k,k),'value':_bounded(v,1200)[0]} for k,v in list(arguments.items())[:6]]
     elif arguments is not None:parameters=[{'key':'input','label':'调用输入','value':_bounded(arguments,1200)[0]}]
-    if not parameters:parameters=summary.get('parameters',[])[:6]
+    if not parameters and not focus:parameters=summary.get('parameters',[])[:6]
     if first.get('path'):parameters=[{'key':'path','label':'说明文件','value':first['path']}]+parameters
     wrapped=any(c.get('sourceOffset') is not None for c in calls)
     returned=bool(summary.get('resultRecordId') or meta.get('hasResult'))
@@ -558,6 +598,7 @@ def _activity(meta,summary,request=None):
         brief=summary.get('resultPreview') or ('已取得对应工具返回。' if returned else '尚未取得对应工具返回。')
     return {'title':title,'kind':'skill_load' if kind=='skill' and first.get('evidence')=='loaded' else 'skill_read' if kind=='skill' else 'mcp_call',
             'name':name,'method':first.get('method'),'parameters':parameters,'calls':calls,
+            'focusedCalls':[dict(c) for c in focus[:16]],
             'returnKind':return_kind,'returnSummary':brief[:300],
             'request':request or {'text':None,'association':'unknown','basis':'需求关联未确认'}}
 
@@ -676,7 +717,7 @@ def _app_projection(record):
 
 
 class DataCenter:
-    def __init__(self, collections):
+    def __init__(self, collections, background=False):
         self.collections = collections
         self.devices = collections.devices
         self.sessions = collections.sessions
@@ -696,6 +737,10 @@ class DataCenter:
                 CREATE INDEX IF NOT EXISTS dc_records_recent ON dc_records(stamp DESC,key);
                 CREATE INDEX IF NOT EXISTS dc_records_duplicates ON dc_records(collector,owner,ident,source);
                 CREATE INDEX IF NOT EXISTS dc_records_physical ON dc_records(collector,seq);
+                CREATE INDEX IF NOT EXISTS dc_records_tool_lookup ON dc_records(lower(json_extract(metadata,'$.tool')),collector,seq);
+                CREATE INDEX IF NOT EXISTS dc_records_inventory ON dc_records(collector,owner,device,ident,source,seq,received,kind,key,stamp);
+                CREATE INDEX IF NOT EXISTS dc_records_capability_candidates ON dc_records(collector,seq)
+                    WHERE json_array_length(metadata,'$.capabilities')>0;
                 CREATE INDEX IF NOT EXISTS dc_records_capability_version ON dc_records(kind,coalesce(json_extract(metadata,'$.capabilityEvidenceVersion'),0),seq);
                 CREATE INDEX IF NOT EXISTS dc_records_call_id ON dc_records(owner,device,source,session,json_extract(metadata,'$.callId'),kind);
                 CREATE INDEX IF NOT EXISTS dc_records_message_id ON dc_records(owner,device,source,session,json_extract(metadata,'$.sourceMessageId'));
@@ -716,16 +761,118 @@ class DataCenter:
                 db.execute('DELETE FROM dc_fields');db.execute('DELETE FROM dc_records');db.execute('DELETE FROM dc_state')
                 db.execute("INSERT INTO dc_state VALUES('version',?)", (VERSION,))
         os.chmod(self.path, 0o600)
+        self._reader_lock = threading.RLock()
+        self._request_local = threading.local()
+        self._worker = None
+        identity = str(self.path.resolve())
+        with _LOCKS_GUARD:
+            self._worker = _BACKGROUND_WORKERS.get(identity)
+            if background and self._worker is None:
+                self._worker = {'running': False, 'error': None, 'stop': threading.Event()}
+                _BACKGROUND_WORKERS[identity] = self._worker
+                threading.Thread(target=self._index_loop, name='data-center-index', daemon=True).start()
+
+    @contextmanager
+    def _read_access(self):
+        if self._worker is None:
+            with self.lock: yield
+            return
+        if not self._reader_lock.acquire(timeout=2):
+            raise RuntimeError('搜索繁忙，请稍后重试；查询尚未完成，不代表没有记录。')
+        self._request_local.reading = True
+        try: yield
+        finally:
+            self._request_local.reading = False
+            self._reader_lock.release()
+
+    def _prepare_index(self, db):
+        if self._worker is None: self._sync(db)
+
+    def _index_status(self, db):
+        if self._worker is None: return {'mode': 'synchronous'}
+        return {'mode': 'background', 'running': self._worker['running'],
+                'error': self._worker['error'],
+                'updatedAt': float(self._state(db, 'background_synced_at')) or None,
+                'pendingSessionRecords': int(self._state(db, 'background_pending'))}
+
+    def _index_loop(self):
+        while not self._worker['stop'].is_set():
+            self._worker['running'] = True
+            try:
+                with self.lock, self._db() as db:
+                    self._sync_batch(db)
+                    self._set_state(db, 'background_synced_at', time.time())
+                self._worker['error'] = None
+            except Exception as error:
+                self._worker['error'] = type(error).__name__ + ': ' + str(error)[:160]
+            finally: self._worker['running'] = False
+            self._worker['stop'].wait(2)
+
+    def _sync_batch(self, db, session_limit=64, app_limit=32):
+        # Advance only processed cursors in the same transaction as evidence.
+        with self.sessions.connect() as raw:
+            maximum = raw.execute('SELECT coalesce(max(rowid),0) FROM session_events').fetchone()[0]
+            last = int(self._state(db, 'session_seq'))
+            if maximum < last: raise RuntimeError('源记录已重置，索引同步暂停，已提交索引予以保留。')
+            if time.time() - float(self._state(db, 'background_counted_at')) > 60:
+                self._set_state(db, 'session_raw_count', raw.execute('SELECT count(*) FROM session_events').fetchone()[0])
+                self._set_state(db, 'background_counted_at', time.time())
+            rows = raw.execute("SELECT rowid,owner,device,id,session,event,json_extract(CASE WHEN json_valid(event) THEN event ELSE '{}' END,'$.source') AS source FROM session_events WHERE rowid>? AND rowid<=? ORDER BY rowid LIMIT ?", (last, maximum, session_limit)).fetchall()
+            pending = raw.execute('SELECT count(*) FROM session_events WHERE rowid>?',(last,)).fetchone()[0]
+        # Release the raw-source read lock before expensive index writes. With
+        # rollback journals, a waiting uploader otherwise blocks new readers.
+        for row in rows:
+            self._put(db, 'sessionlens', row['owner'], row['device'], row['id'], row['source'], row['session'], row['event'], row['rowid'], None)
+            last = row['rowid']
+        self._set_state(db, 'session_seq', last)
+        self._set_state(db, 'background_pending', max(0,pending-len(rows)))
+        with self.devices.connect() as raw:
+            aliases = _json([list(r) for r in raw.execute('SELECT alias,canonical,owner FROM device_aliases ORDER BY alias')])
+            previous_aliases = self._state(db, 'aliases', '')
+            last = int(self._state(db, 'app_seq'))
+            receipt = float(self._state(db, 'app_receipt'))
+            receipt_seq = int(self._state(db, 'background_app_receipt_seq'))
+            if previous_aliases and previous_aliases != aliases:
+                # Revisit moved physical rows in batches; _put replaces old aliases
+                # atomically. Never erase the full searchable AppLens index.
+                last = 0; receipt = 0.; receipt_seq = 0
+            rows = raw.execute("""SELECT c.rowid,c.device_id,c.request_id,c.data,c.received,d.owner
+                FROM applens_model_context c JOIN devices d ON d.id=c.device_id
+                WHERE c.rowid>? OR c.received>? OR (c.received=? AND c.rowid>?)
+                ORDER BY c.received,c.rowid LIMIT ?""",(last,receipt,receipt,receipt_seq,app_limit)).fetchall()
+            app_count = raw.execute('SELECT count(*) FROM applens_model_context').fetchone()[0]
+        for row in rows:
+            try: record = json.loads(row['data'])
+            except (ValueError,TypeError): record = None
+            if isinstance(record,dict):
+                self._put(db, 'applens', row['owner'], row['device_id'], row['request_id'], 'workbuddy', str(record.get('sessionId') or 'unknown'), row['data'], row['rowid'], row['received'])
+            last = max(last,row['rowid'])
+            if (row['received'],row['rowid']) > (receipt,receipt_seq): receipt,receipt_seq = row['received'],row['rowid']
+        self._set_state(db, 'app_seq', last);self._set_state(db, 'app_receipt', receipt)
+        self._set_state(db, 'background_app_receipt_seq', receipt_seq)
+        self._set_state(db, 'aliases', aliases)
+        self._set_state(db, 'app_raw_count', app_count)
+        self._refresh_capabilities(db,limit=4,max_seconds=.025)
+        self._refresh_request_evidence(db,limit=4,max_seconds=.025)
+
 
     @contextmanager
     def _db(self):
-        db = sqlite3.connect(self.path, timeout=20)
+        db = sqlite3.connect(self.path, timeout=3 if getattr(self, "_worker", None) else 20)
         db.row_factory = sqlite3.Row
+        reading = getattr(getattr(self, '_request_local', None), 'reading', False)
+        if reading:
+            deadline = time.monotonic() + 12
+            db.set_progress_handler(lambda: int(time.monotonic() > deadline), 10000)
         db.create_function('dc_match', 3, lambda text, value, field: int(_matches(text, value, field)), deterministic=True)
         db.create_function('dc_snippet', 3, _snippet, deterministic=True)
         try:
             with db:
                 yield db
+        except sqlite3.OperationalError as error:
+            if reading and ('interrupted' in str(error) or 'locked' in str(error)):
+                raise RuntimeError('搜索超过处理时限，请缩小设备或时间范围；本次查询未完成，不代表没有记录。') from error
+            raise
         finally:
             db.close()
 
@@ -982,7 +1129,8 @@ class DataCenter:
             if field == 'mcp':
                 args.append(value)
                 match = '(' + match + " OR EXISTS(SELECT 1 FROM json_each(c.value,'$.serviceAliases') alias WHERE lower(alias.value)=lower(?)))"
-            sql = ("EXISTS(SELECT 1 FROM json_each(r.metadata,'$.capabilities') c "
+            sql = ("json_array_length(r.metadata,'$.capabilities')>0 AND "
+                   "EXISTS(SELECT 1 FROM json_each(r.metadata,'$.capabilities') c "
                    "WHERE json_extract(c.value,'$.type')=? AND " + match + ")")
         else:
             args.append(value)
@@ -1011,19 +1159,65 @@ class DataCenter:
         if object_type == 'tool':
             where.append("r.kind='tool_call' AND json_extract(r.metadata,'$.tool') IS NOT NULL")
         elif object_type in ('skill', 'mcp'):
+            where.append("json_array_length(r.metadata,'$.capabilities')>0")
             where.append("EXISTS(SELECT 1 FROM json_each(r.metadata,'$.capabilities') c WHERE json_extract(c.value,'$.type')=?)")
             args.append(object_type)
         for key, operator in [('after', '>='), ('before', '<=')]:
             if key in dates:
                 where.append('r.stamp' + operator + '?'); args.append(dates[key])
         join = ' FROM dc_records r JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner'
-        scope_records = db.execute('SELECT count(*)' + join + ' WHERE ' + ' AND '.join(where), args).fetchone()[0]
+        # Inventory contains the lightweight fields required by broad counts.
+        # Capability-scoped counts instead need the sparse candidate index.
+        scope_join = self._capability_join(join) if object_type in ('skill','mcp') else self._inventory_join(join)
+        scope_records = db.execute('SELECT count(*)' + scope_join + ' WHERE ' + ' AND '.join(where), args).fetchone()[0]
         if groups:
             where.append('(' + ' OR '.join('(' + ' AND '.join(self._term_sql(t, location, args) for t in group) + ')' for group in groups) + ')')
+        if object_type not in ('skill','mcp') and self._requires_capabilities(values,groups):
+            # Every OR branch requires a positive capability match. Expose the
+            # same necessary condition at the top level for SQLite's partial
+            # index implication check; negatives and mixed ORs cannot use it.
+            where.append("json_array_length(r.metadata,'$.capabilities')>0")
         return join, ' WHERE ' + ' AND '.join(where), args, scope_records
 
     @staticmethod
+    def _requires_capabilities(values,groups):
+        return values.get('object') in ('skill','mcp') or bool(groups) and all(
+            any(field in ('skill','mcp','mcp_method') and operator=='=' for field,operator,value in group)
+            for group in groups)
+
+    @staticmethod
+    def _capability_join(join):
+        # The watermarked OR can otherwise make SQLite choose a full physical
+        # scan. Only callers whose predicates imply nonempty capabilities use
+        # this sparse index; the tool expression index remains available.
+        return join.replace(' FROM dc_records r JOIN',
+                            ' FROM dc_records r INDEXED BY dc_records_capability_candidates JOIN',1)
+
+    def _candidate_join(self,join,values,groups):
+        if self._requires_capabilities(values,groups): return self._capability_join(join)
+        if not groups and values.get('object','all') == 'all': return self._inventory_join(join)
+        return join
+
+    @staticmethod
+    def _inventory_join(join):
+        return join.replace(' FROM dc_records r JOIN',
+                            ' FROM dc_records r INDEXED BY dc_records_inventory JOIN',1)
+
+    @staticmethod
+    def _matched_join(join):
+        # SQLite otherwise may scan the large records table before the small
+        # materialized hit set. CROSS JOIN fixes only this known-small boundary.
+        return join.replace(' FROM dc_records r JOIN',
+                            ' FROM dc_matches m CROSS JOIN dc_records r ON r.key=m.key JOIN',1)
+
+    @staticmethod
+    def _members_join(join):
+        return join.replace(' FROM dc_records r JOIN',
+                            ' FROM dc_request_members m CROSS JOIN dc_records r ON r.key=m.record JOIN',1) + ' WHERE m.group_id=?'
+
+    @staticmethod
     def _facets(db, join):
+        join = DataCenter._inventory_join(join)
         return {'devices': [{'id': r[0], 'name': r[1]} for r in db.execute('SELECT DISTINCT s.canonical,s.name' + join + ' ORDER BY s.name,s.canonical')],
                 'applications': [r[0] for r in db.execute('SELECT DISTINCT r.source' + join + ' ORDER BY r.source')],
                 'kinds': [r[0] for r in db.execute('SELECT DISTINCT r.kind' + join + ' ORDER BY r.kind')]}
@@ -1064,7 +1258,7 @@ class DataCenter:
         db.execute('''CREATE TEMP TABLE dc_request_groups AS
             SELECT m.group_id,count(*) AS recordCount,min(r.stamp) AS firstSeen,max(r.stamp) AS lastSeen,
                 max(json_extract(m.request,'$.recordId') IS NOT NULL) AS assigned
-            FROM dc_request_members m JOIN dc_records r ON r.key=m.record GROUP BY m.group_id''')
+            FROM dc_request_members m CROSS JOIN dc_records r ON r.key=m.record GROUP BY m.group_id''')
         db.execute('CREATE UNIQUE INDEX dc_request_groups_id ON dc_request_groups(group_id)')
         counts = db.execute('''SELECT count(*) AS groupTotal,coalesce(sum(assigned),0) AS requestGroupTotal,
             coalesce(sum(CASE WHEN assigned=0 THEN recordCount ELSE 0 END),0) AS unassignedRecordTotal
@@ -1085,7 +1279,7 @@ class DataCenter:
         if associations.get('candidate'):
             request = next(json.loads(row['request']) for row in requests
                            if json.loads(row['request'])['association']=='candidate')
-        members_join = join + ' JOIN dc_request_members m ON m.record=r.key WHERE m.group_id=?'
+        members_join = self._members_join(join)
         devices = [{'id':r[0],'name':r[1]} for r in db.execute(
             'SELECT DISTINCT s.canonical,s.name'+members_join+' ORDER BY s.name,s.canonical',(group_id,))]
         applications = [r[0] for r in db.execute('SELECT DISTINCT r.source'+members_join+' ORDER BY r.source',(group_id,))]
@@ -1113,54 +1307,76 @@ class DataCenter:
         values, page, size, dates = self._validate(params)
         groups = parse_query(values.get('q', '').strip())
         location = values.get('location', 'all')
-        with self.lock, self._db() as db, self._execution_page():
-            self._sync(db);self._scope(db, owner)
+        with self._read_access(), self._db() as db, self._execution_page():
+            self._prepare_index(db);self._scope(db, owner)
             snapshot_token,snapshot = self._snapshot(db,values,owner)
             join,predicate,args,scope_records = self._query_scope(db,values,dates,groups,snapshot)
-            # Long retained contexts are matched once per query, rather than
-            # rescanned for the count, distinct devices and the page itself.
-            db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY)')
-            db.execute('INSERT INTO dc_matches SELECT r.key' + join + predicate,args)
-            total = db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
-            matched_join = join + ' JOIN dc_matches m ON m.key=r.key'
-            matched_devices = db.execute('SELECT count(DISTINCT s.canonical)' + matched_join).fetchone()[0]
-            record_total = total
-            grouped = {}
-            if values.get('group')=='request':
-                grouped = self._request_groups(db,matched_join,snapshot)
-                grouped.update(group='request',recordTotal=record_total)
-                if values.get('groupId'):
-                    group_row = db.execute('SELECT * FROM dc_request_groups WHERE group_id=?',(values['groupId'],)).fetchone()
-                    if group_row is None:raise ValueError('需求分组已不可用，请重新搜索')
-                    rows = db.execute('SELECT r.*,s.canonical,s.name'+join+
-                        ' JOIN dc_request_members m ON m.record=r.key WHERE m.group_id=?'+
-                        ' ORDER BY coalesce(r.stamp,0) DESC,r.key LIMIT ? OFFSET ?',
-                        [values['groupId'],size,(page-1)*size]).fetchall()
-                    items = [self._item(db,row,groups,location,snapshot) for row in rows]
-                    grouped['group'] = self._request_group(db,group_row,join,groups,location,snapshot,preview=False)
-                    total = group_row['recordCount']
-                else:
-                    rows = db.execute('SELECT * FROM dc_request_groups ORDER BY assigned DESC,coalesce(lastSeen,0) DESC,group_id LIMIT ? OFFSET ?',
-                                      [size,(page-1)*size]).fetchall()
-                    grouped['groups'] = [self._request_group(db,row,join,groups,location,snapshot) for row in rows]
-                    items = []
-                    total = grouped['groupTotal']
+            if not groups and values.get('object','all') == 'all' and values.get('group') != 'request':
+                # Empty/lightweight browsing needs no full materialized hit set.
+                total = record_total = scope_records
+                grouped = {}
+                matched_devices = db.execute('SELECT count(DISTINCT s.canonical)' +
+                    self._inventory_join(join) + predicate,args).fetchone()[0]
+                recent_join = join.replace(' FROM dc_records r JOIN',
+                    ' FROM dc_records r INDEXED BY dc_records_recent JOIN',1)
+                rows = db.execute('SELECT r.*,s.canonical,s.name' + recent_join + predicate +
+                    ' ORDER BY r.stamp DESC,r.key LIMIT ? OFFSET ?', [*args,size,(page-1)*size]).fetchall()
+                items = [self._item(db,row,groups,location,snapshot) for row in rows]
             else:
-                rows = db.execute('SELECT r.*,s.canonical,s.name' + matched_join + ' ORDER BY coalesce(r.stamp,0) DESC,r.key LIMIT ? OFFSET ?', [size,(page - 1) * size]).fetchall()
-                items = [self._item(db, row, groups, location, snapshot) for row in rows]
-            sources = [{'collector': r[0], 'total': r[1]} for r in db.execute('SELECT r.collector,count(*)' + join + ' WHERE '+DUPLICATES+' GROUP BY r.collector')]
+                # Long retained contexts are matched once per query, rather than
+                # rescanned for the count, distinct devices and the page itself.
+                db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY)')
+                db.execute('INSERT INTO dc_matches SELECT r.key' + self._candidate_join(join,values,groups) + predicate,args)
+                total = db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
+                matched_join = self._matched_join(join)
+                if not groups and values.get('object','all') == 'all':
+                    # Broad match sets must stay on the covering inventory index;
+                    # primary-key probes would fetch every large metadata row.
+                    matched_join = self._inventory_join(join).replace(' JOIN dc_scope s',
+                        ' JOIN dc_matches m ON m.key=r.key JOIN dc_scope s',1)
+                matched_devices = db.execute('SELECT count(DISTINCT s.canonical)' + matched_join).fetchone()[0]
+                record_total = total
+                grouped = {}
+                if values.get('group')=='request':
+                    grouped = self._request_groups(db,matched_join,snapshot)
+                    grouped.update(group='request',recordTotal=record_total)
+                    if values.get('groupId'):
+                        group_row = db.execute('SELECT * FROM dc_request_groups WHERE group_id=?',(values['groupId'],)).fetchone()
+                        if group_row is None:raise ValueError('需求分组已不可用，请重新搜索')
+                        rows = db.execute('SELECT r.*,s.canonical,s.name'+self._members_join(join)+
+                            ' ORDER BY coalesce(r.stamp,0) DESC,r.key LIMIT ? OFFSET ?',
+                            [values['groupId'],size,(page-1)*size]).fetchall()
+                        items = [self._item(db,row,groups,location,snapshot) for row in rows]
+                        grouped['group'] = self._request_group(db,group_row,join,groups,location,snapshot,preview=False)
+                        total = group_row['recordCount']
+                    else:
+                        rows = db.execute('SELECT * FROM dc_request_groups ORDER BY assigned DESC,coalesce(lastSeen,0) DESC,group_id LIMIT ? OFFSET ?',
+                                          [size,(page-1)*size]).fetchall()
+                        grouped['groups'] = [self._request_group(db,row,join,groups,location,snapshot) for row in rows]
+                        items = []
+                        total = grouped['groupTotal']
+                else:
+                    # Sort/page narrow identities before retrieving large metadata.
+                    rows = db.execute('WITH picked AS MATERIALIZED (SELECT r.key' + matched_join +
+                        ' ORDER BY coalesce(r.stamp,0) DESC,r.key LIMIT ? OFFSET ?) '
+                        'SELECT r.*,s.canonical,s.name FROM picked p CROSS JOIN dc_records r ON r.key=p.key '
+                        'JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner '
+                        'ORDER BY coalesce(r.stamp,0) DESC,r.key', [size,(page - 1) * size]).fetchall()
+                    items = [self._item(db, row, groups, location, snapshot) for row in rows]
+            inventory_join = self._inventory_join(join)
+            sources = [{'collector': r[0], 'total': r[1]} for r in db.execute('SELECT r.collector,count(*)' + inventory_join + ' WHERE '+DUPLICATES+' GROUP BY r.collector')]
             retained = sum(s['total'] for s in sources)
             facets = self._facets(db,join)
             unindexed = int(self._state(db,'session_raw_count')) + int(self._state(db,'app_raw_count')) - db.execute('SELECT count(*) FROM dc_records').fetchone()[0]
             return {'items': items, 'page': page, 'pageSize': size, 'total': total, 'hasMore': page * size < total,'snapshot':snapshot_token,**grouped,
-                    'facets': facets, 'coverage': {'scope': 'global' if owner is None else 'owner',
+                    'facets': facets, 'coverage': {'indexSync': self._index_status(db), 'scope': 'global' if owner is None else 'owner',
                     'retainedRecords': retained, 'searchedRecords': scope_records,'scopeRecords':scope_records,
                     'sources': sources, 'fullRetainedText': unindexed==0,
                     'unindexedRecords': max(0,unindexed),
                     'capabilityEvidenceVersion': capability_evidence.VERSION, 'capabilityRemaining': self._capability_remaining(db),
                     'searchMode': 'literal_and_structured_fields', 'sourceSessionsAreTasks': False,
-                    'excludedUnavailableRecords': db.execute('SELECT count(*) FROM dc_records r WHERE NOT EXISTS(SELECT 1 FROM dc_scope s WHERE s.device=r.device AND s.owner=r.owner)').fetchone()[0],
-                    'duplicateAliasRecords': db.execute('SELECT count(*)'+join).fetchone()[0] - retained,
+                    'excludedUnavailableRecords': db.execute('SELECT count(*) FROM dc_records r INDEXED BY dc_records_inventory WHERE NOT EXISTS(SELECT 1 FROM dc_scope s WHERE s.device=r.device AND s.owner=r.owner)').fetchone()[0],
+                    'duplicateAliasRecords': db.execute('SELECT count(*)'+inventory_join).fetchone()[0] - retained,
                     'limitations': ['范围为平台已接收且所属设备可用的原始记录；终端未上报的数据不在范围内。',
                                     '地址命中不代表实际连接或外传成功；账号是上传归属，实际员工未确认。',
                                     'SessionLens 未记录每条事件的服务器接收时间。',
@@ -1173,13 +1389,13 @@ class DataCenter:
         params.setdefault('pageSize', 100)
         values, page, size, dates = self._validate(params)
         groups = parse_query(values.get('q', '').strip())
-        with self.lock, self._db() as db:
-            self._sync(db); self._scope(db, owner)
+        with self._read_access(), self._db() as db:
+            self._prepare_index(db); self._scope(db, owner)
             token, snapshot = self._snapshot(db, values, owner, 'capabilities')
             join, predicate, args, scope_records = self._query_scope(db, values, dates, groups, snapshot)
             db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY)')
-            db.execute('INSERT INTO dc_matches SELECT r.key' + join + predicate, args)
-            matched_join = join + ' JOIN dc_matches m ON m.key=r.key'
+            db.execute('INSERT INTO dc_matches SELECT r.key' + self._candidate_join(join,values,groups) + predicate, args)
+            matched_join = self._matched_join(join)
             db.execute('''CREATE TEMP TABLE dc_capabilities(record TEXT,category TEXT,name TEXT,evidence TEXT,
                 method TEXT,namespace TEXT,serviceName TEXT,device TEXT,owner TEXT,source TEXT,session TEXT,stamp REAL)''')
             db.execute('''INSERT INTO dc_capabilities
@@ -1235,16 +1451,17 @@ class DataCenter:
                                            for method in methods[:50]]
                     result[plural].append(item)
                 result['totals'][plural] = total; result['hasMore'][plural] = total > page * size
-            sources = [{'collector': r[0], 'total': r[1]} for r in db.execute('SELECT r.collector,count(*)' + join + ' WHERE ' + DUPLICATES + ' GROUP BY r.collector')]
+            inventory_join = self._inventory_join(join)
+            sources = [{'collector': r[0], 'total': r[1]} for r in db.execute('SELECT r.collector,count(*)' + inventory_join + ' WHERE ' + DUPLICATES + ' GROUP BY r.collector')]
             retained = sum(s['total'] for s in sources)
             unindexed = int(self._state(db, 'session_raw_count')) + int(self._state(db, 'app_raw_count')) - db.execute('SELECT count(*) FROM dc_records').fetchone()[0]
             result['facets'] = self._facets(db, join)
-            result['coverage'] = {'scope': 'global' if owner is None else 'owner', 'object': object_type,
+            result['coverage'] = {'indexSync': self._index_status(db), 'scope': 'global' if owner is None else 'owner', 'object': object_type,
                 'retainedRecords': retained, 'scopeRecords': scope_records,
                 'matchedRecords': db.execute('SELECT count(*) FROM dc_matches').fetchone()[0],
                 'activityRecords': db.execute('SELECT count(DISTINCT record) FROM dc_capabilities').fetchone()[0],
                 'unknownToolCount': db.execute('SELECT count(*)' + matched_join + " WHERE r.kind='tool_call' AND json_extract(r.metadata,'$.tool') IS NULL").fetchone()[0],
-                'duplicateAliasRecords': db.execute('SELECT count(*)' + join).fetchone()[0] - retained,
+                'duplicateAliasRecords': db.execute('SELECT count(*)' + inventory_join).fetchone()[0] - retained,
                 'sources': sources, 'fullRetainedText': unindexed == 0, 'unindexedRecords': max(0, unindexed),
                 'sourceSessionsAreTasks': False, 'successInferred': False,
                 'capabilityEvidenceVersion': capability_evidence.VERSION, 'capabilityRemaining': self._capability_remaining(db),
@@ -1508,8 +1725,15 @@ class DataCenter:
 
     def _item(self, db, row, groups=(), location='all', snapshot=None, execution=True):
         meta = json.loads(row['metadata'])
-        matches = []
+        matched_groups=[]
         for group in groups:
+            args=[]
+            predicate=' AND '.join(self._term_sql(term,location,args) for term in group)
+            if db.execute('SELECT 1 FROM dc_records r JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner '
+                          'WHERE r.key=? AND '+predicate,[row['key'],*args]).fetchone():
+                matched_groups.append(group)
+        matches = []
+        for group in matched_groups:
             for field, op, value in group:
                 if op != '=':
                     continue
@@ -1575,7 +1799,7 @@ class DataCenter:
                                resultPreview=result_summary.get('resultPreview',''),resultRecordId=results[0]['key'],
                                resultAssociation='recorded_unique_call_id')
         request=self._activity_request(db,row,meta,snapshot) if row['kind'] in ('tool_call','tool_result') or meta.get('capabilities') else None
-        activity=_activity(meta,summary,request) if meta.get('capabilities') else None
+        activity=_activity(meta,summary,request,_focused_capabilities(meta['capabilities'],matched_groups)) if meta.get('capabilities') else None
         return {'id': row['key'], 'recordId': ('sessionlens:' if row['collector'] == 'sessionlens' else '') + row['ident'],
                 'collector': row['collector'], 'application': row['source'], 'ownerAccount': row['owner'], 'operator': '未确认',
                 'deviceId': row['canonical'], 'sourceDeviceId':row['device'],'deviceName': row['name'], 'kind': row['kind'], 'kindLabel': meta['kindLabel'],
@@ -1645,11 +1869,12 @@ class DataCenter:
             source_truncated=bool(raw.get('truncated') or (raw.get('evidence') or {}).get('truncated')))
         return item
 
-    def record(self, key, owner=None):
-        with self.lock, self._db() as db:
-            self._sync(db);self._scope(db, owner)
+    def record(self, key, owner=None, query=''):
+        groups=parse_query(query)
+        with self._read_access(), self._db() as db:
+            self._prepare_index(db);self._scope(db, owner)
             row, raw = self._lookup(db, key, owner)
-            item = self._item(db, row,execution=False)
+            item = self._item(db, row,groups=groups,execution=False)
             item.update({'raw': raw, 'content': raw.get('body') if row['collector'] == 'applens' else raw.get('payload'),
                          'arguments': None, 'result': None, 'related': [], 'relations': [], 'gaps': [], 'contextItems': [],
                          'sourceEvidence': raw.get('evidence') or {k: raw.get(k) for k in ('source', 'bodySHA256', 'integrityEvidence', 'wireLengthMatched', 'recordStatus', 'truncated')},
@@ -1828,6 +2053,6 @@ class DataCenter:
 
     def raw(self, key, owner=None):
         """Untouched parsed source JSON, selected by its full scoped identity."""
-        with self.lock,self._db() as db:
-            self._sync(db);self._scope(db,owner)
+        with self._read_access(),self._db() as db:
+            self._prepare_index(db);self._scope(db,owner)
             return self._lookup(db,key,owner)[1]

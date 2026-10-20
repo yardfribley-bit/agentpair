@@ -36,7 +36,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
     from .collection_view import CollectionView
     collections=CollectionView(devices,session_lens)
     from .data_center import DataCenter
-    data_center=DataCenter(collections)
+    data_center=DataCenter(collections, background=True)
     from .collection_assistant import CollectionAssistant, RelayJSON
     relay_token=getattr(engine.backend,'token',None)
     def reserve_collection_model(requester):
@@ -73,6 +73,9 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
     from .cloud_workflow import CloudWorkflow
     cloud_workflow=CloudWorkflow(engine,cloud_console)
     engine.cloud_workflow=cloud_workflow
+    from .test_runs import TestRuns
+    test_runs=TestRuns(Path(engine.db).parent/'test-runs',cloud_console)
+    engine.test_runs=test_runs
     from .platform_assistant import PlatformAssistant
     engine.platform_assistant=PlatformAssistant(engine,devices,session_lens,cloud_console,collections)
     class Handler(BaseHTTPRequestHandler):
@@ -144,6 +147,8 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             paths['/credentials.js']='credentials.js'
             paths.update({'/software':'software.html','/software.js':'software.js'})
             paths.update({'/packages':'packages.html','/packages.js':'packages.js','/packages.css':'packages.css'})
+            paths.update({'/test-runs':'test_runs.html','/test_runs.js':'test_runs.js','/test_runs.css':'test_runs.css'})
+            paths['/test_lease_notice.js']='test_lease_notice.js'
             paths.update({'/cloud-machines':'cloud_machines.html','/cloud_machines.js':'cloud_machines.js','/cloud_machines.css':'cloud_machines.css'})
             paths['/team_console.js']='team_console.js'
             paths['/team_console.css']='team_console.css'
@@ -231,6 +236,11 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     if '/package-files/' in target:target=recipe['url']
                     self.send_response(302);self.send_header('Location',target);self.headers_common(0);self.end_headers()
                     return
+                if self.path == '/api/test-runs' or self.path.startswith('/api/test-runs/'):
+                    if not self.admin():self.respond(403,{'error':'Administrator required'});return
+                    if self.path == '/api/test-runs':
+                        self.respond(200,{'items':[{k:r.get(k) for k in ('id','createdAt','state','cleanupState','expiresAt','releaseDecision')} for r in test_runs.list()]});return
+                    self.respond(200,test_runs.get(self.path.rsplit('/',1)[1]));return
                 if self.path=='/api/cloud/machines':
                     if not self.admin():self.respond(403,{'error':'Administrator required'});return
                     self.respond(200,{'items':cloud_console.list() if cloud_console else []});return
@@ -303,8 +313,8 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     if any(len(value)!=1 for value in query.values()):raise ValueError('排行参数不能重复')
                     self.respond(200,data_center.capabilities({key:value[0] for key,value in query.items()}));return
                 if self.path=='/api/data-center/record':
-                    if set(query)!={'id'} or len(query['id'])!=1:raise ValueError('请指定唯一采集记录')
-                    self.respond(200,data_center.record(query['id'][0]));return
+                    if 'id' not in query or set(query)-{'id','q'} or any(len(value)!=1 for value in query.values()):raise ValueError('请指定唯一采集记录与查询条件')
+                    self.respond(200,data_center.record(query['id'][0],query=query.get('q',[''])[0]));return
                 if self.path=='/api/data-center/raw':
                     if set(query)!={'id'} or len(query['id'])!=1:raise ValueError('请指定唯一采集记录')
                     self.respond(200,data_center.raw(query['id'][0]));return
@@ -563,6 +573,24 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
                     result=insights.configure_automation(self.identity()['id'],data.get('deviceId'),data.get('source'),data.get('enabled'),
                         self.admin(),data.get('shareConfirmed') is True,data.get('dailyBudgetCNY',1.0))
                     self.respond(200,result);return
+                if self.path == '/api/test-runs' or self.path.startswith('/api/test-runs/'):
+                    if not self.admin():self.respond(403,{'error':'Administrator required'});return
+                    if self.path == '/api/test-runs':
+                        self.respond(201,test_runs.prepare(data));return
+                    parts=self.path.split('/')
+                    if len(parts)!=5 or parts[4] not in ('confirm','cancel','result','probe','release-decision','login-confirm'):
+                        raise ValueError('Invalid test action')
+                    if parts[4]=='confirm':result=test_runs.confirm(parts[3],data)
+                    elif parts[4]=='cancel':result=test_runs.cancel(parts[3])
+                    elif parts[4]=='probe':result=test_runs.probe(parts[3],data)
+                    elif parts[4]=='release-decision':result=test_runs.release_decision(parts[3],data)
+                    elif parts[4]=='login-confirm':result=test_runs.confirm_login(parts[3],data)
+                    else:result=test_runs.result(parts[3],data)
+                    self.respond(202,result);return
+                if self.path=='/api/cloud/release':
+                    if not self.admin():self.respond(403,{'error':'Administrator required'});return
+                    if not cloud_console:self.respond(503,{'error':'Cloud provider not configured'});return
+                    self.respond(200,cloud_console.release(data.get('leaseId')));return
                 if self.path in ('/api/cloud/quote','/api/cloud/create'):
                     if not self.admin():self.respond(403,{'error':'Administrator required'});return
                     if not cloud_console:self.respond(503,{'error':'Cloud provider not configured'});return
@@ -701,7 +729,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             except PermissionError as error:self.respond(403,{'error':str(error)})
             except (Conflict,Limit) as error: self.respond(409,{'error':str(error)})
             except RuntimeError as error:self.respond(409,{'error':str(error)[:200]})
-            except (ValueError,TypeError,UnicodeError) as error: self.respond(400,{'error':str(error)[:200] if self.path.startswith('/api/cloud/') else 'Invalid task or message; check public IPv4 target and length limits'})
+            except (ValueError,TypeError,UnicodeError) as error: self.respond(400,{'error':str(error)[:200] if self.path.startswith(('/api/cloud/','/api/test-runs')) else 'Invalid task or message; check public IPv4 target and length limits'})
 
         def log_message(self,*_): pass
     return Handler
