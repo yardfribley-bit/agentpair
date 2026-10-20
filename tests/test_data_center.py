@@ -1,4 +1,5 @@
 """Retained evidence search: no cloud, model, real device or network access."""
+from contextlib import closing
 import hashlib
 import io
 import json
@@ -19,11 +20,11 @@ def wait_for_background_index(root):
     import sqlite3, time
     source = root / 'session-lens.db'
     if not source.exists(): source = root / 'sessionlens.db'
-    with sqlite3.connect(source) as db: target = db.execute('SELECT coalesce(max(rowid),0) FROM session_events').fetchone()[0]
+    with closing(sqlite3.connect(source)) as db: target = db.execute('SELECT coalesce(max(rowid),0) FROM session_events').fetchone()[0]
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         try:
-            with sqlite3.connect(root / 'data-center.db') as db:
+            with closing(sqlite3.connect(root / 'data-center.db')) as db:
                 row = db.execute("SELECT value FROM dc_state WHERE name='session_seq'").fetchone()
                 if int(row[0] if row else 0) >= target: return
         except sqlite3.OperationalError: pass
