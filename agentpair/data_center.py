@@ -1622,7 +1622,7 @@ class DataCenter:
                 db.execute('INSERT INTO dc_matches SELECT r.key' + self._candidate_join(join,values,groups) + predicate,args)
                 total = db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
                 matched_join = self._matched_join(join)
-                matched_devices = db.execute('SELECT count(DISTINCT s.canonical)' + matched_join).fetchone()[0]
+                matched_devices = db.execute('SELECT count(DISTINCT s.canonical)' + self._inventory_join(matched_join)).fetchone()[0]
                 record_total = total
                 grouped = {}
                 if values.get('group')=='request':
@@ -1645,7 +1645,7 @@ class DataCenter:
                         total = grouped['groupTotal']
                 else:
                     # Sort/page narrow identities before retrieving large metadata.
-                    rows = db.execute('WITH picked AS MATERIALIZED (SELECT r.key' + matched_join +
+                    rows = db.execute('WITH picked AS MATERIALIZED (SELECT r.key' + self._inventory_join(matched_join) +
                         ' ORDER BY coalesce(r.stamp,0) DESC,r.key LIMIT ? OFFSET ?) '
                         'SELECT r.*,s.canonical,s.name FROM picked p CROSS JOIN dc_records r ON r.key=p.key '
                         'JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner '
