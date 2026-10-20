@@ -31,10 +31,14 @@
 
 本地通过不等于线上性能达标。真实索引需完成旁路构建，测量默认查询 p95、5 并发、关键词 password、原文首屏体积与详情耗时，再切换并重复 HTTP 与浏览器验收。
 
-旁路构建曾遇到 OOM，原服务随后进入旧启动代码的重启循环并返回 502。已暂停构建，单独部署流式启动修复后恢复健康接口 200、重启计数 0。后续构建设置 MemoryMax=600M、CPUQuota 初始 70%，确认双核后调整为 100%（占一个核），不替换或删除原始采集库。
+旁路构建曾遇到 OOM，原服务随后进入旧启动代码的重启循环并返回 502。已暂停构建，单独部署流式启动修复后恢复健康接口 200、重启计数 0。后续构建设置 MemoryMax=600M、CPUQuota 初始 70%，确认双核后调整为 100%（占一个核）；原文处理完成后，核验可用内存约 1GB、主服务约 395MB，将隔离构建 MemoryMax 临时提高到 900M 以缓解最终索引的磁盘等待，不替换或删除原始采集库。
 
 第一批回执已提交到 T000015，并在任务群聊 @Grok Bot 申请仅复测版本与传输配置。DC-1 未宣告完成。
 
 ## CI 补充核验
 
 真实 GitHub runner 暴露出 Ubuntu Qt 的 libEGL 依赖、桌面测试 discover 导入根、Windows 测试 SQLite 句柄与 UTF-8 夹具问题，已按失败日志修正。将云测试控制台引用的既有只读 CPU 采样脚本纳入源码，避免干净克隆缺文件。
+
+最新测试修复提交 `5cad5ca` 的 [统一 Python CI](https://github.com/yardfribley-bit/agentpair/actions/runs/39496164140) 与 [SessionLens 桌面 CI](https://github.com/yardfribley-bit/agentpair/actions/runs/39496166114) 全部通过；后者含 macOS Intel、macOS ARM 与 Windows。
+
+审核员第一批验收 `en_c80a5dfb` 已采纳 AP-12、源码一致性、HSTS、HTTP 301；主体尚未部署，整体继续整改。针对新报告的真实结果长覆盖说明横向溢出，增加正常换行与长字段断行；390px 浏览器注入长中文说明及 600 字符连续字段，scrollWidth=390，无溢出。
