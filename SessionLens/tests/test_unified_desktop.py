@@ -18,7 +18,10 @@ from sessionlens.chat_window import ChatWindow
 from sessionlens.core import Collector
 from sessionlens.desktop import Runtime,defaults
 from sessionlens.i18n import set_language
-from tests.test_answer_widgets import recorded_answer
+if __package__:
+    from .test_answer_widgets import recorded_answer
+else:
+    from test_answer_widgets import recorded_answer
 
 
 class NativeDesktopAcceptance(unittest.TestCase):

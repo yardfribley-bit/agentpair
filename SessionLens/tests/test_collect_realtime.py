@@ -33,7 +33,7 @@ class RealtimeCollectorTests(unittest.TestCase):
         p.parent.mkdir(parents=True,exist_ok=True)
         rows=[{'type':'message','sessionId':p.stem,'role':'user','content':f'row {n} '+'x'*padding} if source=='workbuddy'
               else {'type':'event_msg','payload':{'type':'user_message','message':f'row {n} '+'x'*padding}} for n in range(count)]
-        p.write_text(''.join(json.dumps(row)+'\n' for row in rows),encoding='utf-8')
+        p.write_text(''.join(json.dumps(row)+'\n' for row in rows),encoding='utf-8',newline='\n')
 
     def run_rounds(self,runtime,rounds):
         clock=Clock();runtime.stop=StopAfter(clock,rounds)
@@ -239,7 +239,7 @@ class RealtimeCollectorTests(unittest.TestCase):
                     history=db.execute('SELECT offset FROM cursors WHERE path=?',(str(p),)).fetchone()
                     self.assertLess(history[0] if history else 0,p.stat().st_size)
                 start=p.stat().st_size
-                with p.open('a',encoding='utf-8') as f:f.write(json.dumps({'type':'message','sessionId':p.stem,'role':'user','content':'appended now'})+'\n')
+                with p.open('a',encoding='utf-8',newline='\n') as f:f.write(json.dumps({'type':'message','sessionId':p.stem,'role':'user','content':'appended now'})+'\n')
                 appended_id=event_id('appended now',start)
                 self.assertTrue(wait_for(lambda:has_event(appended_id)))
                 self.assertFalse(release.is_set())

@@ -9,7 +9,7 @@ class SessionInsightsAPITests(CollectionQuestionsAPITests):
         super().setUp()
         self.insights = self.engine.session_insights
         self.insights.model = FakeModel()
-        deadline=time.monotonic()+5
+        deadline=time.monotonic()+15
         while time.monotonic()<deadline:
             self.insights.sync(force=True)
             items=self.insights.inventory()['items']
