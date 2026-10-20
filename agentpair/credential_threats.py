@@ -161,7 +161,7 @@ class CredentialThreats:
     def backfill(self):
         with self.connect() as db:
             checked=time.time()
-            for row in db.execute('SELECT device_id,data,received FROM applens_model_context').fetchall():self.scan(db,row['device_id'],json.loads(row['data']),row['received'],scanned=checked,refresh_cached=False)
+            for row in db.execute('SELECT device_id,data,received FROM applens_model_context'):self.scan(db,row['device_id'],json.loads(row['data']),row['received'],scanned=checked,refresh_cached=False)
             # Repair registrations merged by older builds, which moved raw data
             # but left device-bound findings and handling records behind.
             for row in db.execute('SELECT alias,canonical FROM device_aliases').fetchall():self.merge_device(db,row['canonical'],row['alias'],rebuild=False)
@@ -274,7 +274,7 @@ class CredentialThreats:
         """
         old_findings=db.execute('SELECT f.id FROM credential_findings f WHERE f.device_id=? AND NOT EXISTS (SELECT 1 FROM credential_finding_aliases a JOIN credential_findings target ON target.id=a.canonical WHERE a.alias=f.id AND target.device_id=?)',(alias,canonical)).fetchall()
         if rebuild:
-            for row in db.execute('SELECT data,received FROM applens_model_context WHERE device_id=?',(canonical,)).fetchall():
+            for row in db.execute('SELECT data,received FROM applens_model_context WHERE device_id=?',(canonical,)):
                 self.scan(db,canonical,json.loads(row['data']),row['received'],scanned=time.time(),refresh_cached=False)
         def position(data):
             value=json.loads(data)
