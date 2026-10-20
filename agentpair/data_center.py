@@ -783,7 +783,7 @@ class DataCenter:
                 CREATE TABLE IF NOT EXISTS dc_field_refs(record TEXT,ordinal INTEGER,location TEXT,text_id INTEGER,PRIMARY KEY(record,ordinal));
                 CREATE INDEX IF NOT EXISTS dc_field_refs_text ON dc_field_refs(text_id,location,record);
                 CREATE INDEX IF NOT EXISTS dc_field_refs_location ON dc_field_refs(record,location);
-                CREATE VIRTUAL TABLE IF NOT EXISTS dc_text_fts USING fts5(folded,content='dc_texts',content_rowid='id',tokenize='trigram',detail=none,columnsize=0);
+                CREATE VIRTUAL TABLE IF NOT EXISTS dc_text_fts USING fts5(folded,content='dc_texts',content_rowid='id',tokenize='trigram',detail=full,columnsize=0);
                 CREATE TRIGGER IF NOT EXISTS dc_texts_delete AFTER DELETE ON dc_texts BEGIN
                     INSERT INTO dc_text_fts(dc_text_fts,rowid,folded) VALUES('delete',old.id,old.folded);
                 END;
@@ -792,9 +792,9 @@ class DataCenter:
                 END;
             ''')
             fts_sql=db.execute("SELECT sql FROM sqlite_master WHERE name='dc_text_fts'").fetchone()[0]
-            if 'detail=none' not in fts_sql:
+            if 'detail=full' not in fts_sql:
                 db.execute('DROP TABLE dc_text_fts')
-                db.execute("CREATE VIRTUAL TABLE dc_text_fts USING fts5(folded,content='dc_texts',content_rowid='id',tokenize='trigram',detail=none,columnsize=0)")
+                db.execute("CREATE VIRTUAL TABLE dc_text_fts USING fts5(folded,content='dc_texts',content_rowid='id',tokenize='trigram',detail=full,columnsize=0)")
                 db.execute("INSERT INTO dc_text_fts(dc_text_fts) VALUES('rebuild')")
             legacy = db.execute("SELECT type FROM sqlite_master WHERE name='dc_fields'").fetchone()
             if legacy and legacy[0]=='table':
@@ -943,13 +943,16 @@ class DataCenter:
                 visible = predicate + (' AND ' if predicate else ' WHERE ') + FAST_DUPLICATES
                 sources = [{'collector':r[0], 'total':r[1]} for r in db.execute(
                     'SELECT r.collector,count(*)'+join+visible+' GROUP BY r.collector',args)]
+                scope_devices = {r[0]:r[1] for r in db.execute('SELECT r.collector,count(DISTINCT s.canonical)'+join+visible+' GROUP BY r.collector',args)}
+                scope_devices['all'] = db.execute('SELECT count(DISTINCT s.canonical)'+join+visible,args).fetchone()[0]
                 facets = {'devices':[{'id':r[0],'name':r[1]} for r in db.execute(
                     'SELECT DISTINCT s.canonical,s.name'+join+predicate+' ORDER BY s.name,s.canonical',args)],
                     'applications':[r[0] for r in db.execute('SELECT DISTINCT r.source'+join+predicate+' ORDER BY r.source',args)],
                     'kinds':[r[0] for r in db.execute('SELECT DISTINCT r.kind'+join+predicate+' ORDER BY r.kind',args)]}
                 indexed = db.execute('SELECT count(*) FROM dc_inventory').fetchone()[0]
                 total = db.execute('SELECT count(*)'+join+predicate,args).fetchone()[0]
-                data = {'sources':sources,'facets':facets,'retained':sum(r['total'] for r in sources),
+                data = {'watermark':[int(self._state(db,'session_seq')),int(self._state(db,'app_seq')),float(self._state(db,'app_receipt'))],
+                    'scopeIdentity':self._scope_identity(db),'scopeDevices':scope_devices,'sources':sources,'facets':facets,'retained':sum(r['total'] for r in sources),
                     'unindexed':max(0,int(self._state(db,'session_raw_count'))+int(self._state(db,'app_raw_count'))-indexed),
                     'duplicates':total-sum(r['total'] for r in sources),
                     'excluded':db.execute('SELECT count(*) FROM dc_inventory r WHERE NOT EXISTS(SELECT 1 FROM dc_scope s WHERE s.device=r.device AND s.owner=r.owner)').fetchone()[0],
@@ -957,6 +960,17 @@ class DataCenter:
                 db.execute('INSERT OR REPLACE INTO dc_summaries VALUES(?,?,?)',(owner or '',_json(data),time.time()))
         finally:
             db.execute('DROP TABLE dc_scope')
+
+    @staticmethod
+    def _scope_identity(db):
+        return hashlib.sha256(_json([tuple(r) for r in db.execute('SELECT device,owner,canonical FROM dc_scope ORDER BY device,owner')]).encode()).hexdigest()
+
+    def _cached_scope(self, db, values, dates, snapshot, owner=None):
+        if dates or any(values.get(k,'all')!='all' for k in ('application','device','kind','location','object')):return None
+        data=self._coverage_summary(db,owner)
+        if data.get('watermark') != [snapshot['sessionMax'],snapshot['appMax'],snapshot['appReceipt']] or data.get('scopeIdentity')!=self._scope_identity(db):return None
+        collector=values.get('collector','all')
+        return (sum(r['total'] for r in data['sources'] if collector=='all' or r['collector']==collector),data['scopeDevices'].get(collector,0))
 
     def _coverage_summary(self, db, owner):
         row = db.execute('SELECT data,updated FROM dc_summaries WHERE owner=?',(owner or '',)).fetchone()
@@ -1309,13 +1323,24 @@ class DataCenter:
         if field in ('keyword', 'ip', 'domain'):
             if indexed and len(value.casefold())>=3:
                 folded=value.casefold()
-                positions=sorted({0,len(folded)-3,(len(folded)-3)//2})
-                args.append(' AND '.join('"'+folded[i:i+3].replace('"','""')+'"' for i in positions))
+                args.append('"'+folded.replace('"','""')+'"')
                 scope=' AND f.location=?' if location!='all' else ''
-                if scope:args.append(location)
-                args.extend([value,field])
-                sql=('r.key IN (SELECT f.record FROM dc_text_fts JOIN dc_texts t ON t.id=dc_text_fts.rowid '
-                     'JOIN dc_field_refs f ON f.text_id=t.id WHERE dc_text_fts MATCH ?'+scope+' AND dc_match(t.value,?,?))')
+                literal=field=='keyword'
+                if literal:
+                    try:ipaddress.ip_address(value);literal=False
+                    except ValueError:pass
+                if literal:
+                    # Positional trigrams prove the complete Unicode substring
+                    # without rereading long shared source texts.
+                    if scope:args.append(location)
+                    sql=('r.key IN (SELECT f.record FROM dc_text_fts CROSS JOIN dc_field_refs f '
+                         'ON f.text_id=dc_text_fts.rowid WHERE dc_text_fts MATCH ?'+scope+')')
+                else:
+                    args.extend([value,field])
+                    if scope:args.append(location)
+                    sql=('r.key IN (WITH text_hits AS MATERIALIZED (SELECT t.id FROM dc_text_fts '
+                         'CROSS JOIN dc_texts t ON t.id=dc_text_fts.rowid WHERE dc_text_fts MATCH ? AND dc_match(t.value,?,?)) '
+                         'SELECT f.record FROM text_hits h CROSS JOIN dc_field_refs f ON f.text_id=h.id WHERE 1=1'+scope+')')
             else:
                 scope = ' AND f.location=?' if location != 'all' else ''
                 if scope:args.append(location)
@@ -1357,7 +1382,7 @@ class DataCenter:
             sql = 'lower(r.' + column + ')=lower(?)'
         return '(NOT coalesce(' + sql + ',0))' if op == '!=' else '(' + sql + ')'
 
-    def _query_scope(self, db, values, dates, groups, snapshot):
+    def _query_scope(self, db, values, dates, groups, snapshot, owner=None):
         location = values.get('location', 'all')
         # Deduplication sees the same retained watermarks as the query itself.
         bounded_duplicates = FAST_DUPLICATES.replace('WHERE d.collector=r.collector',
@@ -1388,7 +1413,8 @@ class DataCenter:
         # Inventory contains the lightweight fields required by broad counts.
         # Capability-scoped counts instead need the sparse candidate index.
         scope_join = self._capability_join(join) if object_type in ('skill','mcp') else join if object_type=='tool' else self._inventory_join(join)
-        scope_records = db.execute('SELECT count(*)' + scope_join + ' WHERE ' + ' AND '.join(where), args).fetchone()[0]
+        cached=self._cached_scope(db,values,dates,snapshot,owner)
+        scope_records = cached[0] if cached is not None else db.execute('SELECT count(*)' + scope_join + ' WHERE ' + ' AND '.join(where), args).fetchone()[0]
         if groups:
             where.append('(' + ' OR '.join('(' + ' AND '.join(self._term_sql(t, location, args) for t in group) + ')' for group in groups) + ')')
         if object_type not in ('skill','mcp') and self._requires_capabilities(values,groups):
@@ -1416,7 +1442,12 @@ class DataCenter:
         if self._requires_capabilities(values,groups): return self._capability_join(join)
         light_fields={'keyword','ip','domain','location','device','app','collector','kind','session'}
         if values.get('object','all')=='all' and all(field in light_fields for group in groups for field,op,value in group):
-            return self._inventory_join(join)
+            join=self._inventory_join(join)
+            if groups and all(any(field in ('keyword','ip','domain') and op=='=' and len(value.casefold())>=3 for field,op,value in group) for group in groups):
+                # Every OR branch supplies a finite indexed key set. Otherwise
+                # the watermark OR makes SQLite scan both collector ranges.
+                join=join.replace(' FROM dc_inventory r JOIN',' FROM dc_inventory r INDEXED BY sqlite_autoindex_dc_inventory_1 JOIN',1)
+            return join
         return join
 
     @staticmethod
@@ -1569,12 +1600,13 @@ class DataCenter:
         with self._read_access(), self._db() as db, self._execution_page():
             self._prepare_index(db);self._scope(db, owner)
             snapshot_token,snapshot = self._snapshot(db,values,owner)
-            join,predicate,args,scope_records = self._query_scope(db,values,dates,groups,snapshot)
+            join,predicate,args,scope_records = self._query_scope(db,values,dates,groups,snapshot,owner)
             if not groups and values.get('object','all') == 'all' and values.get('group') != 'request':
                 # Empty/lightweight browsing needs no full materialized hit set.
                 total = record_total = scope_records
                 grouped = {}
-                matched_devices = db.execute('SELECT count(DISTINCT s.canonical)' +
+                cached=self._cached_scope(db,values,dates,snapshot,owner)
+                matched_devices = cached[1] if cached is not None else db.execute('SELECT count(DISTINCT s.canonical)' +
                     self._inventory_join(join) + predicate,args).fetchone()[0]
                 recent_join = join.replace(' FROM dc_records r JOIN',
                     ' FROM dc_records r INDEXED BY dc_records_recent JOIN',1)
@@ -1644,7 +1676,7 @@ class DataCenter:
         with self._read_access(), self._db() as db:
             self._prepare_index(db); self._scope(db, owner)
             token, snapshot = self._snapshot(db, values, owner, 'capabilities')
-            join, predicate, args, scope_records = self._query_scope(db, values, dates, groups, snapshot)
+            join, predicate, args, scope_records = self._query_scope(db, values, dates, groups, snapshot,owner)
             db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY)')
             db.execute('INSERT INTO dc_matches SELECT r.key' + self._candidate_join(join,values,groups) + predicate, args)
             matched_join = self._matched_join(join)

@@ -61,6 +61,16 @@ class ReviewIndexTests(unittest.TestCase):
         self.assertEqual(detail['contextDelta']['sharedMessageCount'],2)
         self.assertIn('fixed background',detail['content'])
 
+    def test_cached_totals_require_identical_watermarks_and_visible_devices(self):
+        f=self.f;f.upload([f.event('alice-cached')]);f.upload([f.event('bob-cached')],owner='bob');f.find()
+        with f.center._db() as db:
+            f.center._scope(db)
+            _,snapshot=f.center._snapshot(db,{},None)
+            self.assertEqual(f.center._cached_scope(db,{}, {},snapshot),(2,2))
+            self.assertIsNone(f.center._cached_scope(db,{}, {},dict(snapshot,sessionMax=0)))
+            db.execute('DELETE FROM dc_scope WHERE owner=?',('bob',))
+            self.assertIsNone(f.center._cached_scope(db,{}, {},snapshot))
+
     def test_five_background_readers_do_not_serialize(self):
         f=self.f;f.upload([f.event('seed')]);f.find();f.center._worker={'running':False,'error':None}
         barrier=threading.Barrier(5)
@@ -70,9 +80,10 @@ class ReviewIndexTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=5) as pool:self.assertEqual(list(pool.map(read,range(5))),[1]*5)
 
     def test_fulltext_query_uses_fts_and_checks_literal_boundaries(self):
-        f=self.f;f.upload([f.event('fts',text='PASSWORD and 中文子串检索')])
+        f=self.f;f.upload([f.event('fts',text='PASSWORD and 中文子串检索 Straße'),f.event('false-grams',text='pas ass ssw swo wor ord')])
         self.assertEqual(f.find('password')['total'],1)
         self.assertEqual(f.find('中文子串')['total'],1)
+        self.assertEqual(f.find('strasse')['total'],1)
         with f.center._db() as db:
             self.assertGreater(db.execute("SELECT count(*) FROM dc_text_fts WHERE dc_text_fts MATCH '\"pas\"'").fetchone()[0],0)
 
