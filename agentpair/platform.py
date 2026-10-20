@@ -60,7 +60,7 @@ def handler_for(engine, password, origin, public_demo=False, expires_at=None, us
             if requester!='admin':
                 units=math.ceil(estimate*1000000)
                 changed=db.execute('UPDATE question_accounts.wallets SET remaining=remaining-? WHERE owner=? AND remaining>=?',(units,requester,units))
-                if not changed.rowcount:raise ValueError('模型额度不足，无法继续调用；注册赠送额度为 ¥2')
+                if not changed.rowcount:raise ValueError('模型额度不足，无法继续调用；请联系管理员配置额度')
                 db.execute('INSERT INTO question_accounts.charges VALUES(?,?,?)',(secrets.token_hex(16),requester,units))
             db.execute('UPDATE ledger SET reserved=? WHERE id=1',(used+estimate,))
     collection_assistant=CollectionAssistant(Path(engine.db).parent/'collection-assistant.db',collections,

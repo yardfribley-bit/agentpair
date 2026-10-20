@@ -1,3 +1,4 @@
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -25,7 +26,7 @@ class CollectionPerformanceTests(unittest.TestCase):
             def wait_for(count):
                 end=time.monotonic()+5
                 while time.monotonic()<end:
-                    with sqlite3.connect(runtime.path) as db:
+                    with closing(sqlite3.connect(runtime.path)) as db:
                         if db.execute('SELECT count(*) FROM events').fetchone()[0]>=count:return
                     time.sleep(.05)
                 self.fail('History or appended event did not progress')

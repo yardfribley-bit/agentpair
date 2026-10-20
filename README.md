@@ -92,10 +92,10 @@ Mac 客户端覆盖 Intel 和 Apple Silicon 构建，Windows 使用各自的原�
 
 ## 本地验证
 
-Python 3.10 或以上版本。当前默认分支为 `codex/agentpair-mvp`；AP-11 的 `main` 迁移待单独授权：
+Python 3.10 或以上版本。当前默认分支为 `main`，原 `codex/agentpair-mvp` 分支保留：
 
 ```sh
-git clone --branch codex/agentpair-mvp https://github.com/yardfribley-bit/agentpair.git
+git clone https://github.com/yardfribley-bit/agentpair.git
 cd agentpair
 python3 ops/test_all.py
 ```

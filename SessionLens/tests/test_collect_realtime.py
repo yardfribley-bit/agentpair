@@ -1,3 +1,4 @@
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -75,13 +76,13 @@ class RealtimeCollectorTests(unittest.TestCase):
             def history(c,p,*args,**kwargs):calls.append(p);return scan(c,p,*args,**kwargs)
             runtime=Runtime(root/'state',config)
             with patch.object(Collector,'scan',history):self.run_rounds(runtime,1)
-            with sqlite3.connect(runtime.path) as db:
+            with closing(sqlite3.connect(runtime.path)) as db:
                 previous=Path(db.execute('SELECT path FROM collection_file_schedule WHERE lane=? AND source=?',('history_priority','workbuddy')).fetchone()[0])
             calls.clear()
             restarted=Runtime(root/'state',config)
             with patch.object(Collector,'scan',history):self.run_rounds(restarted,1)
             self.assertNotEqual(calls[0],previous)
-            with sqlite3.connect(runtime.path) as db:
+            with closing(sqlite3.connect(runtime.path)) as db:
                 self.assertEqual(db.execute('SELECT path FROM history_schedule WHERE source=?',('workbuddy',)).fetchone()[0],str(calls[-1]))
 
     def test_unexpected_batch_failure_is_visible_and_collection_recovers(self):
@@ -97,7 +98,7 @@ class RealtimeCollectorTests(unittest.TestCase):
             with patch.object(Collector,'scan_recent',recent),patch.object(runtime,'update',update):self.run_rounds(runtime,3)
             self.assertTrue(any('采集线程' in values.get('errors',{}) for values in updates))
             self.assertEqual(runtime.status['errors'],{})
-            with sqlite3.connect(runtime.path) as db:self.assertEqual(db.execute('SELECT count(*) FROM events').fetchone()[0],3)
+            with closing(sqlite3.connect(runtime.path)) as db:self.assertEqual(db.execute('SELECT count(*) FROM events').fetchone()[0],3)
 
     def test_history_budget_yields_to_other_source_next_round(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,7 +120,7 @@ class RealtimeCollectorTests(unittest.TestCase):
                 def slow(c,p,*args,**kwargs):calls.append(args[1]);clock.now+=.2;return scan(c,p,*args,**kwargs)
                 with patch.object(Collector,'scan',slow),patch('sessionlens.desktop.time.monotonic',clock.monotonic):runtime.collect()
             self.assertEqual(calls,['codex','workbuddy','codex'])
-            with sqlite3.connect(runtime.path) as db:
+            with closing(sqlite3.connect(runtime.path)) as db:
                 self.assertEqual(db.execute("SELECT next_source FROM collection_schedule WHERE name='history'").fetchone()[0],'workbuddy')
 
     def test_recent_live_rotation_reaches_six_files_across_restart(self):
@@ -137,7 +138,7 @@ class RealtimeCollectorTests(unittest.TestCase):
                 with patch.object(Collector,'scan_recent',recent):self.run_rounds(Runtime(root/'state',config),1)
             self.assertEqual(set(calls),set(paths))
             self.assertEqual(calls[0],paths[0]);self.assertEqual(calls[4],paths[0])
-            with sqlite3.connect(root/'state'/'collector.db') as db:
+            with closing(sqlite3.connect(root/'state'/'collector.db')) as db:
                 self.assertEqual(db.execute('SELECT count(*) FROM live_cursors').fetchone()[0],6)
 
     def test_recent_gap_before_tail_is_recovered_while_old_history_advances(self):
@@ -156,7 +157,7 @@ class RealtimeCollectorTests(unittest.TestCase):
                 if p==target:starts.append(c.db.execute('SELECT offset FROM cursors WHERE path=?',(str(p),)).fetchone()[0])
                 return scan(c,p,*args,**kwargs)
             with patch.object(Collector,'scan',history):self.run_rounds(runtime,8)
-            with sqlite3.connect(runtime.path) as db:
+            with closing(sqlite3.connect(runtime.path)) as db:
                 events=[json.loads(body) for (body,) in db.execute('SELECT event FROM events')]
                 evidence=next(e for e in events if e['evidence']['path']==str(target) and e['payload'].get('content','').startswith('row 50 '))
                 self.assertLess(evidence['evidence']['byteEnd'],target.stat().st_size-2*1024*1024)
@@ -201,7 +202,7 @@ class RealtimeCollectorTests(unittest.TestCase):
                 return scan(c,p,*args,**kwargs)
             with patch.object(Collector,'scan',history):self.run_rounds(runtime,2)
             self.assertTrue(starts)
-            with sqlite3.connect(runtime.path) as db:
+            with closing(sqlite3.connect(runtime.path)) as db:
                 self.assertEqual(db.execute('SELECT epoch FROM cursors WHERE path=?',(str(target),)).fetchone()[0],1)
                 events=[json.loads(row[0]) for row in db.execute('SELECT event FROM events')]
                 self.assertTrue(any(e['evidence']['path']==str(target) and e['evidence']['epoch']==1 and e['evidence']['byteStart']==0 for e in events))
@@ -214,10 +215,11 @@ class RealtimeCollectorTests(unittest.TestCase):
             def blocked(c,*args):entered.set();release.wait(5);return index(c,*args)
             def idle():runtime.stop.wait(5)
             def event_id(value,start):
-                st=p.stat();raw=(json.dumps({'type':'message','sessionId':p.stem,'role':'user','content':value})+'\n').encode()
+                with p.open('rb') as source:st=os.fstat(source.fileno())
+                raw=(json.dumps({'type':'message','sessionId':p.stem,'role':'user','content':value})+'\n').encode()
                 return hashlib.sha256(f'{st.st_dev}:{st.st_ino}:0:{start}:'.encode()+raw).hexdigest()
             def has_event(identity):
-                with sqlite3.connect(runtime.path,timeout=.25) as db:
+                with closing(sqlite3.connect(runtime.path,timeout=.25)) as db:
                     return db.execute('SELECT 1 FROM events WHERE id=?',(identity,)).fetchone() is not None
             def wait_for(predicate,timeout=3):
                 deadline=time.monotonic()+timeout
@@ -233,7 +235,7 @@ class RealtimeCollectorTests(unittest.TestCase):
                 raw=(json.dumps({'type':'message','sessionId':p.stem,'role':'user','content':newest})+'\n').encode()
                 latest_id=event_id(newest,p.stat().st_size-len(raw))
                 self.assertTrue(wait_for(lambda:has_event(latest_id)))
-                with sqlite3.connect(runtime.path) as db:
+                with closing(sqlite3.connect(runtime.path)) as db:
                     history=db.execute('SELECT offset FROM cursors WHERE path=?',(str(p),)).fetchone()
                     self.assertLess(history[0] if history else 0,p.stat().st_size)
                 start=p.stat().st_size

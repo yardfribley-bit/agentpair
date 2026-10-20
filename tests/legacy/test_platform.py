@@ -1,3 +1,4 @@
+from contextlib import closing
 import http.cookiejar
 import hashlib
 import io
@@ -414,7 +415,7 @@ class PlatformTests(unittest.TestCase):
         with self.client.open(req) as r:result=json.load(r)
         if path=='/api/register':
             # Test scenario explicitly approves credit, separate from signup.
-            with __import__('sqlite3').connect(self.engine.accounts.path) as db:db.execute('UPDATE wallets SET remaining=2000000 WHERE owner=?',(self.engine.accounts.login(data['username'],data['password'])['id'],))
+            with closing(__import__('sqlite3').connect(self.engine.accounts.path)) as db, db:db.execute('UPDATE wallets SET remaining=2000000 WHERE owner=?',(self.engine.accounts.login(data['username'],data['password'])['id'],))
         return result
     def test_login_publish_followup_and_csrf(self):
         self.assertEqual(self.call('/api/tasks')['items'],[])

@@ -18,7 +18,7 @@ class ProjectionSummaryTests(unittest.TestCase):
                 {'type':'session_meta','payload':{'id':'summary-session'}},
                 {'type':'response_item','payload':{'type':'message','role':'user','content':[{'text':'生成一个视频'}]}},
                 {'type':'response_item','payload':{'type':'function_call','name':'VideoGen','call_id':'call1','arguments':json.dumps({'prompt':value},ensure_ascii=False)}}
-            ])+'\n')
+            ])+'\n',encoding='utf-8')
             c=Collector(path);c.scan(source);c.db.close();store=TaskStore(path);store.advance()
             identity,excerpt=store.db.execute("SELECT event,excerpt FROM task_steps WHERE kind='工具调用'").fetchone()
             self.assertEqual(len(excerpt),16000)

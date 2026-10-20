@@ -24,13 +24,17 @@
 | AP-08 | HSTS、现有 www 的 HTTP 跳转；域名拆分、裸域解析由用户明确暂缓 | www HTTP 已返回 301；HTTPS 200 响应已核验 HSTS max-age=31536000 |
 | AP-09 | `python3 ops/test_all.py` 统一入口，独立套件导入根；新增 CI；缺 PySide6 明确 skip；修正继承夹具中已有快照的心跳断言 | 291 + 556 + 231 项通过；本机合计 45 项可选环境/依赖跳过 |
 | AP-10 | README 改为线上域名、统一测试命令与当前预算/注册策略 | 文档已改 |
-| AP-11 | 主要旧部署入口改用目标、密钥、known_hosts 环境变量 | 44 个历史测试归入 tests/legacy，19 份历史设计归入 docs/architecture；默认分支迁移在发布时核验 |
+| AP-11 | 主要旧部署入口改用目标、密钥、known_hosts 环境变量 | 44 个历史测试归入 tests/legacy，19 份历史设计归入 docs/architecture；已获用户授权，以 b10e55f 创建 main 并核验 GitHub 默认分支为 main；原分支保留 |
 | AP-12 | `/api/version` 返回实际部署 commit、构建时间及源文件摘要；构建清单不含凭据 | /api/version 已核验 commit=1640262、builtAt 与 sourceSHA256 |
 
 ## 验收边界
 
 本地通过不等于线上性能达标。真实索引需完成旁路构建，测量默认查询 p95、5 并发、关键词 password、原文首屏体积与详情耗时，再切换并重复 HTTP 与浏览器验收。
 
-旁路构建曾遇到 OOM，原服务随后进入旧启动代码的重启循环并返回 502。已暂停构建，单独部署流式启动修复后恢复健康接口 200、重启计数 0。后续构建设置 MemoryMax=600M、CPUQuota=70%，不替换或删除原始采集库。
+旁路构建曾遇到 OOM，原服务随后进入旧启动代码的重启循环并返回 502。已暂停构建，单独部署流式启动修复后恢复健康接口 200、重启计数 0。后续构建设置 MemoryMax=600M、CPUQuota 初始 70%，确认双核后调整为 100%（占一个核），不替换或删除原始采集库。
 
 第一批回执已提交到 T000015，并在任务群聊 @Grok Bot 申请仅复测版本与传输配置。DC-1 未宣告完成。
+
+## CI 补充核验
+
+真实 GitHub runner 暴露出 Ubuntu Qt 的 libEGL 依赖、桌面测试 discover 导入根、Windows 测试 SQLite 句柄与 UTF-8 夹具问题，已按失败日志修正。将云测试控制台引用的既有只读 CPU 采样脚本纳入源码，避免干净克隆缺文件。
