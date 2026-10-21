@@ -173,7 +173,7 @@ await tools.mcp__service_z__novel_action(dynamicArgs);
         self.search('mcp=tinyfish')
         with self.center._db() as db:
             before_fields = [tuple(row) for row in db.execute('SELECT * FROM dc_fields ORDER BY record,ordinal')]
-            before_state = [tuple(row) for row in db.execute('SELECT * FROM dc_state ORDER BY name')]
+            before_state = dict(db.execute('SELECT * FROM dc_state'))
             for row in db.execute('SELECT key,metadata FROM dc_records').fetchall():
                 metadata = json.loads(row['metadata']); metadata.pop('capabilityEvidenceVersion'); metadata['capabilities'] = []
                 db.execute('UPDATE dc_records SET metadata=? WHERE key=?', (json.dumps(metadata), row['key']))
@@ -185,7 +185,11 @@ await tools.mcp__service_z__novel_action(dynamicArgs);
             self.assertEqual(self.center.refresh_capabilities()['updated'], 0)
         with self.center._db() as db:
             self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM dc_fields ORDER BY record,ordinal')], before_fields)
-            self.assertEqual([tuple(row) for row in db.execute('SELECT * FROM dc_state ORDER BY name')], before_state)
+            after_state = dict(db.execute('SELECT * FROM dc_state'))
+            # Metadata backfill invalidates summaries without moving any source
+            # cursor or changing retained source fields.
+            self.assertGreater(int(after_state.pop('summary_revision')),int(before_state.pop('summary_revision')))
+            self.assertEqual(after_state, before_state)
         self.assertEqual(VERSION, '5')
         self.assertEqual(self.search('mcp=tinyfish')['total'], 25)
         self.assertEqual(self.center.capabilities()['coverage']['capabilityRemaining'], 0)

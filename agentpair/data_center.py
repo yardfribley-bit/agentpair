@@ -31,6 +31,7 @@ from .session_packets import user_text
 from .source_turn_identity import extract_turn_identity
 
 VERSION = '5'
+APP_TEXT_VERSION = 4
 REQUEST_EVIDENCE_VERSION = 1
 _LOCKS = weakref.WeakValueDictionary()
 _LOCKS_GUARD = threading.Lock()
@@ -714,12 +715,16 @@ def _app_projection(record):
             if extra:fields.append(('context',_json(extra)))
         for message in messages:
             if not isinstance(message, dict):
+                fields.append(('context', _json(message)))
                 continue
             role = message.get('role')
             location = {'user': 'user', 'assistant': 'reply', 'tool': 'result'}.get(role, 'context')
             content=_readable(message.get('content'))
             fields.append((location,content))
             if location!='context':fields.append(('context',content))
+            # Preserve names, IDs and provider extensions as shared messages,
+            # without copying the entire growing request into every record.
+            fields.append(('context',_json(message)))
             for call in message.get('tool_calls', []) if isinstance(message.get('tool_calls'), list) else []:
                 if isinstance(call, dict):
                     function = call.get('function')
@@ -751,6 +756,10 @@ class DataCenter:
         with _LOCKS_GUARD:
             self.lock = _LOCKS.setdefault(str(self.path.resolve()),threading.RLock())
         with self._db() as db:
+            if (not self._bulk
+                    and db.execute("SELECT 1 FROM sqlite_master WHERE name='dc_state' AND type='table'").fetchone()
+                    and self._state(db,'bulk_fts_deferred')=='1'):
+                raise RuntimeError('Isolated index build is incomplete; finish it before serving requests')
             self._schema(db,'''
                 PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS dc_state(name TEXT PRIMARY KEY,value TEXT);
@@ -827,6 +836,7 @@ class DataCenter:
                 CREATE INDEX IF NOT EXISTS dc_inventory_scope ON dc_inventory(owner,device,collector,stamp);
                 CREATE INDEX IF NOT EXISTS dc_inventory_duplicates ON dc_inventory(collector,owner,ident,source,digest,device,seq,received);
                 CREATE INDEX IF NOT EXISTS dc_inventory_recent ON dc_inventory(stamp DESC,key);
+                CREATE INDEX IF NOT EXISTS dc_inventory_calls ON dc_inventory(key) WHERE kind='tool_call';
                 CREATE TRIGGER IF NOT EXISTS dc_inventory_insert AFTER INSERT ON dc_records BEGIN
                     INSERT OR REPLACE INTO dc_inventory VALUES(new.key,new.collector,new.owner,new.device,new.ident,
                         new.source,new.session,new.kind,new.stamp,new.received,new.seq,json_extract(new.metadata,'$.recordDigest'));
@@ -865,6 +875,15 @@ class DataCenter:
                     DELETE FROM dc_activity WHERE record=old.key;
                 END;
             ''')
+            # Track direct SQL repairs as well as normal ingestion/backfills.
+            # The revision and summaries commit atomically with index changes.
+            for table in ('dc_records','dc_inventory'):
+                for operation in ('INSERT','UPDATE','DELETE'):
+                    db.execute('CREATE TRIGGER IF NOT EXISTS dc_summary_'+table+'_'+operation.lower()+
+                        ' AFTER '+operation+' ON '+table+''' BEGIN
+                            INSERT INTO dc_state(name,value) VALUES('summary_revision','1')
+                            ON CONFLICT(name) DO UPDATE SET value=CAST(value AS INTEGER)+1;
+                        END''')
             if self._state(db,'inventory_version') != '1':
                 db.execute('INSERT OR REPLACE INTO dc_inventory SELECT key,collector,owner,device,ident,source,session,kind,stamp,received,seq,json_extract(metadata,\'$.recordDigest\') FROM dc_records')
                 self._set_state(db,'inventory_version','1')
@@ -875,9 +894,9 @@ class DataCenter:
                         digest=hashlib.sha256(re.sub(r'\s+',' ',value).strip().encode()).hexdigest()
                         db.execute('INSERT OR REPLACE INTO dc_user_inputs VALUES(?,?)',(row['key'],digest))
                 self._set_state(db,'user_inputs_version','1')
-            if self._state(db,'app_text_version') != '3':
+            if self._state(db,'app_text_version') != str(APP_TEXT_VERSION):
                 for name in ('app_seq','app_receipt','background_app_receipt_seq'):self._set_state(db,name,0)
-                self._set_state(db,'app_text_version','3')
+                self._set_state(db,'app_text_version',APP_TEXT_VERSION)
             if self._state(db,'activity_version') != '1':
                 db.execute('DELETE FROM dc_activity')
                 db.execute("INSERT INTO dc_activity SELECT key,'tool',json_extract(metadata,'$.tool'),'call',NULL,NULL,NULL FROM dc_records WHERE kind='tool_call' AND json_extract(metadata,'$.tool') IS NOT NULL")
@@ -937,7 +956,17 @@ class DataCenter:
     def _refresh_summaries(self, db):
         self._scope(db)
         try:
+            signature=hashlib.sha256(_json([
+                'summary-2',capability_evidence.VERSION,REQUEST_EVIDENCE_VERSION,
+                [float(self._state(db,name)) if name=='app_receipt' else self._state(db,name)
+                 for name in ('version','inventory_version','activity_version','app_text_version',
+                    'summary_revision','session_seq','app_seq','app_receipt','session_raw_count','app_raw_count','aliases')],
+                self._scope_identity(db)]).encode()).hexdigest()
+            if self._state(db,'summaries_signature','')==signature:return
             owners = [None] + [r[0] for r in db.execute('SELECT DISTINCT owner FROM dc_scope')]
+            # An owner whose last device became unavailable must not retain an
+            # old device facet or count after the next scope refresh.
+            db.execute('DELETE FROM dc_summaries')
             for owner in owners:
                 predicate = '' if owner is None else ' WHERE s.owner=?'
                 args = [] if owner is None else [owner]
@@ -954,30 +983,43 @@ class DataCenter:
                 indexed = db.execute('SELECT count(*) FROM dc_inventory').fetchone()[0]
                 total = db.execute('SELECT count(*)'+join+predicate,args).fetchone()[0]
                 data = {'watermark':[int(self._state(db,'session_seq')),int(self._state(db,'app_seq')),float(self._state(db,'app_receipt'))],
-                    'scopeIdentity':self._scope_identity(db),'scopeDevices':scope_devices,'sources':sources,'facets':facets,'retained':sum(r['total'] for r in sources),
+                    'summaryRevision':self._state(db,'summary_revision'),
+                    'sourceCounts':[int(self._state(db,'session_raw_count')),int(self._state(db,'app_raw_count'))],
+                    'scopeIdentity':self._scope_identity(db,owner),'scopeDevices':scope_devices,'sources':sources,'facets':facets,'retained':sum(r['total'] for r in sources),
                     'unindexed':max(0,int(self._state(db,'session_raw_count'))+int(self._state(db,'app_raw_count'))-indexed),
                     'duplicates':total-sum(r['total'] for r in sources),
                     'excluded':db.execute('SELECT count(*) FROM dc_inventory r WHERE NOT EXISTS(SELECT 1 FROM dc_scope s WHERE s.device=r.device AND s.owner=r.owner)').fetchone()[0],
                     'capabilityRemaining':self._capability_remaining(db)}
                 db.execute('INSERT OR REPLACE INTO dc_summaries VALUES(?,?,?)',(owner or '',_json(data),time.time()))
+            self._set_state(db,'summaries_signature',signature)
         finally:
             db.execute('DROP TABLE dc_scope')
 
     @staticmethod
-    def _scope_identity(db):
-        return hashlib.sha256(_json([tuple(r) for r in db.execute('SELECT device,owner,canonical FROM dc_scope ORDER BY device,owner')]).encode()).hexdigest()
+    def _scope_identity(db,owner=None):
+        predicate='' if owner is None else ' WHERE owner=?'
+        rows=db.execute('SELECT device,owner,canonical,name FROM dc_scope'+predicate+' ORDER BY device,owner',[] if owner is None else [owner])
+        return hashlib.sha256(_json([tuple(r) for r in rows]).encode()).hexdigest()
 
     def _cached_scope(self, db, values, dates, snapshot, owner=None):
         if dates or any(values.get(k,'all')!='all' for k in ('application','device','kind','location','object')):return None
         data=self._coverage_summary(db,owner)
-        if data.get('watermark') != [snapshot['sessionMax'],snapshot['appMax'],snapshot['appReceipt']] or data.get('scopeIdentity')!=self._scope_identity(db):return None
+        if data.get('watermark') != [snapshot['sessionMax'],snapshot['appMax'],snapshot['appReceipt']] or data.get('scopeIdentity')!=self._scope_identity(db,owner):return None
         collector=values.get('collector','all')
         return (sum(r['total'] for r in data['sources'] if collector=='all' or r['collector']==collector),data['scopeDevices'].get(collector,0))
 
     def _coverage_summary(self, db, owner):
         row = db.execute('SELECT data,updated FROM dc_summaries WHERE owner=?',(owner or '',)).fetchone()
         if row:
-            return dict(json.loads(row[0]), updatedAt=row[1])
+            data=json.loads(row[0])
+            if db.execute("SELECT 1 FROM sqlite_temp_master WHERE name='dc_scope' AND type='table'").fetchone():
+                identity=self._scope_identity(db,owner)
+            else:
+                identity=hashlib.sha256(_json(sorted(self._scope_rows(owner),key=lambda r:(r[0],r[1]))).encode()).hexdigest()
+            if (data.get('scopeIdentity')==identity
+                    and data.get('summaryRevision')==self._state(db,'summary_revision')
+                    and data.get('sourceCounts')==[int(self._state(db,'session_raw_count')),int(self._state(db,'app_raw_count'))]):
+                return dict(data,updatedAt=row[1])
         # Synchronous fixture/offline mode prepares its own summaries. A new
         # background index reports pending coverage rather than doing a full scan.
         return {'sources':[],'facets':{'devices':[],'applications':[],'kinds':[]},'retained':0,
@@ -1096,16 +1138,18 @@ class DataCenter:
         finally:
             db.close()
 
-    def _scope(self, db, owner=None):
+    def _scope_rows(self, owner=None):
         with self.devices.connect() as source:
             rows = source.execute('''SELECT id AS device,owner,id AS canonical,name FROM devices
                 WHERE revoked=0 AND id NOT IN (SELECT alias FROM device_aliases)
                 UNION ALL SELECT a.alias AS device,a.owner,d.id AS canonical,d.name
                 FROM device_aliases a JOIN devices d ON d.id=a.canonical AND d.owner=a.owner
                 WHERE d.revoked=0''').fetchall()
+        return [(r['device'],r['owner'],r['canonical'],r['name']) for r in rows if owner is None or r['owner']==owner]
+
+    def _scope(self, db, owner=None):
         db.execute('CREATE TEMP TABLE dc_scope(device TEXT,owner TEXT,canonical TEXT,name TEXT,PRIMARY KEY(device,owner))')
-        db.executemany('INSERT OR IGNORE INTO dc_scope VALUES(?,?,?,?)',
-            [(r['device'], r['owner'], r['canonical'], r['name']) for r in rows if owner is None or r['owner'] == owner])
+        db.executemany('INSERT OR IGNORE INTO dc_scope VALUES(?,?,?,?)',self._scope_rows(owner))
 
     @staticmethod
     def _state(db, name, default='0'):
@@ -1123,7 +1167,7 @@ class DataCenter:
         key = _key(collector,owner,device,ident)
         digest = hashlib.sha256(raw.encode()).hexdigest()
         old = db.execute("SELECT key,received,json_extract(metadata,'$.recordDigest') AS digest,json_extract(metadata,'$.indexTextVersion') AS textVersion FROM dc_records WHERE collector=? AND seq=?",(collector,seq)).fetchone()
-        if old and old['key']==key and old['digest']==digest and (collector!='applens' or old['textVersion']==3):
+        if old and old['key']==key and old['digest']==digest and (collector!='applens' or old['textVersion']==APP_TEXT_VERSION):
             if old['received'] != received:
                 db.execute('UPDATE dc_records SET received=? WHERE key=?',(received,key))
             return True
@@ -1141,7 +1185,7 @@ class DataCenter:
         except (ValueError, TypeError, AttributeError):
             return False
         metadata['recordDigest'] = digest
-        metadata['indexTextVersion'] = 3
+        metadata['indexTextVersion'] = APP_TEXT_VERSION if collector=='applens' else 3
         user_input=metadata.get('userInput') if collector=='sessionlens' and kind=='user' else metadata.get('latestUserInput') if collector=='applens' else None
         db.execute('DELETE FROM dc_user_inputs WHERE record=?',(key,))
         if isinstance(user_input,str) and user_input.strip():
@@ -1610,10 +1654,21 @@ class DataCenter:
                 cached=self._cached_scope(db,values,dates,snapshot,owner)
                 matched_devices = cached[1] if cached is not None else db.execute('SELECT count(DISTINCT s.canonical)' +
                     self._inventory_join(join) + predicate,args).fetchone()[0]
-                recent_join = join.replace(' FROM dc_records r JOIN',
-                    ' FROM dc_records r INDEXED BY dc_records_recent JOIN',1)
-                rows = db.execute('SELECT r.*,s.canonical,s.name' + recent_join + predicate +
-                    ' ORDER BY r.stamp DESC,r.key LIMIT ? OFFSET ?', [*args,size,(page-1)*size]).fetchall()
+                unrestricted_recent = owner is None and not dates and all(
+                    values.get(key,'all')=='all' for key in ('collector','application','device','kind','location'))
+                if unrestricted_recent:
+                    recent_join = join.replace(' FROM dc_records r JOIN',
+                        ' FROM dc_records r INDEXED BY dc_records_recent JOIN',1)
+                    rows = db.execute('SELECT r.*,s.canonical,s.name' + recent_join + predicate +
+                        ' ORDER BY r.stamp DESC,r.key LIMIT ? OFFSET ?', [*args,size,(page-1)*size]).fetchall()
+                else:
+                    # A selected device or collector may have only old records.
+                    # Filter and sort narrow identities before reading metadata.
+                    rows = db.execute('WITH picked AS MATERIALIZED (SELECT r.key' + self._inventory_join(join) + predicate +
+                        ' ORDER BY r.stamp DESC,r.key LIMIT ? OFFSET ?) '
+                        'SELECT r.*,s.canonical,s.name FROM picked p CROSS JOIN dc_records r ON r.key=p.key '
+                        'JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner '
+                        'ORDER BY r.stamp DESC,r.key', [*args,size,(page-1)*size]).fetchall()
                 items = [self._item(db,row,groups,location,snapshot) for row in rows]
             else:
                 # Long retained contexts are matched once per query, rather than
@@ -1657,7 +1712,7 @@ class DataCenter:
             return {'items': items, 'page': page, 'pageSize': size, 'total': total, 'hasMore': page * size < total,'snapshot':snapshot_token,**grouped,
                     'facets': facets, 'coverage': {'indexSync': self._index_status(db), 'scope': 'global' if owner is None else 'owner',
                     'retainedRecords': retained, 'searchedRecords': scope_records,'scopeRecords':scope_records,
-                    'sources': sources, 'fullRetainedText': unindexed==0,
+                    'sources': sources, 'fullRetainedText': summary['updatedAt'] is not None and unindexed==0,
                     'unindexedRecords': max(0,unindexed),
                     'capabilityEvidenceVersion': capability_evidence.VERSION, 'capabilityRemaining': summary['capabilityRemaining'],
                     'searchMode': 'literal_and_structured_fields', 'sourceSessionsAreTasks': False,
@@ -1680,7 +1735,18 @@ class DataCenter:
             token, snapshot = self._snapshot(db, values, owner, 'capabilities')
             join, predicate, args, scope_records = self._query_scope(db, values, dates, groups, snapshot,owner)
             db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY)')
-            db.execute('INSERT INTO dc_matches SELECT r.key' + self._candidate_join(join,values,groups) + predicate, args)
+            activity_only = not groups and values.get('object','all')=='all'
+            if activity_only:
+                # Structured activities originate only in tool_call records.
+                # Keep the broad matched-record count, but materialize only the
+                # sparse call set, including calls with an unknown tool name.
+                candidate_join=self._inventory_join(join).replace(' FROM dc_inventory r JOIN',
+                    ' FROM dc_inventory r INDEXED BY dc_inventory_calls JOIN',1)
+                db.execute('INSERT INTO dc_matches SELECT r.key' + candidate_join + predicate + " AND r.kind='tool_call'",args)
+                matched_records=scope_records
+            else:
+                db.execute('INSERT INTO dc_matches SELECT r.key' + self._candidate_join(join,values,groups) + predicate, args)
+                matched_records=db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
             matched_join = self._matched_join(join)
             db.execute('''CREATE TEMP TABLE dc_capabilities(record TEXT,category TEXT,name TEXT,evidence TEXT,
                 method TEXT,namespace TEXT,serviceName TEXT,device TEXT,owner TEXT,source TEXT,session TEXT,stamp REAL)''')
@@ -1736,14 +1802,16 @@ class DataCenter:
             inventory_join = self._inventory_join(join)
             summary = self._coverage_summary(db,owner)
             sources,retained,unindexed = (summary[k] for k in ('sources','retained','unindexed'))
+            cached_coverage=self._cached_scope(db,{}, {},snapshot,owner)
+            duplicates=summary['duplicates'] if cached_coverage is not None else db.execute('SELECT count(*)' + inventory_join).fetchone()[0] - retained
             result['facets'] = summary['facets']
             result['coverage'] = {'indexSync': self._index_status(db), 'scope': 'global' if owner is None else 'owner', 'object': object_type,
                 'retainedRecords': retained, 'scopeRecords': scope_records,
-                'matchedRecords': db.execute('SELECT count(*) FROM dc_matches').fetchone()[0],
+                'matchedRecords': matched_records,
                 'activityRecords': db.execute('SELECT count(DISTINCT record) FROM dc_capabilities').fetchone()[0],
                 'unknownToolCount': db.execute('SELECT count(*)' + activity_join + " WHERE r.kind='tool_call' AND NOT EXISTS(SELECT 1 FROM dc_activity a WHERE a.record=r.key AND a.category='tool')").fetchone()[0],
-                'duplicateAliasRecords': db.execute('SELECT count(*)' + inventory_join).fetchone()[0] - retained,
-                'sources': sources, 'fullRetainedText': unindexed == 0, 'unindexedRecords': max(0, unindexed),
+                'duplicateAliasRecords': duplicates,
+                'sources': sources, 'fullRetainedText': summary['updatedAt'] is not None and unindexed == 0, 'unindexedRecords': max(0, unindexed),
                 'sourceSessionsAreTasks': False, 'successInferred': False,
                 'capabilityEvidenceVersion': capability_evidence.VERSION, 'capabilityRemaining': summary['capabilityRemaining'],
                 'countBasis': 'distinct_source_records_with_structured_activity_evidence',
