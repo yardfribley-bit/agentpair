@@ -32,6 +32,7 @@ from .source_turn_identity import extract_turn_identity
 
 VERSION = '5'
 APP_TEXT_VERSION = 4
+CAPABILITIES_CACHE_VERSION = 1
 REQUEST_EVIDENCE_VERSION = 1
 _LOCKS = weakref.WeakValueDictionary()
 _LOCKS_GUARD = threading.Lock()
@@ -844,6 +845,11 @@ class DataCenter:
                 CREATE INDEX IF NOT EXISTS dc_inventory_duplicates ON dc_inventory(collector,owner,ident,source,digest,device,seq,received);
                 CREATE INDEX IF NOT EXISTS dc_inventory_recent ON dc_inventory(stamp DESC,key);
                 CREATE INDEX IF NOT EXISTS dc_inventory_calls ON dc_inventory(key) WHERE kind='tool_call';
+                CREATE INDEX IF NOT EXISTS dc_inventory_key_covering ON dc_inventory(
+                    key,collector,owner,device,ident,source,session,kind,stamp,received,seq,digest);
+                CREATE INDEX IF NOT EXISTS dc_inventory_call_covering ON dc_inventory(
+                    key,collector,owner,device,ident,source,session,kind,stamp,received,seq,digest)
+                    WHERE kind='tool_call';
                 CREATE TRIGGER IF NOT EXISTS dc_inventory_insert AFTER INSERT ON dc_records BEGIN
                     INSERT OR REPLACE INTO dc_inventory VALUES(new.key,new.collector,new.owner,new.device,new.ident,
                         new.source,new.session,new.kind,new.stamp,new.received,new.seq,json_extract(new.metadata,'$.recordDigest'));
@@ -884,7 +890,7 @@ class DataCenter:
             ''')
             # Track direct SQL repairs as well as normal ingestion/backfills.
             # The revision and summaries commit atomically with index changes.
-            for table in ('dc_records','dc_inventory'):
+            for table in ('dc_records','dc_inventory','dc_activity'):
                 for operation in ('INSERT','UPDATE','DELETE'):
                     db.execute('CREATE TRIGGER IF NOT EXISTS dc_summary_'+table+'_'+operation.lower()+
                         ' AFTER '+operation+' ON '+table+''' BEGIN
@@ -1046,6 +1052,7 @@ class DataCenter:
                 with self.lock, self._db() as db:
                     self._sync_batch(db)
                     self._refresh_summaries(db)
+                    self._refresh_capabilities_cache(db)
                     self._set_state(db, 'background_synced_at', time.time())
                 self._worker['error'] = None
             except Exception as error:
@@ -1504,7 +1511,7 @@ class DataCenter:
             if groups and all(any(field in ('keyword','ip','domain') and op=='=' and len(value.casefold())>=3 for field,op,value in group) for group in groups):
                 # Every OR branch supplies a finite indexed key set. Otherwise
                 # the watermark OR makes SQLite scan both collector ranges.
-                join=join.replace(' FROM dc_inventory r JOIN',' FROM dc_inventory r INDEXED BY sqlite_autoindex_dc_inventory_1 JOIN',1)
+                join=join.replace(' FROM dc_inventory r JOIN',' FROM dc_inventory r INDEXED BY dc_inventory_key_covering JOIN',1)
             return join
         return join
 
@@ -1689,11 +1696,11 @@ class DataCenter:
             else:
                 # Long retained contexts are matched once per query, rather than
                 # rescanned for the count, distinct devices and the page itself.
-                db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY)')
-                db.execute('INSERT INTO dc_matches SELECT r.key' + self._candidate_join(join,values,groups) + predicate,args)
+                db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY,canonical TEXT,stamp REAL)')
+                db.execute('INSERT INTO dc_matches SELECT r.key,s.canonical,r.stamp' + self._candidate_join(join,values,groups) + predicate,args)
                 total = db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
                 matched_join = self._matched_join(join)
-                matched_devices = db.execute('SELECT count(DISTINCT s.canonical)' + self._inventory_join(matched_join)).fetchone()[0]
+                matched_devices = db.execute('SELECT count(DISTINCT canonical) FROM dc_matches').fetchone()[0]
                 record_total = total
                 grouped = {}
                 if values.get('group')=='request':
@@ -1716,8 +1723,8 @@ class DataCenter:
                         total = grouped['groupTotal']
                 else:
                     # Sort/page narrow identities before retrieving large metadata.
-                    rows = db.execute('WITH picked AS MATERIALIZED (SELECT r.key' + self._inventory_join(matched_join) +
-                        ' ORDER BY coalesce(r.stamp,0) DESC,r.key LIMIT ? OFFSET ?) '
+                    rows = db.execute('WITH picked AS MATERIALIZED (SELECT key FROM dc_matches' +
+                        ' ORDER BY coalesce(stamp,0) DESC,key LIMIT ? OFFSET ?) '
                         'SELECT r.*,s.canonical,s.name FROM picked p CROSS JOIN dc_records r ON r.key=p.key '
                         'JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner '
                         'ORDER BY coalesce(r.stamp,0) DESC,r.key', [size,(page - 1) * size]).fetchall()
@@ -1740,6 +1747,62 @@ class DataCenter:
                                     '翻页快照排除后续新上报记录；已更新或撤销的源记录需重新搜索，不冻结采集。']},
                     'summary': {'matchedRecords': record_total, 'matchedDevices': matched_devices, 'observedThreats': None}}
 
+    def _capabilities_cache_signature(self,db,snapshot):
+        return hashlib.sha256(_json([CAPABILITIES_CACHE_VERSION,capability_evidence.VERSION,
+            REQUEST_EVIDENCE_VERSION,snapshot['sessionMax'],snapshot['appMax'],snapshot['appReceipt'],
+            self._state(db,'summary_revision'),self._state(db,'session_raw_count'),self._state(db,'app_raw_count'),
+            self._scope_identity(db)]).encode()).hexdigest()
+
+    def _cached_capabilities(self,db,values,page,size,dates,groups,owner,token,snapshot):
+        if (owner is not None or groups or dates or page!=1 or values.get('group','record')!='record'
+                or values.get('groupId') or any(values.get(key,'all')!='all' for key in
+                    ('collector','application','device','kind','location','object'))):return None
+        raw=self._state(db,'capabilities_default_cache','')
+        if not raw:return None
+        try:cached=json.loads(raw)
+        except (ValueError,TypeError):return None
+        if cached.get('signature')!=self._capabilities_cache_signature(db,snapshot):return None
+        # Even a matching persisted cache must never outlive device visibility.
+        summary=self._coverage_summary(db,None)
+        if summary['updatedAt'] is None:return None
+        result=cached['result']
+        result.update(snapshot=token,page=page,pageSize=size)
+        for plural in ('tools','skills','mcps'):
+            result[plural]=result[plural][:size]
+            result['hasMore'][plural]=result['totals'][plural]>size
+        result['coverage']['indexSync']=self._index_status(db)
+        return result
+
+    def _refresh_capabilities_cache(self,db,force=False):
+        """Preaggregate the default global first page off the request path."""
+        now=time.time()
+        if not force and now-float(self._state(db,'capabilities_cache_attempted_at'))<15:return False
+        self._set_state(db,'capabilities_cache_attempted_at',now)
+        self._scope(db)
+        try:
+            values={'pageSize':'100'};_,snapshot=self._snapshot(db,values,None,'capabilities')
+            signature=self._capabilities_cache_signature(db,snapshot)
+            raw=self._state(db,'capabilities_default_cache','')
+            if raw:
+                try:
+                    if json.loads(raw).get('signature')==signature:return False
+                except (ValueError,TypeError):pass
+            # Refuse to publish an aggregate against stale coverage or scope.
+            if self._coverage_summary(db,None)['updatedAt'] is None:return False
+            token,snapshot=self._snapshot(db,values,None,'capabilities')
+            join,predicate,args,scope_records=self._query_scope(db,values,{},[],snapshot)
+            result=self._capabilities_query(db,values,1,100,[],None,token,snapshot,join,predicate,args,scope_records)
+            self._set_state(db,'capabilities_default_cache',_json({'signature':signature,'result':result}))
+            return True
+        finally:
+            for table in ('dc_matches','dc_capabilities','dc_scope'):db.execute('DROP TABLE IF EXISTS temp.'+table)
+
+    def refresh_capabilities_cache(self):
+        """Explicit deployment prefill; source records and watermarks are intact."""
+        with self.lock,self._db() as db:
+            self._refresh_summaries(db)
+            return self._refresh_capabilities_cache(db,force=True)
+
     def capabilities(self, params=None, owner=None):
         """Rank structured activity from the index; never expand raw records."""
         params = dict(params or {})
@@ -1750,94 +1813,98 @@ class DataCenter:
             self._prepare_index(db); self._scope(db, owner)
             token, snapshot = self._snapshot(db, values, owner, 'capabilities')
             join, predicate, args, scope_records = self._query_scope(db, values, dates, groups, snapshot,owner)
-            db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY)')
-            activity_only = not groups and values.get('object','all')=='all'
-            if activity_only:
-                # Structured activities originate only in tool_call records.
-                # Keep the broad matched-record count, but materialize only the
-                # sparse call set, including calls with an unknown tool name.
-                candidate_join=self._inventory_join(join).replace(' FROM dc_inventory r JOIN',
-                    ' FROM dc_inventory r INDEXED BY dc_inventory_calls JOIN',1)
-                db.execute('INSERT INTO dc_matches SELECT r.key' + candidate_join + predicate + " AND r.kind='tool_call'",args)
-                matched_records=scope_records
-            else:
-                db.execute('INSERT INTO dc_matches SELECT r.key' + self._candidate_join(join,values,groups) + predicate, args)
-                matched_records=db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
-            matched_join = self._matched_join(join)
-            db.execute('''CREATE TEMP TABLE dc_capabilities(record TEXT,category TEXT,name TEXT,evidence TEXT,
-                method TEXT,namespace TEXT,serviceName TEXT,device TEXT,owner TEXT,source TEXT,session TEXT,stamp REAL)''')
-            activity_join = self._inventory_join(matched_join)
-            db.execute('''INSERT INTO dc_capabilities
-                SELECT r.key,a.category,a.name,a.evidence,a.method,a.namespace,a.serviceName,
-                       s.canonical,r.owner,r.source,r.session,r.stamp''' + activity_join +
-                ' JOIN dc_activity a ON a.record=r.key')
-            db.execute('CREATE INDEX dc_capabilities_names ON dc_capabilities(category,lower(name),lower(method))')
-            object_type = values.get('object', 'all')
-            result = {'tools': [], 'skills': [], 'mcps': [], 'snapshot': token,
-                      'page': page, 'pageSize': size, 'totals': {}, 'hasMore': {}}
-            for category, plural, field in [('tool', 'tools', 'tool'), ('skill', 'skills', 'skill'), ('mcp', 'mcps', 'mcp')]:
-                if object_type not in ('all', category):
-                    result['totals'][plural] = 0; result['hasMore'][plural] = False
-                    continue
-                total = db.execute('SELECT count(DISTINCT lower(name)) FROM dc_capabilities WHERE category=?', (category,)).fetchone()[0]
-                rows = db.execute('''SELECT min(name) AS name,count(DISTINCT record) AS activityCount,
-                    count(DISTINCT device) AS deviceCount,count(DISTINCT owner) AS accountCount,
-                    count(DISTINCT json_array(owner,device,source,session)) AS sourceSessionCount,
-                    max(stamp) AS lastSeen,json_group_array(DISTINCT source) AS applications,
-                    json_group_array(DISTINCT namespace) AS namespaces,json_group_array(DISTINCT serviceName) AS serviceNames,
-                    count(DISTINCT CASE WHEN evidence='loaded' THEN record END) AS loadCount,
-                    count(DISTINCT CASE WHEN evidence='read' THEN record END) AS readCount,
-                    count(DISTINCT CASE WHEN evidence='direct' THEN record END) AS directCount,
-                    count(DISTINCT CASE WHEN evidence='wrapped' THEN record END) AS wrappedCount
-                    FROM dc_capabilities WHERE category=? GROUP BY lower(name)
-                    ORDER BY activityCount DESC,coalesce(lastSeen,0) DESC,lower(name),name LIMIT ? OFFSET ?''', (category, size, (page - 1) * size)).fetchall()
-                for row in rows:
-                    item = {key: row[key] for key in ('name', 'activityCount', 'deviceCount', 'accountCount', 'sourceSessionCount', 'lastSeen')}
-                    item['applications'] = sorted(json.loads(row['applications']))
-                    item['searchQuery'] = field + '=' + _json(row['name'])
-                    if category == 'skill':
-                        item.update(loadCount=row['loadCount'], readCount=row['readCount'])
-                    else:
-                        item['callCount'] = row['activityCount']
-                    if category == 'mcp':
-                        namespaces = sorted(n for n in json.loads(row['namespaces']) if n)
-                        item.update(directCount=row['directCount'], wrappedCount=row['wrappedCount'], namespaces=namespaces,
-                                    namespace=namespaces[0] if len(namespaces) == 1 else None,
-                                    serviceNames=sorted(n for n in json.loads(row['serviceNames']) if n))
-                        methods = db.execute('''SELECT min(method) AS name,count(DISTINCT record) AS callCount,
-                            count(DISTINCT CASE WHEN evidence='direct' THEN record END) AS directCount,
-                            count(DISTINCT CASE WHEN evidence='wrapped' THEN record END) AS wrappedCount,
-                            max(stamp) AS lastSeen
-                            FROM dc_capabilities WHERE category='mcp' AND lower(name)=lower(?)
-                            GROUP BY lower(method) ORDER BY callCount DESC,coalesce(lastSeen,0) DESC,lower(method),method LIMIT 51''', (row['name'],)).fetchall()
-                        item['methodsHasMore'] = len(methods) > 50
-                        item['methods'] = [dict(method, searchQuery=item['searchQuery'] + ' && mcp_method=' + _json(method['name']))
-                                           for method in methods[:50]]
-                    result[plural].append(item)
-                result['totals'][plural] = total; result['hasMore'][plural] = total > page * size
-            inventory_join = self._inventory_join(join)
-            summary = self._coverage_summary(db,owner)
-            sources,retained,unindexed = (summary[k] for k in ('sources','retained','unindexed'))
-            cached_coverage=self._cached_scope(db,{}, {},snapshot,owner)
-            duplicates=summary['duplicates'] if cached_coverage is not None else db.execute('SELECT count(*)' + inventory_join).fetchone()[0] - retained
-            result['facets'] = summary['facets']
-            result['coverage'] = {'indexSync': self._index_status(db), 'scope': 'global' if owner is None else 'owner', 'object': object_type,
-                'retainedRecords': retained, 'scopeRecords': scope_records,
-                'matchedRecords': matched_records,
-                'activityRecords': db.execute('SELECT count(DISTINCT record) FROM dc_capabilities').fetchone()[0],
-                'unknownToolCount': db.execute('SELECT count(*)' + activity_join + " WHERE r.kind='tool_call' AND NOT EXISTS(SELECT 1 FROM dc_activity a WHERE a.record=r.key AND a.category='tool')").fetchone()[0],
-                'duplicateAliasRecords': duplicates,
-                'sources': sources, 'fullRetainedText': summary['updatedAt'] is not None and unindexed == 0, 'unindexedRecords': max(0, unindexed),
-                'sourceSessionsAreTasks': False, 'successInferred': False,
-                'capabilityEvidenceVersion': capability_evidence.VERSION, 'capabilityRemaining': summary['capabilityRemaining'],
-                'countBasis': 'distinct_source_records_with_structured_activity_evidence',
-                'limitations': ['范围为已上报且所属设备可用的记录；终端未上报数据不在范围内。',
-                    'Skill 加载与说明读取分别计数；只有读取说明的记录不证明 Skill 已启用。',
-                    'MCP 命令封装表示明确调用命令；命令退出码不证明 MCP 服务处理成功。',
-                    '源 Session 数为上传账号、设备、应用和 Session 标识的组合，不是完整任务数。',
-                    '提及、写入、目录列表、审计样本和捕获请求中嵌入的历史工具声明不计入能力活动；复杂 shell 只识别明确字面命令；exec 只展开静态可确定的调用，条件分支和函数体不计入。',
-                    '排行快照排除后续新上报记录；源记录更新或撤销后需刷新，快照不冻结采集。']}
-            return result
+            cached = self._cached_capabilities(db,values,page,size,dates,groups,owner,token,snapshot)
+            if cached is not None:return cached
+            return self._capabilities_query(db,values,page,size,groups,owner,token,snapshot,join,predicate,args,scope_records)
+
+    def _capabilities_query(self,db,values,page,size,groups,owner,token,snapshot,join,predicate,args,scope_records):
+        db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY,device TEXT,owner TEXT,source TEXT,session TEXT,stamp REAL,kind TEXT)')
+        activity_only = not groups and values.get('object','all')=='all'
+        if activity_only:
+            # Structured activities originate only in tool_call records.
+            # Keep the broad matched-record count, but materialize only the
+            # sparse call set, including calls with an unknown tool name.
+            candidate_join=self._inventory_join(join).replace(' FROM dc_inventory r JOIN',
+                ' FROM dc_inventory r INDEXED BY dc_inventory_call_covering JOIN',1)
+            db.execute('INSERT INTO dc_matches SELECT r.key,s.canonical,r.owner,r.source,r.session,r.stamp,r.kind' + candidate_join + predicate + " AND r.kind='tool_call'",args)
+            matched_records=scope_records
+        else:
+            db.execute('INSERT INTO dc_matches SELECT r.key,s.canonical,r.owner,r.source,r.session,r.stamp,r.kind' + self._candidate_join(join,values,groups) + predicate, args)
+            matched_records=db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
+        db.execute('''CREATE TEMP TABLE dc_capabilities(record TEXT,category TEXT,name TEXT,evidence TEXT,
+            method TEXT,namespace TEXT,serviceName TEXT,device TEXT,owner TEXT,source TEXT,session TEXT,stamp REAL)''')
+        activity_join = ' FROM dc_matches r'
+        db.execute('''INSERT INTO dc_capabilities
+            SELECT r.key,a.category,a.name,a.evidence,a.method,a.namespace,a.serviceName,
+                   r.device,r.owner,r.source,r.session,r.stamp''' + activity_join +
+            ' JOIN dc_activity a ON a.record=r.key')
+        db.execute('CREATE INDEX dc_capabilities_names ON dc_capabilities(category,lower(name),lower(method))')
+        object_type = values.get('object', 'all')
+        result = {'tools': [], 'skills': [], 'mcps': [], 'snapshot': token,
+                  'page': page, 'pageSize': size, 'totals': {}, 'hasMore': {}}
+        for category, plural, field in [('tool', 'tools', 'tool'), ('skill', 'skills', 'skill'), ('mcp', 'mcps', 'mcp')]:
+            if object_type not in ('all', category):
+                result['totals'][plural] = 0; result['hasMore'][plural] = False
+                continue
+            total = db.execute('SELECT count(DISTINCT lower(name)) FROM dc_capabilities WHERE category=?', (category,)).fetchone()[0]
+            rows = db.execute('''SELECT min(name) AS name,count(DISTINCT record) AS activityCount,
+                count(DISTINCT device) AS deviceCount,count(DISTINCT owner) AS accountCount,
+                count(DISTINCT json_array(owner,device,source,session)) AS sourceSessionCount,
+                max(stamp) AS lastSeen,json_group_array(DISTINCT source) AS applications,
+                json_group_array(DISTINCT namespace) AS namespaces,json_group_array(DISTINCT serviceName) AS serviceNames,
+                count(DISTINCT CASE WHEN evidence='loaded' THEN record END) AS loadCount,
+                count(DISTINCT CASE WHEN evidence='read' THEN record END) AS readCount,
+                count(DISTINCT CASE WHEN evidence='direct' THEN record END) AS directCount,
+                count(DISTINCT CASE WHEN evidence='wrapped' THEN record END) AS wrappedCount
+                FROM dc_capabilities WHERE category=? GROUP BY lower(name)
+                ORDER BY activityCount DESC,coalesce(lastSeen,0) DESC,lower(name),name LIMIT ? OFFSET ?''', (category, size, (page - 1) * size)).fetchall()
+            for row in rows:
+                item = {key: row[key] for key in ('name', 'activityCount', 'deviceCount', 'accountCount', 'sourceSessionCount', 'lastSeen')}
+                item['applications'] = sorted(json.loads(row['applications']))
+                item['searchQuery'] = field + '=' + _json(row['name'])
+                if category == 'skill':
+                    item.update(loadCount=row['loadCount'], readCount=row['readCount'])
+                else:
+                    item['callCount'] = row['activityCount']
+                if category == 'mcp':
+                    namespaces = sorted(n for n in json.loads(row['namespaces']) if n)
+                    item.update(directCount=row['directCount'], wrappedCount=row['wrappedCount'], namespaces=namespaces,
+                                namespace=namespaces[0] if len(namespaces) == 1 else None,
+                                serviceNames=sorted(n for n in json.loads(row['serviceNames']) if n))
+                    methods = db.execute('''SELECT min(method) AS name,count(DISTINCT record) AS callCount,
+                        count(DISTINCT CASE WHEN evidence='direct' THEN record END) AS directCount,
+                        count(DISTINCT CASE WHEN evidence='wrapped' THEN record END) AS wrappedCount,
+                        max(stamp) AS lastSeen
+                        FROM dc_capabilities WHERE category='mcp' AND lower(name)=lower(?)
+                        GROUP BY lower(method) ORDER BY callCount DESC,coalesce(lastSeen,0) DESC,lower(method),method LIMIT 51''', (row['name'],)).fetchall()
+                    item['methodsHasMore'] = len(methods) > 50
+                    item['methods'] = [dict(method, searchQuery=item['searchQuery'] + ' && mcp_method=' + _json(method['name']))
+                                       for method in methods[:50]]
+                result[plural].append(item)
+            result['totals'][plural] = total; result['hasMore'][plural] = total > page * size
+        inventory_join = self._inventory_join(join)
+        summary = self._coverage_summary(db,owner)
+        sources,retained,unindexed = (summary[k] for k in ('sources','retained','unindexed'))
+        cached_coverage=self._cached_scope(db,{}, {},snapshot,owner)
+        duplicates=summary['duplicates'] if cached_coverage is not None else db.execute('SELECT count(*)' + inventory_join).fetchone()[0] - retained
+        result['facets'] = summary['facets']
+        result['coverage'] = {'indexSync': self._index_status(db), 'scope': 'global' if owner is None else 'owner', 'object': object_type,
+            'retainedRecords': retained, 'scopeRecords': scope_records,
+            'matchedRecords': matched_records,
+            'activityRecords': db.execute('SELECT count(DISTINCT record) FROM dc_capabilities').fetchone()[0],
+            'unknownToolCount': db.execute('SELECT count(*)' + activity_join + " WHERE r.kind='tool_call' AND NOT EXISTS(SELECT 1 FROM dc_activity a WHERE a.record=r.key AND a.category='tool')").fetchone()[0],
+            'duplicateAliasRecords': duplicates,
+            'sources': sources, 'fullRetainedText': summary['updatedAt'] is not None and unindexed == 0, 'unindexedRecords': max(0, unindexed),
+            'sourceSessionsAreTasks': False, 'successInferred': False,
+            'capabilityEvidenceVersion': capability_evidence.VERSION, 'capabilityRemaining': summary['capabilityRemaining'],
+            'countBasis': 'distinct_source_records_with_structured_activity_evidence',
+            'limitations': ['范围为已上报且所属设备可用的记录；终端未上报数据不在范围内。',
+                'Skill 加载与说明读取分别计数；只有读取说明的记录不证明 Skill 已启用。',
+                'MCP 命令封装表示明确调用命令；命令退出码不证明 MCP 服务处理成功。',
+                '源 Session 数为上传账号、设备、应用和 Session 标识的组合，不是完整任务数。',
+                '提及、写入、目录列表、审计样本和捕获请求中嵌入的历史工具声明不计入能力活动；复杂 shell 只识别明确字面命令；exec 只展开静态可确定的调用，条件分支和函数体不计入。',
+                '排行快照排除后续新上报记录；源记录更新或撤销后需刷新，快照不冻结采集。']}
+        return result
 
     @staticmethod
     def _raw_url(row):
