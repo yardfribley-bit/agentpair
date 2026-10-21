@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from agentpair.credential_threats import CredentialThreats
 from agentpair.devices import DeviceStore
@@ -46,6 +46,15 @@ class CredentialFreshnessTests(unittest.TestCase):
         self.assertEqual((data['coverage']['lastReceivedAt'],data['coverage']['lastScannedAt']),(200,200))
         self.assertEqual((data['coverage']['receivedRecords'],data['coverage']['scannedRecords']),(1,1))
         self.assertEqual(data['coverage']['collector'],'applens')
+
+    def test_unlinked_review_does_not_reload_occurrences_or_project_an_engine_task(self):
+        self.record();fid=self.finding()['id'];threats=self.store.credential_threats
+        engine=SimpleNamespace(get=Mock(side_effect=AssertionError('No linked review task')))
+        with patch.object(threats,'_occurrences',side_effect=AssertionError('Unlinked review must not load evidence')) as occurrences, \
+             patch.object(threats,'_revision',side_effect=AssertionError('Unlinked review must not hash evidence')) as revision:
+            self.assertIsNone(threats.review(fid,engine))
+            self.assertIsNone(threats.review('missing-finding',engine))
+        occurrences.assert_not_called();revision.assert_not_called();engine.get.assert_not_called()
 
     def test_replay_checks_freshness_without_changing_evidence_or_verification_receipt(self):
         r=self.record();before=self.finding();self.review()

@@ -15,7 +15,11 @@
   function filters() {
     const params = {object:type,device:$('dr-device').value,application:$('dr-application').value,collector:$('dr-collector').value,page:String(page),pageSize:String(pageSize)};
     for (const key of ['after','before']) if ($('dr-' + key).value) {const d = new Date($('dr-' + key).value); if (Number.isNaN(d.getTime())) throw Error('请填写有效的时间范围。'); params[key] = d.toISOString();}
-    if (params.after && params.before && params.after > params.before) throw Error('开始时间不能晚于结束时间。'); return params;
+    if (params.after && params.before && params.after > params.before) throw Error('开始时间不能晚于结束时间。');
+    // Unfiltered tabs display one category of the exact global aggregate. Keep
+    // this request scope on later pages too, so its snapshot remains valid.
+    if (scopeKeys.every(key => !params[key] || params[key] === 'all')) params.object = 'all';
+    return params;
   }
   function searchLink(params,query,object) {const p = new URLSearchParams(); for (const key of scopeKeys) if (params[key] && params[key] !== 'all') p.set(key,params[key]); if (object) p.set('object',object); if (query != null) p.set('q',query); return '/model-data' + (p.size ? '?' + p : '');}
   function renderScope(params) {

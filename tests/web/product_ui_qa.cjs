@@ -26,4 +26,23 @@ for(const name of ['workspace','devices','model_data','model_security','cloud_ma
  const html=fs.readFileSync('agentpair/web_assets/'+name+'.html','utf8');assert.match(html,/<body class="agentpair-web">/);assert.match(html,/data-product-ui/);assert.match(html,/product_ui.js/);
 }
 const security=fs.readFileSync('agentpair/web_assets/model_security.html','utf8');assert.match(security,/<title>交互安全审计 · AgentPair/);assert.doesNotMatch(security,/<a class="brand" href="\/">AppLens/);
-console.log('PASS current question and answer, collapsed history, no stale answer, no empty objects, shared Web shell (7 pages)');
+// Session resolution and subsequent account changes must preserve the product
+// introduction from the delivered HTML while applying role-specific controls.
+const workspaceHtml=fs.readFileSync('agentpair/web_assets/workspace.html','utf8');
+const heroMatch=workspaceHtml.match(/<section class="hero"><div><h1>([^<]+)<\/h1><p>([^<]+)<\/p>/);
+assert(heroMatch,'homepage must explain the product before session resolution');
+assert.match(heroMatch[1],/AI/);assert.match(heroMatch[2],/安全与研发团队/);
+for(const role of ['viewer','user','admin']){
+ const nodes=Object.fromEntries(['cloud-machines-link','packages-link','access-role','open-login','logout','new-task','reply-form','create'].map(id=>[id,new Element('div')]));
+ const heroTitle=new Element('h1',heroMatch[1]),heroDescription=new Element('p',heroMatch[2]);
+ const access={admin:role==='admin',csrf:role==='viewer'?'':'fixture-token',accountName:'fixture-user',canWrite:role!=='viewer',$:id=>nodes[id]||null,
+  document:{getElementById:id=>nodes[id]||null,querySelector:selector=>({'.hero h1':heroTitle,'.hero p':heroDescription}[selector])},el:(tag,text,cls)=>new Element(tag,text,cls)};
+ vm.createContext(access);
+ vm.runInContext(source.slice(source.indexOf('function applyAccess('),source.indexOf("$('open-login').onclick=")),access);
+ access.applyAccess();access.applyAccess();
+ assert.equal(heroTitle.textContent,heroMatch[1],role+' must preserve the homepage value statement');
+ assert.equal(heroDescription.textContent,heroMatch[2],role+' must preserve the audience and purpose');
+ assert.equal(nodes['open-login'].hidden,role!=='viewer');assert.equal(nodes.logout.hidden,role==='viewer');
+ assert.equal(nodes['cloud-machines-link'].hidden,role!=='admin');
+}
+console.log('PASS current answer, collapsed history, shared Web shell (7 pages), homepage introduction preserved for visitor/user/admin');

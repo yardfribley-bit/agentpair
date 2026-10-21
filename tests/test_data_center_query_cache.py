@@ -48,6 +48,42 @@ class QueryCacheTests(unittest.TestCase):
         self.assertTrue(any('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY,canonical TEXT,stamp REAL)' in sql for sql in statements))
         self.assertFalse(any('SELECT count(DISTINCT s.canonical) FROM dc_matches' in sql for sql in statements))
 
+    def test_collector_page_uses_ordered_index_without_sorting_the_full_scope(self):
+        self.f.upload([self.f.event('recent-'+str(i),text='recent '+str(i),timestamp=1700001000+i) for i in range(40)])
+        alias_enrollment=self.f.devices.enroll(self.f.devices.pairing('alice')['code'],'Old installation')
+        alias=self.f.devices.identity(alias_enrollment['token'])
+        duplicate=self.f.event('recent-alias',text='same evidence',timestamp=1700002000)
+        self.f.upload([duplicate],identity=alias);self.f.upload([duplicate])
+        self.f.devices.merge_registrations('alice',self.f.identities['alice']['id'],[alias['id']])
+        self.f.context('newer-app','{"messages":[{"role":"user","content":"newer AppLens"}]}',timestamp=1800000000)
+        with self.c._db() as db:
+            self.c._sync_batch(db);self.c._refresh_summaries(db)
+            index_sql=db.execute("SELECT sql FROM sqlite_master WHERE name='dc_inventory_collector_recent'").fetchone()[0]
+            db.execute('DROP INDEX dc_inventory_collector_recent')
+        pages=[{'collector':'sessionlens','pageSize':7,'page':page} for page in (1,2)]
+        baseline=[self.c.search(params) for params in pages]
+        with self.c._db() as db:db.execute(index_sql)
+        for params,expected in zip(pages,baseline):
+            with self.subTest(page=params['page']),self.trace() as statements:
+                actual=self.c.search(params)
+                self.assertEqual(actual,expected)
+                self.assertTrue(all(item['collector']=='sessionlens' for item in actual['items']))
+                sql=next(sql for sql in statements if sql.startswith('WITH picked AS MATERIALIZED'))
+                with self.c._db() as db:
+                    self.c._scope(db)
+                    plan=[tuple(row) for row in db.execute('EXPLAIN QUERY PLAN '+sql)]
+                self.assertTrue(any('dc_inventory_collector_recent' in row[3] for row in plan),plan)
+                picked=next(row[0] for row in plan if row[3]=='MATERIALIZE picked')
+                parents={row[0]:row[1] for row in plan}
+                def inside_picked(node):
+                    while node in parents and node!=picked:node=parents[node]
+                    return node==picked
+                # The outer ORDER BY may still sort the seven selected rows;
+                # only a sort inside the unbounded source selection is costly.
+                self.assertFalse(any('USE TEMP B-TREE FOR ORDER BY' in row[3] and inside_picked(row[0]) for row in plan),plan)
+        self.assertTrue({item['id'] for item in baseline[0]['items']}.isdisjoint(item['id'] for item in baseline[1]['items']))
+        self.assertEqual(baseline[0]['coverage']['duplicateAliasRecords'],1)
+
     def test_default_cache_preserves_results_and_resizes_without_querying_hits(self):
         expected=self.c.capabilities()
         self.assertTrue(self.c.refresh_capabilities_cache())
@@ -60,6 +96,21 @@ class QueryCacheTests(unittest.TestCase):
         self.assertTrue(small['hasMore']['skills'])
         self.assertFalse(any('CREATE TEMP TABLE dc_matches' in sql for sql in statements))
         self.assertFalse(self.c.refresh_capabilities_cache())
+
+    def test_unfiltered_ui_tabs_have_identical_category_rows_and_exact_pagination(self):
+        self.f.upload([self.f.event('mcp-ui','tool_call',name='mcp__fixture__search',arguments={'q':'example'})])
+        with self.c._db() as db:self.c._sync_batch(db);self.c._refresh_summaries(db)
+        self.c.refresh_capabilities_cache()
+        for page,size in ((1,1),(1,50),(2,1)):
+            with self.subTest(page=page,size=size):
+                broad=self.c.capabilities({'object':'all','page':page,'pageSize':size})
+                for category,plural in (('tool','tools'),('skill','skills'),('mcp','mcps')):
+                    selected=self.c.capabilities({'object':category,'page':page,'pageSize':size})
+                    self.assertEqual(broad[plural],selected[plural])
+                    self.assertEqual(broad['totals'][plural],selected['totals'][plural])
+                    self.assertEqual(broad['hasMore'][plural],selected['hasMore'][plural])
+                    self.assertEqual(broad['hasMore'][plural],broad['totals'][plural]>page*size)
+        self.assertNotEqual(broad['totals']['tools'],broad['totals']['skills'])
 
     def test_filters_owners_pages_and_older_snapshots_do_not_reuse_default(self):
         self.c.refresh_capabilities_cache();old=self.c.capabilities()['snapshot']

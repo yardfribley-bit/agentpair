@@ -251,8 +251,8 @@ class CredentialThreats:
         with self.connect() as db:
             fid=self._canonical_finding(db,fid)
             row=db.execute('SELECT * FROM credential_reviews WHERE finding_id=?',(fid,)).fetchone()
+            if not row:return None
             current=self._revision(self._occurrences(db,fid))
-        if not row:return None
         try:task=engine.get(row['task_id'])
         except KeyError:
             return {'taskId':row['task_id'],'status':'unavailable','answer':None,'findings':[],'evidenceValidated':False,

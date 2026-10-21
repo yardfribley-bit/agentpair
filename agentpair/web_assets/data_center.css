@@ -26,6 +26,7 @@ body.agentpair-web.data-center-page{--ap-sidebar:220px}.dc-heading,.dc-section-h
 .dc-capability-result .dc-result-outcome>.dc-field-name{flex-shrink:0;font-size:11px;color:var(--ap-muted)}
 .dc-result-heading h3{overflow-wrap:anywhere;min-width:0}
 .dc-result-objects>span{min-width:0;overflow-wrap:anywhere;max-width:100%}
+.dc-result-outcome>span{min-width:0;max-width:100%;overflow-wrap:anywhere}
 .dc-result-meta>span{max-width:100%;overflow-wrap:anywhere}
 .dc-capability .dc-chip{white-space:normal;overflow-wrap:anywhere;max-width:100%}
 .dc-detail-section .dc-request-heading{margin:0;padding:0;border:0}

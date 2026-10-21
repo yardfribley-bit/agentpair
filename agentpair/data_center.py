@@ -844,6 +844,7 @@ class DataCenter:
                 CREATE INDEX IF NOT EXISTS dc_inventory_scope ON dc_inventory(owner,device,collector,stamp);
                 CREATE INDEX IF NOT EXISTS dc_inventory_duplicates ON dc_inventory(collector,owner,ident,source,digest,device,seq,received);
                 CREATE INDEX IF NOT EXISTS dc_inventory_recent ON dc_inventory(stamp DESC,key);
+                CREATE INDEX IF NOT EXISTS dc_inventory_collector_recent ON dc_inventory(collector,stamp DESC,key);
                 CREATE INDEX IF NOT EXISTS dc_inventory_calls ON dc_inventory(key) WHERE kind='tool_call';
                 CREATE INDEX IF NOT EXISTS dc_inventory_key_covering ON dc_inventory(
                     key,collector,owner,device,ident,source,session,kind,stamp,received,seq,digest);

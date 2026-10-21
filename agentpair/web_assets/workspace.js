@@ -79,8 +79,6 @@ function applyAccess(){
   $('new-task').classList.toggle('hidden',!csrf);
   $('reply-form').classList.toggle('hidden',!canWrite);
   if(!csrf)$('create').classList.add('hidden');
-  document.querySelector('.hero h1').textContent='任务中心';
-  document.querySelector('.hero p').textContent='管理设备、采集、分析与处置。';
 }
 $('open-login').onclick=()=>{$('login').classList.remove('hidden');$('username').focus();};
 $('close-login').onclick=()=>{$('login').classList.add('hidden');};
