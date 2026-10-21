@@ -284,6 +284,25 @@ class ReviewIndexTests(unittest.TestCase):
         with f.center._db() as db:
             self.assertGreater(db.execute("SELECT count(*) FROM dc_text_fts WHERE dc_text_fts MATCH '\"pas\"'").fetchone()[0],0)
 
+    def test_keyword_page_does_not_rescan_long_nonmatching_shared_background(self):
+        from agentpair import data_center
+        f=self.f
+        background='fixed background without the queried term '*5000
+        body=json.dumps({'messages':[{'role':'system','content':background},
+                                     {'role':'user','content':'password in a short message'}]})
+        for i in range(20):f.context('snippet-'+str(i),body)
+        f.find()
+        original=data_center._matches
+        def checked(text,value,field):
+            self.assertLess(len(text),1000,'Keyword page rescanned a long nonmatching background')
+            return original(text,value,field)
+        with patch('agentpair.data_center._matches',side_effect=checked):
+            for query in ('password','password || missing-needle'):
+                result=f.find(query)
+                self.assertEqual(result['total'],20)
+                self.assertTrue(all('password' in item['excerpt'] for item in result['items']))
+            self.assertEqual(f.find('password',location='reply')['total'],0)
+
 
 class ReviewSecurityTests(unittest.TestCase):
     def test_limits_are_per_ip_and_per_account(self):

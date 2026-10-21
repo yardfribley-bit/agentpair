@@ -214,6 +214,13 @@ def _matches(text, value, field='keyword'):
     return value.casefold() in (text or '').casefold()
 
 
+def _literal_fts_keyword(field, value):
+    if field!='keyword' or len(value.casefold())<3:return False
+    try:ipaddress.ip_address(value)
+    except ValueError:return True
+    return False
+
+
 def _snippet(text, value=None, field='keyword', size=280):
     text = text or ''
     start = 0
@@ -1364,23 +1371,28 @@ class DataCenter:
         return encoded,snapshot
 
     @staticmethod
-    def _term_sql(term, location, args, indexed=True):
+    def _term_sql(term, location, args, indexed=True, row_scoped=False):
         field, op, value = term
         if field in ('keyword', 'ip', 'domain'):
             if indexed and len(value.casefold())>=3:
                 folded=value.casefold().rstrip('.') if field=='domain' else value.casefold()
                 args.append('"'+folded.replace('"','""')+'"')
                 scope=' AND f.location=?' if location!='all' else ''
-                literal=field=='keyword'
-                if literal:
-                    try:ipaddress.ip_address(value);literal=False
-                    except ValueError:pass
+                literal=_literal_fts_keyword(field,value)
                 if literal:
                     # Positional trigrams prove the complete Unicode substring
                     # without rereading long shared source texts.
                     if scope:args.append(location)
-                    sql=('r.key IN (SELECT f.record FROM dc_text_fts CROSS JOIN dc_field_refs f '
-                         'ON f.text_id=dc_text_fts.rowid WHERE dc_text_fts MATCH ?'+scope+')')
+                    if row_scoped:
+                        # Page evidence already has one record. Seek its text
+                        # IDs directly rather than rebuild global hit sets for
+                        # every row and every OR branch on the page.
+                        sql=('EXISTS(SELECT 1 FROM dc_field_refs f CROSS JOIN dc_text_fts '
+                             'ON dc_text_fts.rowid=f.text_id WHERE f.record=r.key '
+                             'AND dc_text_fts MATCH ?'+scope+')')
+                    else:
+                        sql=('r.key IN (SELECT f.record FROM dc_text_fts CROSS JOIN dc_field_refs f '
+                             'ON f.text_id=dc_text_fts.rowid WHERE dc_text_fts MATCH ?'+scope+')')
                 else:
                     args.extend([value,field])
                     if scope:args.append(location)
@@ -2077,7 +2089,8 @@ class DataCenter:
         matched_groups=[]
         for group in groups:
             args=[]
-            predicate=' AND '.join(self._term_sql(term,location,args,indexed=False) for term in group)
+            predicate=' AND '.join(self._term_sql(term,location,args,
+                indexed=_literal_fts_keyword(term[0],term[2]),row_scoped=True) for term in group)
             if db.execute('SELECT 1 FROM dc_records r JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner '
                           'WHERE r.key=? AND '+predicate,[row['key'],*args]).fetchone():
                 matched_groups.append(group)
@@ -2087,14 +2100,28 @@ class DataCenter:
                 if op != '=':
                     continue
                 if field in ('keyword', 'ip', 'domain'):
-                    args = [row['key']]
-                    where = 'record=?'
-                    if location != 'all':
-                        where += ' AND location=?';args.append(location)
-                    args.extend([value, field, value, field])
-                    hit = db.execute('SELECT location,dc_snippet(value,?,?) AS excerpt FROM dc_fields WHERE ' + where + ' AND dc_match(value,?,?) ORDER BY ordinal LIMIT 1',
-                        # SQL SELECT placeholders precede WHERE placeholders.
-                        [value, field, *args[:-4], value, field]).fetchone()
+                    if _literal_fts_keyword(field,value):
+                        # FTS already proves the literal substring. Read only
+                        # matching shared texts, avoiding long unrelated fields
+                        # repeated across historical requests on the same page.
+                        scope=' AND f.location=?' if location!='all' else ''
+                        args=[value,field,row['key']]
+                        if scope:args.append(location)
+                        args.append('"'+value.casefold().replace('"','""')+'"')
+                        hit=db.execute('SELECT f.location,dc_snippet(t.value,?,?) AS excerpt '
+                            'FROM dc_field_refs f CROSS JOIN dc_text_fts ON dc_text_fts.rowid=f.text_id '
+                            'CROSS JOIN dc_texts t ON t.id=f.text_id '
+                            'WHERE f.record=?'+scope+' AND dc_text_fts MATCH ? '
+                            'ORDER BY f.ordinal LIMIT 1',args).fetchone()
+                    else:
+                        args = [row['key']]
+                        where = 'record=?'
+                        if location != 'all':
+                            where += ' AND location=?';args.append(location)
+                        args.extend([value, field, value, field])
+                        hit = db.execute('SELECT location,dc_snippet(value,?,?) AS excerpt FROM dc_fields WHERE ' + where + ' AND dc_match(value,?,?) ORDER BY ordinal LIMIT 1',
+                            # SQL SELECT placeholders precede WHERE placeholders.
+                            [value, field, *args[:-4], value, field]).fetchone()
                     if hit:
                         basis = {'field': hit['location'], 'label': LOCATIONS[hit['location']], 'excerpt': hit['excerpt']}
                         address_field = field
@@ -2124,7 +2151,7 @@ class DataCenter:
                     break
             if len(matches) >= 3:
                 break
-        first = db.execute('SELECT substr(value,1,280),length(value)>280 FROM dc_fields WHERE record=? ORDER BY ordinal LIMIT 1', (row['key'],)).fetchone()
+        first = None if matches else db.execute('SELECT substr(value,1,280),length(value)>280 FROM dc_fields WHERE record=? ORDER BY ordinal LIMIT 1', (row['key'],)).fetchone()
         excerpt = matches[0]['excerpt'] if matches else (first[0] + ('…' if first[1] else '') if first else '')
         address_basis = meta['addressBasis']
         # This field describes the record's destination, independent of which
