@@ -46,6 +46,15 @@ class DeviceStore:
             db.execute('CREATE TABLE IF NOT EXISTS applens_model_context(device_id TEXT,request_id TEXT,data TEXT NOT NULL,received REAL NOT NULL,PRIMARY KEY(device_id,request_id))')
             db.execute('CREATE INDEX IF NOT EXISTS applens_model_context_received ON applens_model_context(received)')
             db.execute("CREATE INDEX IF NOT EXISTS applens_model_context_recent ON applens_model_context(device_id,json_extract(data,'$.timestamp') DESC)")
+            # Credential summaries need only identity and receipt, never the
+            # potentially large request JSON stored between those columns.
+            receipt_index='applens_model_context_device_request_received'
+            db.execute('CREATE INDEX IF NOT EXISTS '+receipt_index+' ON applens_model_context(device_id,request_id,received)')
+            has_stats=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'").fetchone()
+            if not has_stats or not db.execute('SELECT 1 FROM sqlite_stat1 WHERE idx=?',(receipt_index,)).fetchone():
+                # Without this narrow index's cardinality, SQLite can prefer
+                # the older unique key and fetch received from raw JSON rows.
+                db.execute('ANALYZE '+receipt_index)
 
         from .credential_threats import CredentialThreats
         self.credential_threats=CredentialThreats(self.connect)
