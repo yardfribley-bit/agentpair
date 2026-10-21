@@ -402,8 +402,14 @@ class RequestGroupTests(unittest.TestCase):
             def estimate(self,*args,**kwargs):raise AssertionError('Read-only search cannot reserve model usage')
             def call(self,*args,**kwargs):raise AssertionError('Read-only search cannot invoke a model')
         self.upload([self.request()]+[self.load('api-'+str(i),1700000010+i,parent='request') for i in range(12)])
+        # This case exercises HTTP dispatch over committed evidence. GET does
+        # not synchronize the background index, so prepare that fixture first.
+        self.assertEqual(self.center.search({'q':'skill=taste-skill'})['total'],12)
         engine = TaskEngine(self.root/'tasks.db',Backend(),start=False)
-        handler = handler_for(engine,'fixture-password-12345','http://127.0.0.1')
+        # With the worker held idle, the assertions cannot accidentally depend
+        # on the first indexing batch winning a thread scheduling race.
+        with patch.object(DataCenter,'_index_loop',return_value=None):
+            handler = handler_for(engine,'fixture-password-12345','http://127.0.0.1')
         def get(params):
             request = object.__new__(handler)
             request.path = '/api/data-center/search?'+urlencode(params)

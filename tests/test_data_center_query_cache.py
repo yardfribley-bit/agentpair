@@ -112,11 +112,11 @@ class QueryCacheTests(unittest.TestCase):
                     self.assertEqual(broad['hasMore'][plural],broad['totals'][plural]>page*size)
         self.assertNotEqual(broad['totals']['tools'],broad['totals']['skills'])
 
-    def test_filters_owners_pages_and_older_snapshots_do_not_reuse_default(self):
+    def test_unsupported_filters_owners_and_older_snapshots_do_not_reuse_default(self):
         self.c.refresh_capabilities_cache();old=self.c.capabilities()['snapshot']
         for params,owner in [({'q':'skill=alpha'},None),({'kind':'user'},None),
-                ({'after':1700000000},None),({'object':'skill'},None),
-                ({'group':'request'},None),({'page':2},None),({},'alice')]:
+                ({'after':1700000000},None),({'application':'codex'},None),
+                ({'group':'request'},None),({},'alice')]:
             with self.subTest(params=params,owner=owner),self.trace() as statements:
                 self.c.capabilities(params,owner)
                 self.assertTrue(any('CREATE TEMP TABLE dc_matches' in sql for sql in statements))

@@ -1379,19 +1379,41 @@ class DataCenter:
         return encoded,snapshot
 
     @staticmethod
-    def _term_sql(term, location, args, indexed=True, row_scoped=False):
+    def _materialize_literal_hits(db, groups):
+        # Keep exact positional matches for this connection's read snapshot.
+        # Reopening the large FTS posting lists for every result's evidence is
+        # particularly expensive on a cold filesystem cache. Store only text
+        # IDs, never source bodies or a cross-request/owner result cache.
+        terms=sorted({value.casefold() for group in groups for field,op,value in group
+                      if _literal_fts_keyword(field,value)})
+        if not terms:return False
+        db.execute('CREATE TEMP TABLE dc_literal_hits(term TEXT,text_id INTEGER,PRIMARY KEY(term,text_id)) WITHOUT ROWID')
+        for term in terms:
+            db.execute('INSERT INTO dc_literal_hits SELECT ?,rowid FROM dc_text_fts WHERE dc_text_fts MATCH ?',
+                       (term,'"'+term.replace('"','""')+'"'))
+        return True
+
+    @staticmethod
+    def _term_sql(term, location, args, indexed=True, row_scoped=False, materialized_literals=False):
         field, op, value = term
         if field in ('keyword', 'ip', 'domain'):
             if indexed and len(value.casefold())>=3:
                 folded=value.casefold().rstrip('.') if field=='domain' else value.casefold()
-                args.append('"'+folded.replace('"','""')+'"')
                 scope=' AND f.location=?' if location!='all' else ''
                 literal=_literal_fts_keyword(field,value)
+                args.append(folded if literal and materialized_literals else '"'+folded.replace('"','""')+'"')
                 if literal:
                     # Positional trigrams prove the complete Unicode substring
                     # without rereading long shared source texts.
                     if scope:args.append(location)
-                    if row_scoped:
+                    if materialized_literals:
+                        if row_scoped:
+                            sql=('EXISTS(SELECT 1 FROM dc_field_refs f CROSS JOIN dc_literal_hits h '
+                                 'ON h.text_id=f.text_id WHERE f.record=r.key AND h.term=?'+scope+')')
+                        else:
+                            sql=('r.key IN (SELECT f.record FROM dc_literal_hits h CROSS JOIN dc_field_refs f '
+                                 'ON f.text_id=h.text_id WHERE h.term=?'+scope+')')
+                    elif row_scoped:
                         # Page evidence already has one record. Seek its text
                         # IDs directly rather than rebuild global hit sets for
                         # every row and every OR branch on the page.
@@ -1448,12 +1470,20 @@ class DataCenter:
             sql = 'lower(r.' + column + ')=lower(?)'
         return '(NOT coalesce(' + sql + ',0))' if op == '!=' else '(' + sql + ')'
 
-    def _query_scope(self, db, values, dates, groups, snapshot, owner=None):
+    def _query_scope(self, db, values, dates, groups, snapshot, owner=None, materialized_literals=False):
         location = values.get('location', 'all')
         # Deduplication sees the same retained watermarks as the query itself.
         bounded_duplicates = FAST_DUPLICATES.replace('WHERE d.collector=r.collector',
             "WHERE ((d.collector='sessionlens' AND d.seq<=?) OR (d.collector='applens' AND d.seq<=? AND d.received<=?)) AND d.collector=r.collector")
         args = [snapshot['sessionMax'], snapshot['appMax'], snapshot['appReceipt']]
+        summary=self._coverage_summary(db,owner)
+        if (summary.get('updatedAt') is not None and summary.get('duplicates')==0
+                and summary.get('watermark')==[snapshot['sessionMax'],snapshot['appMax'],snapshot['appReceipt']]):
+            # The atomically committed summary proves there are no alias
+            # duplicates anywhere in this exact visible snapshot. Narrower
+            # filters cannot introduce one. Stale/older snapshots still perform
+            # the original per-record check.
+            bounded_duplicates='1=1';args=[]
         where = [bounded_duplicates,
                  "((r.collector='sessionlens' AND r.seq<=?) OR (r.collector='applens' AND r.seq<=? AND r.received<=?))"]
         args.extend([snapshot['sessionMax'], snapshot['appMax'], snapshot['appReceipt']])
@@ -1480,9 +1510,12 @@ class DataCenter:
         # Capability-scoped counts instead need the sparse candidate index.
         scope_join = self._capability_join(join) if object_type in ('skill','mcp') else join if object_type=='tool' else self._inventory_join(join)
         cached=self._cached_scope(db,values,dates,snapshot,owner)
-        scope_records = cached[0] if cached is not None else db.execute('SELECT count(*)' + scope_join + ' WHERE ' + ' AND '.join(where), args).fetchone()[0]
+        scope_predicate=' WHERE '+' AND '.join(where)
+        if ' FROM dc_inventory r ' in scope_join:scope_predicate=self._inventory_predicate(scope_predicate)
+        scope_records = cached[0] if cached is not None else db.execute('SELECT count(*)' + scope_join + scope_predicate, args).fetchone()[0]
         if groups:
-            where.append('(' + ' OR '.join('(' + ' AND '.join(self._term_sql(t, location, args) for t in group) + ')' for group in groups) + ')')
+            where.append('(' + ' OR '.join('(' + ' AND '.join(self._term_sql(t, location, args,
+                materialized_literals=materialized_literals) for t in group) + ')' for group in groups) + ')')
         if object_type not in ('skill','mcp') and self._requires_capabilities(values,groups):
             # Every OR branch requires a positive capability match. Expose the
             # same necessary condition at the top level for SQLite's partial
@@ -1515,6 +1548,13 @@ class DataCenter:
                 join=join.replace(' FROM dc_inventory r JOIN',' FROM dc_inventory r INDEXED BY dc_inventory_key_covering JOIN',1)
             return join
         return join
+
+    @staticmethod
+    def _inventory_predicate(predicate):
+        # Inventory already supplies the digest in its covering index. A
+        # correlated lookup here needlessly reads its wide table once for each
+        # alias hit, dominating cold keyword searches over merged devices.
+        return predicate.replace('(SELECT digest FROM dc_inventory WHERE key=r.key)','r.digest')
 
     @staticmethod
     def _inventory_join(join):
@@ -1641,16 +1681,51 @@ class DataCenter:
                 'items':items,'hasMore':group_row['recordCount']>10}
 
     def legacy_page(self, owner, device, collector='all', page=1, size=20):
-        found=self.devices.get(device,owner)
+        """Page legacy summaries without constructing search portraits or excerpts."""
+        values,page,size,dates=self._validate({'device':device,'collector':collector,'page':page,'pageSize':size})
+        with self.devices.connect() as source:
+            alias=source.execute('SELECT canonical FROM device_aliases WHERE alias=? AND owner=?',(device,owner)).fetchone()
+            canonical=alias['canonical'] if alias else device
+            found=source.execute('SELECT id,name,seen FROM devices WHERE id=? AND owner=? AND revoked=0 AND id NOT IN (SELECT alias FROM device_aliases)',(canonical,owner)).fetchone()
         if not found:raise PermissionError('Device unavailable')
-        result=self.search({'device':device,'collector':collector,'page':page,'pageSize':size},owner=owner)
-        calls=[{'id':r['recordId'],'collector':r['collector'],'collectorName':'AppLens' if r['collector']=='applens' else 'SessionLens',
-            'application':{'codex':'Codex','workbuddy':'WorkBuddy'}.get(r['application'],r['application']),
-            'recordType':r['kind'],'timestamp':r['timestamp'],'sessionId':r['sessionId'],'sessionName':r['sessionId'],
-            'modelEvidence':r['kindLabel'],'complete':False,'source':r['collector']} for r in result['items']]
-        return {'device':{'id':found['id'],'name':found['name'],'online':found.get('online',False)},
-                'calls':calls,'items':[],'total':result['total'],'page':result['page'],'pageSize':result['pageSize'],
-                'hasMore':result['hasMore'],'coverage':result['coverage'],
+        with self._read_access(),self._db() as db:
+            self._prepare_index(db);self._scope(db,owner)
+            _,snapshot=self._snapshot(db,values,owner)
+            ids=[row[0] for row in db.execute('SELECT device FROM dc_scope WHERE owner=? AND canonical=?',(owner,canonical))]
+            marks=','.join('?' for _ in ids)
+            duplicate=FAST_DUPLICATES.replace('WHERE d.collector=r.collector',
+                "WHERE ((d.collector='sessionlens' AND d.seq<=?) OR (d.collector='applens' AND d.seq<=? AND d.received<=?)) AND d.collector=r.collector")
+            join=' FROM dc_inventory r INDEXED BY dc_inventory_scope JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner'
+            predicate=self._inventory_predicate(' WHERE r.owner=? AND r.device IN ('+marks+') AND r.collector=? AND '+duplicate)
+            branches=[];args=[];total=0
+            for kind in ('sessionlens','applens') if collector=='all' else (collector,):
+                bound=' AND r.seq<=?' + (' AND r.received<=?' if kind=='applens' else '')
+                params=[owner,*ids,kind,snapshot['sessionMax'],snapshot['appMax'],snapshot['appReceipt'],snapshot['sessionMax'] if kind=='sessionlens' else snapshot['appMax']]
+                if kind=='applens':params.append(snapshot['appReceipt'])
+                total+=db.execute('SELECT count(*)'+join+predicate+bound,params).fetchone()[0]
+                # Each source contributes at most the requested prefix. The
+                # existing owner/device/collector/time index bounds both paths.
+                branches.append('SELECT * FROM (SELECT r.key,r.collector,r.ident,r.source,r.session,r.kind,r.stamp'+join+predicate+bound+' ORDER BY r.stamp DESC,r.key LIMIT ?)')
+                args.extend([*params,page*size])
+            rows=db.execute('WITH candidates AS MATERIALIZED ('+' UNION ALL '.join(branches)+'), picked AS MATERIALIZED (SELECT * FROM candidates ORDER BY stamp DESC,key LIMIT ? OFFSET ?) '
+                            'SELECT p.*,r.title FROM picked p CROSS JOIN dc_records r ON r.key=p.key ORDER BY p.stamp DESC,p.key',[*args,size,(page-1)*size]).fetchall()
+            calls=[]
+            for row in rows:
+                # Projection titles start with the original readable kind label;
+                # preserve source-log context labels without loading metadata.
+                label=row['title'] if row['kind']=='context' and row['collector']=='sessionlens' else row['title'].split(' · ',1)[0]
+                calls.append({'id':('sessionlens:' if row['collector']=='sessionlens' else '')+row['ident'],
+                    'collector':row['collector'],'collectorName':'AppLens' if row['collector']=='applens' else 'SessionLens',
+                    'application':{'codex':'Codex','workbuddy':'WorkBuddy'}.get(row['source'],row['source']),
+                    'recordType':row['kind'],'timestamp':row['stamp'],'sessionId':row['session'],'sessionName':row['session'],
+                    'modelEvidence':label,'complete':False,'source':row['collector']})
+            summary=self._coverage_summary(db,owner)
+            coverage={'scope':'owner','indexSync':self._index_status(db),'retainedRecords':summary['retained'],
+                      'sources':summary['sources'],'searchedRecords':total,'unindexedRecords':summary['unindexed'],
+                      'sourceSessionsAreTasks':False}
+        return {'device':{'id':found['id'],'name':found['name'],'online':time.time()-found['seen']<90},
+                'calls':calls,'items':[],'total':total,'page':page,'pageSize':size,
+                'hasMore':page*size<total,'coverage':coverage,
                 'limitations':['列表按页返回摘要；选择一条记录后才读取原文。']}
 
     def summary(self, owner=None):
@@ -1670,14 +1745,15 @@ class DataCenter:
         with self._read_access(), self._db() as db, self._execution_page():
             self._prepare_index(db);self._scope(db, owner)
             snapshot_token,snapshot = self._snapshot(db,values,owner)
-            join,predicate,args,scope_records = self._query_scope(db,values,dates,groups,snapshot,owner)
+            materialized_literals=self._materialize_literal_hits(db,groups)
+            join,predicate,args,scope_records = self._query_scope(db,values,dates,groups,snapshot,owner,materialized_literals)
             if not groups and values.get('object','all') == 'all' and values.get('group') != 'request':
                 # Empty/lightweight browsing needs no full materialized hit set.
                 total = record_total = scope_records
                 grouped = {}
                 cached=self._cached_scope(db,values,dates,snapshot,owner)
                 matched_devices = cached[1] if cached is not None else db.execute('SELECT count(DISTINCT s.canonical)' +
-                    self._inventory_join(join) + predicate,args).fetchone()[0]
+                    self._inventory_join(join) + self._inventory_predicate(predicate),args).fetchone()[0]
                 unrestricted_recent = owner is None and not dates and all(
                     values.get(key,'all')=='all' for key in ('collector','application','device','kind','location'))
                 if unrestricted_recent:
@@ -1688,7 +1764,7 @@ class DataCenter:
                 else:
                     # A selected device or collector may have only old records.
                     # Filter and sort narrow identities before reading metadata.
-                    rows = db.execute('WITH picked AS MATERIALIZED (SELECT r.key' + self._inventory_join(join) + predicate +
+                    rows = db.execute('WITH picked AS MATERIALIZED (SELECT r.key' + self._inventory_join(join) + self._inventory_predicate(predicate) +
                         ' ORDER BY r.stamp DESC,r.key LIMIT ? OFFSET ?) '
                         'SELECT r.*,s.canonical,s.name FROM picked p CROSS JOIN dc_records r ON r.key=p.key '
                         'JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner '
@@ -1698,7 +1774,9 @@ class DataCenter:
                 # Long retained contexts are matched once per query, rather than
                 # rescanned for the count, distinct devices and the page itself.
                 db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY,canonical TEXT,stamp REAL)')
-                db.execute('INSERT INTO dc_matches SELECT r.key,s.canonical,r.stamp' + self._candidate_join(join,values,groups) + predicate,args)
+                candidate_join=self._candidate_join(join,values,groups)
+                candidate_predicate=self._inventory_predicate(predicate) if ' FROM dc_inventory r ' in candidate_join else predicate
+                db.execute('INSERT INTO dc_matches SELECT r.key,s.canonical,r.stamp' + candidate_join + candidate_predicate,args)
                 total = db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
                 matched_join = self._matched_join(join)
                 matched_devices = db.execute('SELECT count(DISTINCT canonical) FROM dc_matches').fetchone()[0]
@@ -1755,9 +1833,9 @@ class DataCenter:
             self._scope_identity(db)]).encode()).hexdigest()
 
     def _cached_capabilities(self,db,values,page,size,dates,groups,owner,token,snapshot):
-        if (owner is not None or groups or dates or page!=1 or values.get('group','record')!='record'
+        if (owner is not None or groups or dates or values.get('group','record')!='record'
                 or values.get('groupId') or any(values.get(key,'all')!='all' for key in
-                    ('collector','application','device','kind','location','object'))):return None
+                    ('application','device','kind','location'))):return None
         raw=self._state(db,'capabilities_default_cache','')
         if not raw:return None
         try:cached=json.loads(raw)
@@ -1767,10 +1845,34 @@ class DataCenter:
         summary=self._coverage_summary(db,None)
         if summary['updatedAt'] is None:return None
         result=cached['result']
+        collector=values.get('collector','all');object_type=values.get('object','all')
+        if collector!='all':
+            # Reuse only after proving which collector contributed every call,
+            # including unnamed calls. A future AppLens activity projection
+            # automatically falls back to an independently filtered query.
+            if cached.get('activityCollectors') not in ([],['sessionlens']):return None
+            if collector=='applens':
+                for plural in ('tools','skills','mcps'):
+                    result[plural]=[];result['totals'][plural]=0
+                result['coverage'].update(activityRecords=0,unknownToolCount=0)
+            count=sum(source['total'] for source in summary['sources'] if source['collector']==collector)
+            result['coverage'].update(scopeRecords=count,matchedRecords=count)
+        if object_type!='all':
+            coverage=cached.get('objectCoverage',{}).get(object_type)
+            if coverage is None:return None
+            if collector=='applens':coverage={key:0 for key in coverage}
+            result['coverage'].update(coverage)
+            selected={'tool':'tools','skill':'skills','mcp':'mcps'}[object_type]
+            for plural in ('tools','skills','mcps'):
+                if plural!=selected:result[plural]=[];result['totals'][plural]=0
+        start=(page-1)*size;end=start+size
+        if any(len(result[plural])<min(end,result['totals'][plural]) and start<result['totals'][plural]
+               for plural in ('tools','skills','mcps')):return None
         result.update(snapshot=token,page=page,pageSize=size)
         for plural in ('tools','skills','mcps'):
-            result[plural]=result[plural][:size]
-            result['hasMore'][plural]=result['totals'][plural]>size
+            result[plural]=result[plural][start:end]
+            result['hasMore'][plural]=result['totals'][plural]>end
+        result['coverage']['object']=object_type
         result['coverage']['indexSync']=self._index_status(db)
         return result
 
@@ -1786,14 +1888,25 @@ class DataCenter:
             raw=self._state(db,'capabilities_default_cache','')
             if raw:
                 try:
-                    if json.loads(raw).get('signature')==signature:return False
+                    prior=json.loads(raw)
+                    if prior.get('signature')==signature and prior.get('format')==2:return False
                 except (ValueError,TypeError):pass
             # Refuse to publish an aggregate against stale coverage or scope.
             if self._coverage_summary(db,None)['updatedAt'] is None:return False
             token,snapshot=self._snapshot(db,values,None,'capabilities')
             join,predicate,args,scope_records=self._query_scope(db,values,{},[],snapshot)
-            result=self._capabilities_query(db,values,1,100,[],None,token,snapshot,join,predicate,args,scope_records)
-            self._set_state(db,'capabilities_default_cache',_json({'signature':signature,'result':result}))
+            # Two maximum-sized pages (or four UI pages) share the same exact
+            # aggregate; deeper pages still use the bounded query path.
+            result=self._capabilities_query(db,values,1,200,[],None,token,snapshot,join,predicate,args,scope_records)
+            object_coverage={}
+            for category in ('tool','skill','mcp'):
+                count=db.execute('SELECT count(DISTINCT record) FROM dc_capabilities WHERE category=?',(category,)).fetchone()[0]
+                unknown=db.execute('''SELECT count(DISTINCT a.record) FROM dc_capabilities a WHERE a.category=?
+                    AND NOT EXISTS(SELECT 1 FROM dc_capabilities t WHERE t.record=a.record AND t.category='tool')''',(category,)).fetchone()[0]
+                object_coverage[category]={'scopeRecords':count,'matchedRecords':count,'activityRecords':count,'unknownToolCount':unknown}
+            collectors=[row[0] for row in db.execute('SELECT DISTINCT collector FROM dc_matches ORDER BY collector')]
+            self._set_state(db,'capabilities_default_cache',_json({'format':2,'signature':signature,'result':result,
+                'objectCoverage':object_coverage,'activityCollectors':collectors}))
             return True
         finally:
             for table in ('dc_matches','dc_capabilities','dc_scope'):db.execute('DROP TABLE IF EXISTS temp.'+table)
@@ -1813,24 +1926,33 @@ class DataCenter:
         with self._read_access(), self._db() as db:
             self._prepare_index(db); self._scope(db, owner)
             token, snapshot = self._snapshot(db, values, owner, 'capabilities')
-            join, predicate, args, scope_records = self._query_scope(db, values, dates, groups, snapshot,owner)
             cached = self._cached_capabilities(db,values,page,size,dates,groups,owner,token,snapshot)
             if cached is not None:return cached
+            query_values=dict(values)
+            if not groups:query_values['object']='all'
+            join, predicate, args, scope_records = self._query_scope(db, query_values, dates, groups, snapshot,owner)
+            if not groups and values.get('object','all')!='all':
+                # dc_activity is maintained atomically with metadata. Evaluate
+                # its object evidence on the covering call projection rather
+                # than rereading every large dc_records JSON value twice.
+                predicate+=" AND EXISTS(SELECT 1 FROM dc_activity a WHERE a.record=r.key AND a.category=?)"
+                args.append(values['object']);scope_records=None
             return self._capabilities_query(db,values,page,size,groups,owner,token,snapshot,join,predicate,args,scope_records)
 
     def _capabilities_query(self,db,values,page,size,groups,owner,token,snapshot,join,predicate,args,scope_records):
-        db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY,device TEXT,owner TEXT,source TEXT,session TEXT,stamp REAL,kind TEXT)')
-        activity_only = not groups and values.get('object','all')=='all'
+        db.execute('CREATE TEMP TABLE dc_matches(key TEXT PRIMARY KEY,device TEXT,owner TEXT,source TEXT,session TEXT,stamp REAL,kind TEXT,collector TEXT)')
+        activity_only = not groups
         if activity_only:
             # Structured activities originate only in tool_call records.
             # Keep the broad matched-record count, but materialize only the
             # sparse call set, including calls with an unknown tool name.
             candidate_join=self._inventory_join(join).replace(' FROM dc_inventory r JOIN',
                 ' FROM dc_inventory r INDEXED BY dc_inventory_call_covering JOIN',1)
-            db.execute('INSERT INTO dc_matches SELECT r.key,s.canonical,r.owner,r.source,r.session,r.stamp,r.kind' + candidate_join + predicate + " AND r.kind='tool_call'",args)
-            matched_records=scope_records
+            db.execute('INSERT INTO dc_matches SELECT r.key,s.canonical,r.owner,r.source,r.session,r.stamp,r.kind,r.collector' + candidate_join + self._inventory_predicate(predicate) + " AND r.kind='tool_call'",args)
+            matched_records=scope_records if scope_records is not None else db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
+            if scope_records is None:scope_records=matched_records
         else:
-            db.execute('INSERT INTO dc_matches SELECT r.key,s.canonical,r.owner,r.source,r.session,r.stamp,r.kind' + self._candidate_join(join,values,groups) + predicate, args)
+            db.execute('INSERT INTO dc_matches SELECT r.key,s.canonical,r.owner,r.source,r.session,r.stamp,r.kind,r.collector' + self._candidate_join(join,values,groups) + predicate, args)
             matched_records=db.execute('SELECT count(*) FROM dc_matches').fetchone()[0]
         db.execute('''CREATE TEMP TABLE dc_capabilities(record TEXT,category TEXT,name TEXT,evidence TEXT,
             method TEXT,namespace TEXT,serviceName TEXT,device TEXT,owner TEXT,source TEXT,session TEXT,stamp REAL)''')
@@ -1840,6 +1962,7 @@ class DataCenter:
                    r.device,r.owner,r.source,r.session,r.stamp''' + activity_join +
             ' JOIN dc_activity a ON a.record=r.key')
         db.execute('CREATE INDEX dc_capabilities_names ON dc_capabilities(category,lower(name),lower(method))')
+        db.execute('CREATE INDEX dc_capabilities_record ON dc_capabilities(record,category)')
         object_type = values.get('object', 'all')
         result = {'tools': [], 'skills': [], 'mcps': [], 'snapshot': token,
                   'page': page, 'pageSize': size, 'totals': {}, 'hasMore': {}}
@@ -2158,11 +2281,14 @@ class DataCenter:
 
     def _item(self, db, row, groups=(), location='all', snapshot=None, execution=True):
         meta = json.loads(row['metadata'])
+        materialized_literals=bool(groups) and db.execute(
+            "SELECT 1 FROM sqlite_temp_master WHERE name='dc_literal_hits' AND type='table'").fetchone() is not None
         matched_groups=[]
         for group in groups:
             args=[]
             predicate=' AND '.join(self._term_sql(term,location,args,
-                indexed=_literal_fts_keyword(term[0],term[2]),row_scoped=True) for term in group)
+                indexed=_literal_fts_keyword(term[0],term[2]),row_scoped=True,
+                materialized_literals=materialized_literals) for term in group)
             if db.execute('SELECT 1 FROM dc_records r JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner '
                           'WHERE r.key=? AND '+predicate,[row['key'],*args]).fetchone():
                 matched_groups.append(group)
@@ -2179,11 +2305,14 @@ class DataCenter:
                         scope=' AND f.location=?' if location!='all' else ''
                         args=[value,field,row['key']]
                         if scope:args.append(location)
-                        args.append('"'+value.casefold().replace('"','""')+'"')
+                        args.append(value.casefold() if materialized_literals else '"'+value.casefold().replace('"','""')+'"')
+                        hit_join=('dc_literal_hits h ON h.text_id=f.text_id' if materialized_literals
+                                  else 'dc_text_fts ON dc_text_fts.rowid=f.text_id')
+                        hit_predicate='h.term=?' if materialized_literals else 'dc_text_fts MATCH ?'
                         hit=db.execute('SELECT f.location,dc_snippet(t.value,?,?) AS excerpt '
-                            'FROM dc_field_refs f CROSS JOIN dc_text_fts ON dc_text_fts.rowid=f.text_id '
+                            'FROM dc_field_refs f CROSS JOIN '+hit_join+' '
                             'CROSS JOIN dc_texts t ON t.id=f.text_id '
-                            'WHERE f.record=?'+scope+' AND dc_text_fts MATCH ? '
+                            'WHERE f.record=?'+scope+' AND '+hit_predicate+' '
                             'ORDER BY f.ordinal LIMIT 1',args).fetchone()
                     else:
                         args = [row['key']]
