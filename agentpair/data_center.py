@@ -1648,7 +1648,11 @@ class DataCenter:
     def summary(self, owner=None):
         with self._read_access(), self._db() as db:
             summary=self._coverage_summary(db,owner)
-            return {'facets':summary['facets'],'retainedRecords':summary['retained'],'updatedAt':summary['updatedAt'],'indexSync':self._index_status(db)}
+            return {'facets':summary['facets'],'sources':summary['sources'],
+                    'scope':'global' if owner is None else 'owner',
+                    'retainedRecords':summary['retained'],'unindexedRecords':summary['unindexed'],
+                    'excludedUnavailableRecords':summary['excluded'],
+                    'updatedAt':summary['updatedAt'],'indexSync':self._index_status(db)}
 
     def search(self, params=None, owner=None):
         params = params or {}

@@ -267,6 +267,26 @@ class ReviewIndexTests(unittest.TestCase):
         self.assertFalse(result['coverage']['fullRetainedText'])
         self.assertFalse(f.center.capabilities()['coverage']['fullRetainedText'])
 
+    def test_overview_uses_cached_source_counts_without_running_search_or_sync(self):
+        f=self.f;f.upload([f.event('overview-session')]);f.context('overview-app','{"messages":[{"role":"user","content":"overview"}]}');f.find()
+        with patch.object(f.center,'_sync',side_effect=AssertionError('overview must not sync')), \
+             patch.object(f.center,'_refresh_summaries',side_effect=AssertionError('overview must not aggregate')), \
+             patch.object(f.center,'search',side_effect=AssertionError('overview must not search')):
+            overview=f.center.summary('alice')
+        self.assertEqual(overview['scope'],'owner')
+        self.assertEqual(overview['retainedRecords'],2)
+        self.assertEqual({source['collector']:source['total'] for source in overview['sources']},{'sessionlens':1,'applens':1})
+        self.assertEqual(overview['unindexedRecords'],0)
+        self.assertIsNotNone(overview['updatedAt'])
+        self.assertIn('mode',overview['indexSync'])
+
+    def test_overview_before_first_summary_reports_pending(self):
+        overview=self.f.center.summary()
+        self.assertEqual(overview['scope'],'global')
+        self.assertEqual(overview['sources'],[])
+        self.assertEqual(overview['retainedRecords'],0)
+        self.assertIsNone(overview['updatedAt'])
+
     def test_five_background_readers_do_not_serialize(self):
         f=self.f;f.upload([f.event('seed')]);f.find();f.center._worker={'running':False,'error':None}
         barrier=threading.Barrier(5)

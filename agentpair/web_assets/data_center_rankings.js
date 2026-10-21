@@ -48,7 +48,8 @@
   }
   async function get(path,signal) {
     const request = new AbortController(), abort = () => request.abort(); if (signal?.aborted) abort(); else signal?.addEventListener('abort',abort,{once:true});
-    const timer = setTimeout(abort,30000);
+    // The server has a 12s read limit; allow its 429/503 response to arrive.
+    const timer = setTimeout(abort,15000);
     try {const response = await fetch(path,{method:'GET',credentials:'same-origin',cache:'no-store',signal:request.signal}); let data; try {data = await response.json();} catch (_) {throw Error('平台返回了无法读取的内容，请重试。');} if (!response.ok) throw Error(text(data.error) || '请求失败（HTTP ' + response.status + '）'); return data;}
     catch (e) {if (e.name === 'AbortError') throw Error(signal?.aborted ? '已停止本页等待' : '读取超时，请重试。'); throw e;} finally {clearTimeout(timer); signal?.removeEventListener('abort',abort);}
   }

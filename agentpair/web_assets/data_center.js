@@ -226,7 +226,8 @@
   async function api(path, payload, signal) {
     const controller = new AbortController(), abort = () => controller.abort();
     if (signal?.aborted) abort(); else signal?.addEventListener('abort',abort,{once:true});
-    const timer = setTimeout(abort,30000);
+    // The server ends index reads after 12s; leave time for its typed response.
+    const timer = setTimeout(abort,path.startsWith('/api/data-center/') ? 15000 : 30000);
     try {
       const response = await fetch(path,{method:payload ? 'POST' : 'GET',credentials:'same-origin',cache:'no-store',signal:controller.signal,headers:payload ? {'Content-Type':'application/json','X-CSRF-Token':session.csrf || ''} : {},body:payload ? JSON.stringify(payload) : undefined});
       let data; try {data = await response.json();} catch (_) {throw Error('平台返回了无法读取的内容，请重试。');}
@@ -289,6 +290,34 @@
     $('dc-device').replaceChildren(option('all','所有设备'),...knownDevices.map(d => option(d.id,d.name || d.id.slice(0,8))));
     if (selected !== 'all') {if (!knownDevices.some(d => d.id === selected)) $('dc-device').append(option(selected,selected)); $('dc-device').value = selected;}
     renderScope();
+  }
+  function renderOverview(scope) {
+    const ready = Number.isFinite(scope.updatedAt), sync = scope.indexSync || {};
+    const sources = new Map(arr(scope.sources).map(source => [source.collector,source.total]));
+    $('dc-overview-cards').replaceChildren(...['sessionlens','applens'].map(collector => {
+      const card = el('article',null,'dc-overview-card');
+      card.append(el('h2',collectorName(collector)),el('strong',ready ? Number(sources.get(collector) || 0).toLocaleString('zh-CN') + ' 条' : '等待索引'),el('span',collector === 'sessionlens' ? '会话日志记录' : 'WorkBuddy 模型请求'));
+      return card;
+    }));
+    $('dc-overview-cards').hidden = false;
+    const status = [scope.scope === 'owner' ? '当前账号可用设备' : '平台全部可用设备',ready ? '共 ' + Number(scope.retainedRecords || 0).toLocaleString('zh-CN') + ' 条已索引记录' : '首次索引尚未就绪'];
+    if (ready) status.push('概览更新于 ' + date(scope.updatedAt));
+    if (sync.error) status.push('后台同步失败，当前仅显示已提交索引');
+    else if (sync.running) status.push('后台正在同步');
+    else if (sync.mode === 'background') status.push('后台索引等待更新');
+    if (Number(scope.unindexedRecords) > 0) status.push(Number(scope.unindexedRecords).toLocaleString('zh-CN') + ' 条源记录待索引');
+    status.push('概览不随下方筛选变化；终端未上报数据不在范围内');
+    put('dc-overview-status',status.join(' · '));
+    renderFacets(scope.facets);
+  }
+  async function loadOverview() {
+    $('dc-overview').setAttribute('aria-busy','true');
+    $('dc-overview-cards').hidden = true;
+    $('dc-overview-retry').hidden = true;
+    put('dc-overview-status','正在读取已接收记录概览…');
+    try {renderOverview(await api('/api/data-center/summary'));}
+    catch (_) {put('dc-overview-status','记录概览暂时无法读取。可以重试，或设置条件后搜索。');$('dc-overview-retry').hidden = false;}
+    finally {$('dc-overview').setAttribute('aria-busy','false');}
   }
   function coverageText(coverage, total = null) {
     if (typeof coverage === 'string') return coverage;
@@ -808,6 +837,7 @@
   $('dc-prev').addEventListener('click',() => {if (page > 1) {page -= 1; search();}}); $('dc-next').addEventListener('click',() => {if (lastSearch?.hasMore) {page += 1; search();}});
   $('dc-cancel').addEventListener('click',() => {if (mode === 'search') {searchController?.abort(); clearGroupStates(); ++searchGeneration; $('dc-results').setAttribute('aria-busy','false'); put('dc-count','已停止等待'); recover('已停止本页等待，查询条件已保留。');} else {stopQuestion(); recover(pendingQuestion?.id ? '已停止本页等待。后台调查可能仍在处理，可以重新查看结果。' : '已停止本页等待。问题已保留。','question');} $('dc-progress').hidden = true;});
   $('dc-retry').addEventListener('click',() => retryMode === 'question' ? investigate(true) : search());
+  $('dc-overview-retry').addEventListener('click',loadOverview);
   $('dc-detail-back').addEventListener('click',() => {const id = detailHistory.pop(); if (id) openDetail(id,null,true);});
   for (const button of Array.from($('dc-detail-navigation').children)) button.addEventListener('click',() => {const section = $(button.dataset.section); if (section && !section.hidden) {for (const other of Array.from($('dc-detail-navigation').children)) other.classList.toggle('active',other === button); section.scrollIntoView({block:'start',behavior:typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});}});
   $('dc-close-detail').addEventListener('click',closeDetail); $('dc-detail-backdrop').addEventListener('click',closeDetail); $('dc-retry-detail').addEventListener('click',() => openDetail(detailId));
@@ -842,10 +872,11 @@
       document.querySelector('.dc-results-toolbar').hidden=true;
       resultViewOverride='record';
     }
+    const overview = loadOverview();
     const identity = (async () => {try {session = await api('/api/session');} catch (_) {} finally {identityReady = true; renderIdentity();}})();
-    if (saved?.mode === 'investigate' && !params.has('q') && !params.has('object')) {selectMode('investigate'); if (pendingQuestion?.id) recover('上次调查的问题和编号已保留，可以重新查看结果。','question'); const scope = await api('/api/data-center/summary').catch(() => null); if (scope) renderFacets(scope.facets);}
+    if (saved?.mode === 'investigate' && !params.has('q') && !params.has('object')) {selectMode('investigate'); if (pendingQuestion?.id) recover('上次调查的问题和编号已保留，可以重新查看结果。','question');}
     else if(params.has('q') || params.has('device') || params.has('object')) await search();
-    else {const scope=await api('/api/data-center/summary').catch(()=>null);if(scope)renderFacets(scope.facets);put('dc-count','设置条件后点击搜索');}
-    renderScope(); await identity;
+    else put('dc-count','设置条件后点击搜索');
+    renderScope(); await Promise.all([identity,overview]);
   })();
 })();

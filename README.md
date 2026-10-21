@@ -100,7 +100,7 @@ cd agentpair
 python3 ops/test_all.py
 ```
 
-统一入口依次运行`tests/legacy/`、`tests/`、`SessionLens/tests/` 的 Python 测试；CI 安装桌面依赖后运行同一命令。本机缺少可选 PySide6 时明确 skip 对应桌面测试，其他导入错误仍然失败。这些测试使用本地数据库、模拟后端和本机 HTTP 端口，不需要付费模型调用。`agentpair.demo` 是离线演示。浏览器测试使用 Playwright，仓库当前部分脚本包含开发机器的运行时路径，需要按本机环境调整。
+统一入口依次运行`tests/legacy/`、`tests/`、`SessionLens/tests/` 的 Python 测试；CI 安装桌面依赖后运行同一命令。本机缺少可选 PySide6 时明确 skip 对应桌面测试，其他导入错误仍然失败。这些测试使用本地数据库、模拟后端和本机 HTTP 端口，不需要付费模型调用。`agentpair.demo` 是离线演示。浏览器测试通过 Node 正常解析 `playwright`（可先运行 `npm install --no-save playwright` 与 `npx playwright install chromium`）。`ops/check_credential_page.cjs` 和 `ops/check_background_page.cjs` 支持 `AGENTPAIR_BASE_URL` 指定验收环境；如使用已有运行时，可用 `PLAYWRIGHT_MODULE` 指定模块，`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指定浏览器可执行文件。未指定时使用 Playwright 的 Chromium。
 
 生产启动、模型服务和云资源配置见 [PLATFORM.md](PLATFORM.md)。`ops/` 部署脚本包含本项目环境约定，并非通用一键安装器。运行配置、数据库、私钥及日志不随源码上传；录屏和安装包也未纳入此次源码提交。
 
