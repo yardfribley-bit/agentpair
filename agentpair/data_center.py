@@ -842,6 +842,8 @@ class DataCenter:
                 CREATE TABLE IF NOT EXISTS dc_inventory(key TEXT PRIMARY KEY,collector TEXT,owner TEXT,device TEXT,
                     ident TEXT,source TEXT,session TEXT,kind TEXT,stamp REAL,received REAL,seq INTEGER,digest TEXT);
                 CREATE INDEX IF NOT EXISTS dc_inventory_scope ON dc_inventory(owner,device,collector,stamp);
+                CREATE INDEX IF NOT EXISTS dc_inventory_legacy_covering ON dc_inventory(
+                    owner,device,collector,stamp DESC,key,seq,received,ident,source,session,kind,digest);
                 CREATE INDEX IF NOT EXISTS dc_inventory_duplicates ON dc_inventory(collector,owner,ident,source,digest,device,seq,received);
                 CREATE INDEX IF NOT EXISTS dc_inventory_recent ON dc_inventory(stamp DESC,key);
                 CREATE INDEX IF NOT EXISTS dc_inventory_collector_recent ON dc_inventory(collector,stamp DESC,key);
@@ -971,7 +973,7 @@ class DataCenter:
         self._scope(db)
         try:
             signature=hashlib.sha256(_json([
-                'summary-2',capability_evidence.VERSION,REQUEST_EVIDENCE_VERSION,
+                'summary-3',capability_evidence.VERSION,REQUEST_EVIDENCE_VERSION,
                 [float(self._state(db,name)) if name=='app_receipt' else self._state(db,name)
                  for name in ('version','inventory_version','activity_version','app_text_version',
                     'summary_revision','session_seq','app_seq','app_receipt','session_raw_count','app_raw_count','aliases')],
@@ -985,11 +987,17 @@ class DataCenter:
                 predicate = '' if owner is None else ' WHERE s.owner=?'
                 args = [] if owner is None else [owner]
                 join = ' FROM dc_inventory r JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner'
-                visible = predicate + (' AND ' if predicate else ' WHERE ') + FAST_DUPLICATES
-                sources = [{'collector':r[0], 'total':r[1]} for r in db.execute(
-                    'SELECT r.collector,count(*)'+join+visible+' GROUP BY r.collector',args)]
-                scope_devices = {r[0]:r[1] for r in db.execute('SELECT r.collector,count(DISTINCT s.canonical)'+join+visible+' GROUP BY r.collector',args)}
-                scope_devices['all'] = db.execute('SELECT count(DISTINCT s.canonical)'+join+visible,args).fetchone()[0]
+                visible = self._inventory_predicate(predicate + (' AND ' if predicate else ' WHERE ') + FAST_DUPLICATES)
+                device_sources = {}
+                source_totals = Counter()
+                source_devices = {}
+                for canonical,collector,count in db.execute('SELECT s.canonical,r.collector,count(*)'+join+visible+' GROUP BY s.canonical,r.collector',args):
+                    device_sources.setdefault(canonical,{})[collector]=count
+                    source_totals[collector]+=count
+                    source_devices.setdefault(collector,set()).add(canonical)
+                sources = [{'collector':collector,'total':source_totals[collector]} for collector in sorted(source_totals)]
+                scope_devices = {collector:len(devices) for collector,devices in source_devices.items()}
+                scope_devices['all'] = len(device_sources)
                 facets = {'devices':[{'id':r[0],'name':r[1]} for r in db.execute(
                     'SELECT DISTINCT s.canonical,s.name'+join+predicate+' ORDER BY s.name,s.canonical',args)],
                     'applications':[r[0] for r in db.execute('SELECT DISTINCT r.source'+join+predicate+' ORDER BY r.source',args)],
@@ -999,7 +1007,7 @@ class DataCenter:
                 data = {'watermark':[int(self._state(db,'session_seq')),int(self._state(db,'app_seq')),float(self._state(db,'app_receipt'))],
                     'summaryRevision':self._state(db,'summary_revision'),
                     'sourceCounts':[int(self._state(db,'session_raw_count')),int(self._state(db,'app_raw_count'))],
-                    'scopeIdentity':self._scope_identity(db,owner),'scopeDevices':scope_devices,'sources':sources,'facets':facets,'retained':sum(r['total'] for r in sources),
+                    'scopeIdentity':self._scope_identity(db,owner),'scopeDevices':scope_devices,'deviceSources':device_sources,'sources':sources,'facets':facets,'retained':sum(r['total'] for r in sources),
                     'unindexed':max(0,int(self._state(db,'session_raw_count'))+int(self._state(db,'app_raw_count'))-indexed),
                     'duplicates':total-sum(r['total'] for r in sources),
                     'excluded':db.execute('SELECT count(*) FROM dc_inventory r WHERE NOT EXISTS(SELECT 1 FROM dc_scope s WHERE s.device=r.device AND s.owner=r.owner)').fetchone()[0],
@@ -1693,16 +1701,23 @@ class DataCenter:
             _,snapshot=self._snapshot(db,values,owner)
             ids=[row[0] for row in db.execute('SELECT device FROM dc_scope WHERE owner=? AND canonical=?',(owner,canonical))]
             marks=','.join('?' for _ in ids)
+            summary=self._coverage_summary(db,owner)
+            current_summary=(summary.get('updatedAt') is not None and summary.get('watermark')==
+                [snapshot['sessionMax'],snapshot['appMax'],snapshot['appReceipt']])
+            cached_counts=summary.get('deviceSources',{}).get(canonical,{}) if current_summary and 'deviceSources' in summary else None
             duplicate=FAST_DUPLICATES.replace('WHERE d.collector=r.collector',
                 "WHERE ((d.collector='sessionlens' AND d.seq<=?) OR (d.collector='applens' AND d.seq<=? AND d.received<=?)) AND d.collector=r.collector")
-            join=' FROM dc_inventory r INDEXED BY dc_inventory_scope JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner'
+            duplicate_args=[snapshot['sessionMax'],snapshot['appMax'],snapshot['appReceipt']]
+            if current_summary and summary.get('duplicates')==0:
+                duplicate='1=1';duplicate_args=[]
+            join=' FROM dc_inventory r INDEXED BY dc_inventory_legacy_covering JOIN dc_scope s ON s.device=r.device AND s.owner=r.owner'
             predicate=self._inventory_predicate(' WHERE r.owner=? AND r.device IN ('+marks+') AND r.collector=? AND '+duplicate)
             branches=[];args=[];total=0
             for kind in ('sessionlens','applens') if collector=='all' else (collector,):
                 bound=' AND r.seq<=?' + (' AND r.received<=?' if kind=='applens' else '')
-                params=[owner,*ids,kind,snapshot['sessionMax'],snapshot['appMax'],snapshot['appReceipt'],snapshot['sessionMax'] if kind=='sessionlens' else snapshot['appMax']]
+                params=[owner,*ids,kind,*duplicate_args,snapshot['sessionMax'] if kind=='sessionlens' else snapshot['appMax']]
                 if kind=='applens':params.append(snapshot['appReceipt'])
-                total+=db.execute('SELECT count(*)'+join+predicate+bound,params).fetchone()[0]
+                total+=cached_counts.get(kind,0) if cached_counts is not None else db.execute('SELECT count(*)'+join+predicate+bound,params).fetchone()[0]
                 # Each source contributes at most the requested prefix. The
                 # existing owner/device/collector/time index bounds both paths.
                 branches.append('SELECT * FROM (SELECT r.key,r.collector,r.ident,r.source,r.session,r.kind,r.stamp'+join+predicate+bound+' ORDER BY r.stamp DESC,r.key LIMIT ?)')
@@ -1719,7 +1734,6 @@ class DataCenter:
                     'application':{'codex':'Codex','workbuddy':'WorkBuddy'}.get(row['source'],row['source']),
                     'recordType':row['kind'],'timestamp':row['stamp'],'sessionId':row['session'],'sessionName':row['session'],
                     'modelEvidence':label,'complete':False,'source':row['collector']})
-            summary=self._coverage_summary(db,owner)
             coverage={'scope':'owner','indexSync':self._index_status(db),'retainedRecords':summary['retained'],
                       'sources':summary['sources'],'searchedRecords':total,'unindexedRecords':summary['unindexed'],
                       'sourceSessionsAreTasks':False}
